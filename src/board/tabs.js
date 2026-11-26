@@ -200,7 +200,15 @@ export function renderVariationTree() {
   });
 
   const act = box.querySelector('.tree-move.active');
-  if (act) act.scrollIntoView({ block: 'nearest' });
+  if (act && box.scrollHeight > box.clientHeight) {
+    const cRect = box.getBoundingClientRect();
+    const eRect = act.getBoundingClientRect();
+    if (eRect.top < cRect.top) {
+      box.scrollTop -= cRect.top - eRect.top + 6;
+    } else if (eRect.bottom > cRect.bottom) {
+      box.scrollTop += eRect.bottom - cRect.bottom + 6;
+    }
+  }
 }
 
 export function promoteVar() {

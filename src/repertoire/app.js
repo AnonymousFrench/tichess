@@ -625,7 +625,12 @@ export function startTrainer({ data: D, progress, saveProgress }) {
       }
     }
     walk(rootPi,[],plyOfFen(POS[rootPi].f),tree,true);
-    const cur=tree.querySelector(".cur"); if(cur&&tree.scrollHeight>tree.clientHeight) cur.scrollIntoView({block:"nearest"});
+    const cur=tree.querySelector(".cur");
+    if(cur && tree.scrollHeight > tree.clientHeight){
+      const cr=tree.getBoundingClientRect(), er=cur.getBoundingClientRect();
+      if(er.top < cr.top) tree.scrollTop -= (cr.top - er.top + 6);
+      else if(er.bottom > cr.bottom) tree.scrollTop += (er.bottom - cr.bottom + 6);
+    }
     // engine panel
     const t=TH[node.t]||{alts:[]};
     $("s-eval").textContent=fmtEv(t.ev); $("s-eval").className="evalchip"+(evNeg(t.ev)?" neg":"");

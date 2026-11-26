@@ -1,4 +1,5 @@
-import { state } from '../state.js';
+import { Chess } from 'chess.js';
+import { state, START_FEN, normalizeFen } from '../state.js';
 import { fetchJson, fetchText } from './http.js';
 
 export function getLichessHeaders() {
@@ -60,6 +61,135 @@ export function parseExplorerPlayerNdjson(ndjsonText) {
   return { white: 0, draws: 0, black: 0, moves: [], recentGames: [] };
 }
 
+// In-memory cache of a user's recent Lichess games for instant zero-token fallback
+const playerFallbackCache = new Map(); // lowerUsername -> { fetchedAt, games, indexByColor: { white: Map, black: Map } }
+const FALLBACK_CACHE_TTL_MS = 10 * 60 * 1000;
+
+export function buildLocalPlayerExplorerIndex(games, username) {
+  const lower = String(username || '').toLowerCase();
+  const byColor = { white: new Map(), black: new Map() };
+
+  for (const g of games || []) {
+    if (!g?.pgn) continue;
+    const isWhite = (g.white || '').toLowerCase() === lower;
+    const isBlack = (g.black || '').toLowerCase() === lower;
+    if (!isWhite && !isBlack) continue;
+    const pCol = isWhite ? 'white' : 'black';
+    const targetMap = byColor[pCol];
+
+    const parser = new Chess();
+    try {
+      parser.loadPgn(g.pgn, { strict: false });
+    } catch (_) {
+      continue;
+    }
+    const headers = parser.getHeaders();
+    const startFen = headers.FEN || START_FEN;
+    const verbose = parser.history({ verbose: true });
+    if (!verbose.length) continue;
+
+    let replay;
+    try {
+      replay = new Chess(startFen);
+    } catch (_) {
+      continue;
+    }
+
+    const winner = g.result === '1-0' ? 'white' : g.result === '0-1' ? 'black' : null;
+    const gameSummary = {
+      id: g.id || `${g.date}_${g.white}_${g.black}`,
+      winner,
+      white: { name: g.white, rating: g.whiteElo || 0 },
+      black: { name: g.black, rating: g.blackElo || 0 },
+      month: (g.date || '').slice(0, 7),
+      pgn: g.pgn,
+    };
+
+    const lim = Math.min(verbose.length, 36);
+    for (let p = 0; p < lim; p++) {
+      const nf = normalizeFen(replay.fen());
+      let mv;
+      try {
+        mv = replay.move({
+          from: verbose[p].from,
+          to: verbose[p].to,
+          promotion: verbose[p].promotion,
+        });
+      } catch (_) {
+        break;
+      }
+      if (!mv) break;
+      const uci = mv.from + mv.to + (mv.promotion || '');
+      let bucket = targetMap.get(nf);
+      if (!bucket) {
+        bucket = { white: 0, draws: 0, black: 0, moves: new Map(), recentGames: [] };
+        targetMap.set(nf, bucket);
+      }
+      if (winner === 'white') bucket.white++;
+      else if (winner === 'black') bucket.black++;
+      else bucket.draws++;
+
+      let mRec = bucket.moves.get(uci);
+      if (!mRec) {
+        mRec = { uci, san: mv.san, white: 0, draws: 0, black: 0 };
+        bucket.moves.set(uci, mRec);
+      }
+      if (winner === 'white') mRec.white++;
+      else if (winner === 'black') mRec.black++;
+      else mRec.draws++;
+
+      if (bucket.recentGames.length < 6 && !bucket.recentGames.some((x) => x.id === gameSummary.id)) {
+        bucket.recentGames.push(gameSummary);
+      }
+    }
+  }
+
+  return byColor;
+}
+
+async function fetchPlayerExplorerViaRecentGames(username, color, fen, { signal, reauthNeeded = false } = {}) {
+  const key = username.toLowerCase();
+  let cached = playerFallbackCache.get(key);
+  if (!cached || Date.now() - cached.fetchedAt > FALLBACK_CACHE_TTL_MS) {
+    const games = await fetchLichessUserGames(username, { max: 200, signal });
+    cached = {
+      fetchedAt: Date.now(),
+      sampledGames: games.length,
+      byColor: buildLocalPlayerExplorerIndex(games, username),
+    };
+    playerFallbackCache.set(key, cached);
+  }
+
+  const colKey = color === 'black' ? 'black' : 'white';
+  const bucket = cached.byColor[colKey].get(normalizeFen(fen));
+  if (!bucket) {
+    return {
+      white: 0,
+      draws: 0,
+      black: 0,
+      moves: [],
+      recentGames: [],
+      fallbackLocal: true,
+      reauthNeeded,
+      sampledGames: cached.sampledGames,
+    };
+  }
+
+  const moves = Array.from(bucket.moves.values()).sort(
+    (a, b) => b.white + b.draws + b.black - (a.white + a.draws + a.black)
+  );
+  return {
+    white: bucket.white,
+    draws: bucket.draws,
+    black: bucket.black,
+    moves,
+    recentGames: bucket.recentGames,
+    fallbackLocal: true,
+    reauthNeeded,
+    sampledGames: cached.sampledGames,
+  };
+}
+
 async function fetchExplorerViaSessionProxy(source, fen, { color = 'white', signal } = {}) {
   const params = new URLSearchParams({ source, fen });
   if (source === 'player') params.set('color', color === 'black' ? 'black' : 'white');
@@ -88,42 +218,50 @@ export async function fetchExplorer(
 ) {
   // Signed-in Lichess player games explorer
   if (source === 'player') {
+    let reauthNeeded = false;
+
+    // 1. Try server-side OAuth proxy (full Lichess history via explorer.lichess.org/player)
     if (authenticated) {
       try {
-        return await fetchExplorerViaSessionProxy('player', fen, { color, signal });
+        const res = await fetchExplorerViaSessionProxy('player', fen, { color, signal });
+        if (res && (!res.indexing || (res.moves && res.moves.length))) {
+          return res;
+        }
+        // If Lichess is still building the on-demand index with 0 moves yet, fall through to instant recent-games cache
       } catch (err) {
         if (err.name === 'AbortError' || err.name === 'RateLimitError') throw err;
-        // If user signed in before token storage was added, fall back to manual token if present
-        if (!(err.reauthNeeded && state.lichessToken && player)) {
-          throw err;
+        if (err.reauthNeeded) reauthNeeded = true;
+      }
+    }
+
+    // 2. Try direct explorer.lichess.org/player if user has a manual token saved
+    if (player && state.lichessToken) {
+      const url = `https://explorer.lichess.org/player?player=${encodeURIComponent(player)}&color=${color === 'black' ? 'black' : 'white'}&fen=${encodeURIComponent(fen)}&recentGames=4`;
+      try {
+        const text = await fetchText(url, {
+          signal,
+          headers: {
+            Accept: 'application/x-ndjson',
+            Authorization: `Bearer ${state.lichessToken}`,
+          },
+        });
+        const parsed = parseExplorerPlayerNdjson(text);
+        if (parsed && (parsed.moves?.length || !parsed.queuePosition)) {
+          return parsed;
         }
+      } catch (err) {
+        if (err.name === 'AbortError' || err.name === 'RateLimitError') throw err;
       }
     }
 
-    if (!player || !state.lichessToken) {
-      const authErr = new Error('Sign in with Lichess to browse your own games');
-      authErr.authRequired = true;
-      throw authErr;
+    // 3. Seamless zero-token fallback: index the user's last 200 public Lichess games directly
+    if (player) {
+      return fetchPlayerExplorerViaRecentGames(player, color, fen, { signal, reauthNeeded });
     }
 
-    const url = `https://explorer.lichess.org/player?player=${encodeURIComponent(player)}&color=${color === 'black' ? 'black' : 'white'}&fen=${encodeURIComponent(fen)}&recentGames=8`;
-    try {
-      const text = await fetchText(url, {
-        signal,
-        headers: {
-          Accept: 'application/x-ndjson, application/json',
-          Authorization: `Bearer ${state.lichessToken}`,
-        },
-      });
-      return parseExplorerPlayerNdjson(text);
-    } catch (err) {
-      if (err.status === 401 || err.status === 403) {
-        const authErr = new Error('Lichess token required');
-        authErr.authRequired = true;
-        throw authErr;
-      }
-      throw err;
-    }
+    const authErr = new Error('Sign in with Lichess to browse your own games');
+    authErr.authRequired = true;
+    throw authErr;
   }
 
   // When signed in via Lichess OAuth without a manual token, route Masters/Lichess through session proxy

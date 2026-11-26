@@ -590,6 +590,99 @@ test('Cloud Sync pulls repertoire & scout targets on fresh device and pushes edi
   expect(pageErrors).toEqual([]);
 });
 
+test('mobile board moves never scroll the screen, repertoire tree jumps on click, and My Games falls back cleanly', async ({
+  page,
+}) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.route('https://lichess.org/api/broadcast/**', (r) => r.abort());
+  await page.route('https://lichess.org/api/cloud-eval*', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+
+  // Signed in, but /api/lichess/explorer returns reauth_needed -> My Games must seamlessly fall back to public user games
+  await page.route('**/api/auth/me', (r) =>
+    r.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        configured: true,
+        authenticated: true,
+        user: { id: 'mobileuser', username: 'MobileUser' },
+      }),
+    })
+  );
+  await page.route('**/api/sync', (r) =>
+    r.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        user: { id: 'mobileuser', username: 'MobileUser' },
+        repertoire: SAMPLE_REPERTOIRE,
+        repertoireName: 'Mobile Rep',
+        repertoireUpdatedAt: 1_700_000_000_000,
+        progress: {},
+        progressUpdatedAt: 0,
+        scoutTargets: [],
+        scoutTargetsUpdatedAt: 0,
+      }),
+    })
+  );
+  await page.route('**/api/lichess/explorer*', (r) =>
+    r.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({ code: 'reauth_needed', error: 'Re-auth needed' }),
+    })
+  );
+  await page.route('https://lichess.org/api/games/user/MobileUser*', (r) =>
+    r.fulfill({
+      contentType: 'application/x-ndjson',
+      body:
+        JSON.stringify({
+          id: 'm1',
+          variant: 'standard',
+          perf: 'blitz',
+          createdAt: Date.UTC(2026, 10, 25),
+          winner: 'white',
+          players: {
+            white: { user: { name: 'MobileUser' }, rating: 2000 },
+            black: { user: { name: 'Foe' }, rating: 1990 },
+          },
+          pgn: '1. c4 e5 2. Nc3 Nf6 1-0',
+        }) + '\n',
+    })
+  );
+
+  await page.goto('/');
+  await expect(page.locator('#chessboard .sq[data-sq="e2"]')).toBeVisible();
+
+  // Play 1. e4 e5 by clicking squares on mobile viewport and verify neither window nor <main> scrolled!
+  await page.click('#chessboard .sq[data-sq="e2"]');
+  await page.click('#chessboard .sq[data-sq="e4"]');
+  await page.click('#chessboard .sq[data-sq="e7"]');
+  await page.click('#chessboard .sq[data-sq="e5"]');
+
+  const scrollPos = await page.evaluate(() => ({
+    winY: window.scrollY,
+    mainTop: document.querySelector('main')?.scrollTop || 0,
+  }));
+  expect(scrollPos.winY).toBe(0);
+  expect(scrollPos.mainTop).toBe(0);
+
+  // Verify My Games seamlessly falls back to recent public games and shows 1. c4
+  await page.click('#btnFirst');
+  await expect(page.locator('#refSrcPlayer')).toBeVisible();
+  await page.click('#refSrcPlayer');
+  await expect(page.locator('#refTableBody')).toContainText('c4', { timeout: 10_000 });
+
+  // Verify slim Repertoire chess tree lets user click directly to 2. Nf3
+  await page.click('[data-hub="repertoire"]');
+  await page.locator('#hub-repertoire .rep-tree-move', { hasText: 'Nf3' }).click();
+  await expect(page.locator('#variationTreeContainer')).toContainText('Nf3');
+  expect(pageErrors).toEqual([]);
+});
+
+
 
 
 

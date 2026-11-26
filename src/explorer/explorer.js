@@ -65,6 +65,10 @@ export async function refreshReferenceExplorer() {
   }
 
   const sync = getCloudSyncState();
+  const tbodyEl = document.getElementById('refTableBody');
+  if (state.refSource === 'player' && tbodyEl) {
+    tbodyEl.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">Loading ${escapeHtml(sync.user?.username || 'your')} ${state.refPlayerColor === 'black' ? 'Black' : 'White'} games…</td></tr>`;
+  }
 
   try {
     const data = await fetchExplorer(state.refSource, fen, {
@@ -82,7 +86,11 @@ export async function refreshReferenceExplorer() {
       setOpeningPill(fb.eco, fb.name);
     }
 
-    renderRefTable(data.moves || []);
+    renderRefTable(data.moves || [], {
+      fallbackLocal: Boolean(data.fallbackLocal),
+      reauthNeeded: Boolean(data.reauthNeeded),
+      sampledGames: data.sampledGames || 0,
+    });
     const games = [...(data.topGames || []), ...(data.recentGames || [])];
     state.mastersGamesCache = Array.from(new Map(games.map((g) => [g.id, g])).values());
     renderMasterGamesTable();
@@ -117,28 +125,38 @@ export async function refreshReferenceExplorer() {
   }
 }
 
-export function renderRefTable(moves) {
+export function renderRefTable(moves, meta = {}) {
   const tbody = document.getElementById('refTableBody');
   if (!tbody) return;
 
   const total = moves.reduce((s, m) => s + m.white + m.draws + m.black, 0);
   document.getElementById('refTotalGames').textContent = `${total.toLocaleString()} games`;
 
+  const footerRow =
+    state.refSource === 'player' && meta.fallbackLocal
+      ? `<tr><td colspan="3" class="py-1.5 px-2 text-center font-sans text-[10px] text-txtMuted bg-surface/40">Last ${meta.sampledGames || 0} Lichess games${
+          meta.reauthNeeded
+            ? ` · <a href="${escapeHtml(getLoginUrl('/'))}" class="text-vi hover:underline font-semibold">Refresh sign-in for full history →</a>`
+            : ''
+        }</td></tr>`
+      : '';
+
   if (!moves.length) {
     const emptyMsg =
       state.refSource === 'player'
         ? `No ${state.refPlayerColor === 'black' ? 'Black' : 'White'} Lichess games reached this position.`
         : 'No database games here.';
-    tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">${escapeHtml(emptyMsg)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">${escapeHtml(emptyMsg)}</td></tr>${footerRow}`;
     return;
   }
 
-  tbody.innerHTML = moves
-    .map((m) => {
-      const cnt = m.white + m.draws + m.black;
-      return `<tr class="db-mv cursor-pointer" data-uci="${escapeHtml(m.uci)}" data-san="${escapeHtml(m.san)}"><td class="font-bold text-txt">${escapeHtml(m.san)}</td><td class="text-txtMuted">${formatCount(cnt)}</td><td>${renderWdbBar(m.white, m.draws, m.black)}</td></tr>`;
-    })
-    .join('');
+  tbody.innerHTML =
+    moves
+      .map((m) => {
+        const cnt = m.white + m.draws + m.black;
+        return `<tr class="db-mv cursor-pointer" data-uci="${escapeHtml(m.uci)}" data-san="${escapeHtml(m.san)}"><td class="font-bold text-txt">${escapeHtml(m.san)}</td><td class="text-txtMuted">${formatCount(cnt)}</td><td>${renderWdbBar(m.white, m.draws, m.black)}</td></tr>`;
+      })
+      .join('') + footerRow;
 
   tbody.querySelectorAll('.db-mv').forEach((r) => {
     r.onclick = () => playMoveOnTree(r.dataset.uci || r.dataset.san);
@@ -165,6 +183,7 @@ export function renderMasterGamesTable() {
   const sync = getCloudSyncState();
   const list = state.mastersGamesCache.map((g) => ({
     id: g.id,
+    pgn: g.pgn || '',
     white: g.white?.name || 'White',
     whiteElo: g.white?.rating || '',
     black: g.black?.name || 'Black',
@@ -207,6 +226,10 @@ export function renderMasterGamesTable() {
     tr.onclick = async () => {
       const g = list[parseInt(tr.dataset.idx, 10)];
       if (!g) return;
+      if (g.pgn) {
+        addBoardTab(`${g.white.split(',')[0]} - ${g.black.split(',')[0]}`, g.pgn, g);
+        return;
+      }
       showToast('Fetching game PGN...');
       try {
         const pgn = await fetchExplorerGamePgn(state.refSource, g.id);

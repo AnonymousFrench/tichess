@@ -1,11 +1,15 @@
+import { Chess } from 'chess.js';
 import {
   state,
+  START_FEN,
   getActiveTab,
   getCurrentFen,
   normalizeFen,
   escapeHtml,
   showToast,
+  emitPositionChanged,
 } from '../state.js';
+import { createNode } from '../chess/tree.js';
 import {
   parseRepertoireFile,
   mergeProgress,
@@ -39,6 +43,7 @@ let loadedProg = {};
 let fenIndex = new Map();
 let activeDrawer = null; // null | 'pgn' | 'addLine' | 'prep'
 let addLineDraft = null; // optional { color, sectionName, lineName }
+let collapsedSections = new Set(); // section ids explicitly collapsed by user
 let prepState = {
   colId: '',
   userColor: 'both',
@@ -710,6 +715,191 @@ function bindDrawerEvents(host) {
   }
 }
 
+/**
+ * Build an acyclic move trie for one opening section (`sec`) so the entire opening
+ * can be rendered as a slim, clickable chess tree.
+ */
+export function buildSectionMoveTree(repertoire, sec, progress = {}, now = Date.now()) {
+  const firstLn = repertoire?.lines?.[sec?.lines?.[0]];
+  const startFen = repertoire?.pos?.[firstLn?.pos?.[0]]?.f || START_FEN;
+  const root = {
+    fen: startFen,
+    normFen: normalizeFen(startFen),
+    pathUci: [],
+    children: [],
+  };
+
+  for (const li of sec?.lines || []) {
+    const ln = repertoire.lines?.[li];
+    if (!ln?.uci?.length) continue;
+    let cur = root;
+    const pathUci = [];
+    for (let p = 0; p < ln.uci.length; p++) {
+      const uci = ln.uci[p];
+      const san = ln.san[p];
+      pathUci.push(uci);
+      let child = cur.children.find((c) => c.uci === uci);
+      if (!child) {
+        const fromPi = ln.pos[p];
+        const toPi = ln.pos[p + 1];
+        const edge = repertoire.pos?.[fromPi]?.e?.find((e) => e[0] === uci);
+        const flags = edge ? edge[3] : 0;
+        const cardId = edge?.[5] || null;
+        const card = cardId ? repertoire.cards?.[cardId] : null;
+        const toFen = repertoire.pos?.[toPi]?.f || '';
+        const fromFen = repertoire.pos?.[fromPi]?.f || '';
+        const parts = fromFen.split(' ');
+        const moveNum = parseInt(parts[5] || '1', 10) || Math.floor(p / 2) + 1;
+        const turn = parts[1] === 'b' ? 'b' : 'w';
+        child = {
+          uci,
+          san,
+          moveNum,
+          color: turn,
+          fen: toFen,
+          normFen: toFen ? normalizeFen(toFen) : '',
+          mine: Boolean(flags & 1),
+          isAlt: Boolean(flags & 2),
+          status: cardId ? cardStatus(progress?.[cardId], now) : null,
+          note: card?.n || '',
+          warning: repertoire.warn?.[`${fromPi}|${uci}`] || '',
+          pathUci: [...pathUci],
+          children: [],
+        };
+        cur.children.push(child);
+      }
+      cur = child;
+    }
+  }
+  return root;
+}
+
+function navigateBoardToRepertoirePath(startFen, pathUcis) {
+  const tab = getActiveTab();
+  if (!tab) return;
+  const baseFen = startFen || START_FEN;
+  if (normalizeFen(tab.root.fen) !== normalizeFen(baseFen)) {
+    tab.root = createNode({ fen: baseFen });
+  }
+  let cur = tab.root;
+  const chess = new Chess(cur.fen);
+  for (const uci of pathUcis) {
+    if (!uci || uci.length < 4) break;
+    const existing = cur.children.find((c) => c.uci === uci);
+    if (existing) {
+      cur = existing;
+      chess.load(cur.fen);
+      continue;
+    }
+    let m;
+    try {
+      m = chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || undefined });
+    } catch (_) {
+      break;
+    }
+    if (!m) break;
+    const node = createNode({
+      fen: chess.fen(),
+      san: m.san,
+      uci: m.from + m.to + (m.promotion || ''),
+      from: m.from,
+      to: m.to,
+      promotion: m.promotion || '',
+      color: m.color,
+      moveNum: cur.color === 'w' ? cur.moveNum : cur.moveNum + 1,
+      parent: cur,
+    });
+    cur.children.push(node);
+    cur = node;
+  }
+  tab.current = cur;
+  state.selectedSq = null;
+  state.legalTargets = [];
+  state.hoverArrowUci = null;
+  emitPositionChanged();
+}
+
+function statusDotHtml(st) {
+  if (st === 'mastered') return '<span class="inline-block w-1.5 h-1.5 rounded-full bg-em ml-0.5 align-middle" title="Mastered"></span>';
+  if (st === 'due') return '<span class="inline-block w-1.5 h-1.5 rounded-full bg-ro ml-0.5 align-middle" title="Due for review"></span>';
+  if (st === 'learning') return '<span class="inline-block w-1.5 h-1.5 rounded-full bg-cy ml-0.5 align-middle" title="Learning"></span>';
+  return '';
+}
+
+function renderMoveTreeNodeHtml(node, { activeNormFen, startFen, showNum }) {
+  const isActive = Boolean(activeNormFen && node.normFen === activeNormFen);
+  const num = node.color === 'w' ? `${node.moveNum}.` : showNum ? `${node.moveNum}...` : '';
+  const tipParts = [];
+  if (node.note) tipParts.push(node.note);
+  if (node.warning) tipParts.push(`⚠ ${node.warning}`);
+  const titleAttr = tipParts.length ? ` title="${escapeHtml(tipParts.join(' — '))}"` : '';
+
+  const tone = isActive
+    ? 'bg-em/25 text-em ring-1 ring-em/50 font-bold'
+    : node.mine
+      ? 'text-em/95 hover:bg-em/15 font-semibold'
+      : 'text-txtMuted hover:text-txt hover:bg-surface';
+
+  const noteDot = node.note ? '<span class="text-[8px] text-cy/80 ml-0.5">•</span>' : '';
+  return `<button class="rep-tree-move inline-flex items-center px-1 py-[1px] rounded font-mono text-[10.5px] leading-tight transition-colors ${tone}" data-start-fen="${escapeHtml(startFen)}" data-path="${escapeHtml(node.pathUci.join(' '))}" data-uci="${escapeHtml(node.uci)}"${titleAttr}>${
+    num ? `<span class="opacity-55 mr-[1px]">${num}</span>` : ''
+  }${escapeHtml(node.san)}${statusDotHtml(node.status)}${noteDot}</button>`;
+}
+
+function renderSectionTreeHtml(treeRoot, activeNormFen) {
+  const startFen = treeRoot.fen;
+
+  function renderRun(startNode, depth, prefixGlyph) {
+    const chain = [];
+    let cur = startNode;
+    while (cur) {
+      chain.push(cur);
+      if (cur.children.length === 1) {
+        cur = cur.children[0];
+      } else {
+        break;
+      }
+    }
+
+    const movesHtml = chain
+      .map((n, idx) =>
+        renderMoveTreeNodeHtml(n, {
+          activeNormFen,
+          startFen,
+          showNum: idx === 0 || n.color === 'w',
+        })
+      )
+      .join(' ');
+
+    const tail = chain[chain.length - 1];
+    let subHtml = '';
+    if (tail.children.length > 1) {
+      const nextDepth = Math.min(depth + 1, 5);
+      subHtml = tail.children
+        .map((ch, idx) =>
+          renderRun(ch, nextDepth, idx === tail.children.length - 1 ? '└' : '├')
+        )
+        .join('');
+    }
+
+    const padPx = depth * 12;
+    const glyph = prefixGlyph
+      ? `<span class="text-borderBright font-mono text-[10px] mr-1 select-none">${prefixGlyph}</span>`
+      : '';
+    return `<div style="padding-left:${padPx}px" class="py-[1.5px] flex flex-wrap items-center gap-x-0.5 gap-y-0.5">${glyph}${movesHtml}</div>${subHtml}`;
+  }
+
+  if (!treeRoot.children.length) {
+    return '<div class="text-[10px] text-txtMuted px-2 py-1">No moves</div>';
+  }
+  if (treeRoot.children.length === 1) {
+    return renderRun(treeRoot.children[0], 0, '');
+  }
+  return treeRoot.children
+    .map((ch, idx) => renderRun(ch, 0, idx === treeRoot.children.length - 1 ? '└' : '├'))
+    .join('');
+}
+
 export function renderStudioRepertoirePanel() {
   const host = document.getElementById('hub-repertoire');
   if (!host) return;
@@ -784,6 +974,7 @@ export function renderStudioRepertoirePanel() {
   const fen = getCurrentFen();
   const { total, sections } = summarizeRepertoire(rep, loadedProg);
   const hit = lookupRepertoirePosition(fenIndex, rep, loadedProg, fen);
+  const activeNormFen = normalizeFen(fen);
 
   const drawerHtml =
     activeDrawer === 'pgn'
@@ -794,100 +985,94 @@ export function renderStudioRepertoirePanel() {
           ? renderPrepDrawer()
           : '';
 
+  // Slim 1-row next-move strip + inline note for the current board position
+  const firstNoteMove = hit?.moves?.find((m) => m.note || m.warning);
   const movesHtml = hit?.moves?.length
     ? `
-      <div class="flex flex-col gap-1">
-        <div class="flex items-center justify-between text-[10.5px]">
-          <span class="font-semibold text-em">Prepared moves at this position${hit.openingName ? ` · <span class="text-txt">${escapeHtml(hit.openingName)}</span>` : ''}</span>
-          <span class="text-txtMuted">Click a move to play</span>
-        </div>
-        <div class="divide-y divide-borderSubtle/50 rounded border border-borderSubtle overflow-hidden bg-[#0c121e]">
+      <div class="px-2 py-1 rounded bg-[#0c121e] border border-borderSubtle flex flex-col gap-1">
+        <div class="flex items-center gap-1.5 flex-wrap text-[10.5px]">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-txtMuted shrink-0">Next:</span>
           ${hit.moves
             .map(
               (m) => `
-            <button class="rep-pos-move w-full text-left px-2.5 py-1.5 hover:bg-surface flex items-start justify-between gap-2 text-[11px] transition-colors" data-uci="${escapeHtml(m.uci)}">
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-1.5 flex-wrap">
-                  <span class="font-mono font-bold ${m.mine ? 'text-em' : 'text-txt'}">${escapeHtml(m.san)}</span>
-                  <span class="px-1 py-[0.5px] rounded text-[9.5px] font-mono ${m.mine ? 'bg-em/15 text-em' : 'bg-surface text-txtMuted'}">${m.mine ? 'Your move' : 'Opponent'}</span>
-                  ${m.isAlt ? '<span class="px-1 py-[0.5px] rounded bg-vi/20 text-vi text-[9.5px] font-mono">Alt</span>' : ''}
-                  ${statusPill(m.status)}
-                </div>
-                ${m.note ? `<div class="text-[10.5px] text-txtMuted mt-0.5 leading-snug">${escapeHtml(m.note)}</div>` : ''}
-                ${m.warning ? `<div class="text-[10.5px] text-ro mt-0.5 leading-snug">⚠ ${escapeHtml(m.warning)}</div>` : ''}
-              </div>
-              <span class="font-mono text-[10px] text-cy shrink-0 mt-0.5">Play →</span>
+            <button class="rep-pos-move inline-flex items-center gap-1 px-1.5 py-[1px] rounded border text-[10.5px] font-mono transition-colors ${
+              m.mine
+                ? 'bg-em/15 hover:bg-em/25 text-em border-em/35 font-bold'
+                : 'bg-surface hover:bg-surfaceHover text-txt border-borderSubtle'
+            }" data-uci="${escapeHtml(m.uci)}" title="${escapeHtml(m.note || (m.mine ? 'Your prepared move' : 'Opponent reply'))}">
+              <span>${escapeHtml(m.san)}</span>
+              ${statusPill(m.status)}
             </button>
           `
             )
             .join('')}
         </div>
         ${
-          hit.lines.length
-            ? `<div class="flex items-center gap-1 flex-wrap pt-0.5">
-                <span class="text-[10px] text-txtMuted">Lines:</span>
-                ${hit.lines
-                  .slice(0, 8)
-                  .map(
-                    (ln, idx) =>
-                      `<button class="rep-line-chip px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10px] font-mono text-txt/90" data-lidx="${idx}">${escapeHtml(ln.id)} ${escapeHtml(ln.name)}</button>`
-                  )
-                  .join('')}
-              </div>`
+          firstNoteMove?.note
+            ? `<div class="text-[10.5px] text-txtMuted leading-snug"><span class="font-mono font-semibold text-em">${escapeHtml(firstNoteMove.san)}:</span> ${escapeHtml(firstNoteMove.note)}</div>`
+            : ''
+        }
+        ${
+          firstNoteMove?.warning
+            ? `<div class="text-[10px] text-ro leading-snug">⚠ ${escapeHtml(firstNoteMove.warning)}</div>`
             : ''
         }
       </div>
     `
-    : `<div class="px-2.5 py-1.5 rounded bg-surface/40 border border-borderSubtle text-[11px] text-txtMuted">Current board position is outside your repertoire. Click <b>+ Add Line</b> to save this line, or load an opening below.</div>`;
+    : '';
 
-  const sectionsHtml = sections
+  const secById = new Map((rep.secs || []).map((s) => [s.id, s]));
+  const treeSectionsHtml = sections
     .map((s) => {
-      const pct = s.counts.total ? Math.round((s.counts.mastered / s.counts.total) * 100) : 0;
+      const secObj = secById.get(s.id);
+      const isCollapsed = collapsedSections.has(s.id);
+      const treeRoot = secObj ? buildSectionMoveTree(rep, secObj, loadedProg) : null;
+      const treeBody = !isCollapsed && treeRoot
+        ? `<div class="px-2 py-1 border-t border-borderSubtle/50 bg-[#0a0f19]">${renderSectionTreeHtml(treeRoot, activeNormFen)}</div>`
+        : '';
+
       return `
-        <div class="px-2.5 py-1.5 rounded bg-surface/50 border border-borderSubtle flex items-center justify-between gap-2 text-[11px]">
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-1.5">
-              <span class="text-[11px]">${s.color === 'w' ? '♙' : '♟'}</span>
+        <div class="rounded border border-borderSubtle/80 bg-surface/35 overflow-hidden">
+          <div class="flex items-center justify-between gap-1.5 px-2 py-1 hover:bg-surface/70 text-[11px]">
+            <button class="rep-sec-toggle flex items-center gap-1.5 min-w-0 flex-1 text-left" data-secid="${escapeHtml(s.id)}">
+              <span class="font-mono text-[10px] text-txtMuted w-3 shrink-0">${isCollapsed ? '▸' : '▾'}</span>
+              <span class="text-[11px] shrink-0">${s.color === 'w' ? '♙' : '♟'}</span>
               <span class="font-semibold text-txt truncate">${escapeHtml(s.name)}</span>
-              ${s.counts.due > 0 ? `<span class="px-1 rounded bg-ro/20 text-ro font-mono text-[9.5px] font-bold">${s.counts.due} due</span>` : ''}
-            </div>
-            <div class="flex items-center gap-2 mt-1">
-              <div class="flex-1 h-1 rounded-full bg-panel overflow-hidden">
-                <div class="h-full bg-em" style="width:${pct}%"></div>
-              </div>
               <span class="font-mono text-[9.5px] text-txtMuted shrink-0">${s.counts.mastered}/${s.counts.total}</span>
-            </div>
+              ${s.counts.due > 0 ? `<span class="px-1 rounded bg-ro/20 text-ro font-mono text-[9px] font-bold shrink-0">${s.counts.due} due</span>` : ''}
+            </button>
+            ${
+              s.firstLineIdx !== null
+                ? `<button class="rep-sec-load px-1.5 py-[1px] rounded bg-cy/10 hover:bg-cy/20 text-cy font-mono text-[9.5px] shrink-0" data-lidx="${s.firstLineIdx}" title="Open main line in a new tab">Tab ↗</button>`
+                : ''
+            }
           </div>
-          ${
-            s.firstLineIdx !== null
-              ? `<button class="rep-sec-load px-2 py-0.5 rounded bg-cy/15 hover:bg-cy/25 text-cy border border-cy/35 font-mono text-[10px] shrink-0" data-lidx="${s.firstLineIdx}">Load</button>`
-              : ''
-          }
+          ${treeBody}
         </div>
       `;
     })
     .join('');
 
   host.innerHTML = `
-    <div class="flex flex-col gap-2">
-      <div class="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded bg-[#0e1522] border border-borderSubtle text-[11px]">
+    <div class="flex flex-col gap-1.5">
+      <div class="flex flex-wrap items-center justify-between gap-1.5 px-2 py-1 rounded bg-[#0e1522] border border-borderSubtle text-[11px]">
         <div class="flex items-center gap-2 flex-wrap min-w-0">
           <span class="font-bold text-txt truncate">${escapeHtml(loadedRep.name || 'My Repertoire')}</span>
           <span class="font-mono text-[10px] text-txtMuted">
             <span class="${total.due > 0 ? 'text-ro font-bold' : ''}">${total.due} due</span> ·
-            <span class="text-em">${total.mastered} mastered</span> / ${total.total} moves
+            <span class="text-em">${total.mastered}/${total.total}</span>
           </span>
         </div>
         <div class="flex items-center gap-1 flex-wrap shrink-0">
-          <a href="repertoire.html" class="px-2 py-0.5 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-bold text-[10.5px]">Train ↗</a>
-          <button id="btnStudioRepPrepToggle" class="px-2 py-0.5 rounded bg-am/15 hover:bg-am/25 text-am border border-am/35 font-semibold text-[10.5px]" title="Cross-check scouted opponent against your repertoire">🎯 Prep</button>
-          <button id="btnStudioRepAddLine" class="px-2 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10.5px]">+ Add Line</button>
-          <button id="btnStudioRepPgnToggle" class="px-2 py-0.5 rounded bg-cy/15 hover:bg-cy/25 text-cy border border-cy/35 font-semibold text-[10.5px]">+ PGN</button>
-          <label class="px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-txt text-[10.5px] cursor-pointer">
+          <a href="repertoire.html" class="px-2 py-0.5 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-bold text-[10px]">Train ↗</a>
+          <button id="btnStudioRepPrepToggle" class="px-1.5 py-0.5 rounded bg-am/15 hover:bg-am/25 text-am border border-am/35 font-semibold text-[10px]" title="Cross-check scouted opponent against your repertoire">🎯 Prep</button>
+          <button id="btnStudioRepAddLine" class="px-1.5 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10px]">+ Add Line</button>
+          <button id="btnStudioRepPgnToggle" class="px-1.5 py-0.5 rounded bg-cy/15 hover:bg-cy/25 text-cy border border-cy/35 font-semibold text-[10px]">+ PGN</button>
+          <label class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-txt text-[10px] cursor-pointer">
             JSON
             <input id="studioRepFileInput" type="file" accept=".json,.pgn,application/json,text/plain" class="hidden" />
           </label>
-          <button id="btnStudioRepBackup" class="px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-txt text-[10.5px]">Back up</button>
+          <button id="btnStudioRepBackup" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-txt text-[10px]">Back up</button>
         </div>
       </div>
 
@@ -895,10 +1080,7 @@ export function renderStudioRepertoirePanel() {
 
       ${movesHtml}
 
-      <div class="flex flex-col gap-1">
-        <div class="text-[10px] font-semibold uppercase tracking-wider text-txtMuted">Openings (${sections.length})</div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${sectionsHtml}</div>
-      </div>
+      <div class="flex flex-col gap-1">${treeSectionsHtml}</div>
     </div>
   `;
 
@@ -955,15 +1137,29 @@ export function renderStudioRepertoirePanel() {
     };
   });
 
-  if (hit?.lines?.length) {
-    host.querySelectorAll('.rep-line-chip').forEach((btn) => {
-      btn.onclick = () => {
-        const ln = hit.lines[parseInt(btn.dataset.lidx, 10)];
-        if (!ln) return;
-        addBoardTab(`${ln.id} ${ln.name}`, lineToPgn(ln), null, { jumpEnd: true });
-      };
-    });
-  }
+  host.querySelectorAll('.rep-tree-move').forEach((btn) => {
+    btn.onclick = () => {
+      const pathUcis = (btn.dataset.path || '').split(/\s+/).filter(Boolean);
+      navigateBoardToRepertoirePath(btn.dataset.startFen || START_FEN, pathUcis);
+    };
+    btn.onmouseenter = () => {
+      state.hoverArrowUci = btn.dataset.uci;
+      renderArrows();
+    };
+    btn.onmouseleave = () => {
+      state.hoverArrowUci = null;
+      renderArrows();
+    };
+  });
+
+  host.querySelectorAll('.rep-sec-toggle').forEach((btn) => {
+    btn.onclick = () => {
+      const sid = btn.dataset.secid;
+      if (collapsedSections.has(sid)) collapsedSections.delete(sid);
+      else collapsedSections.add(sid);
+      renderStudioRepertoirePanel();
+    };
+  });
 
   host.querySelectorAll('.rep-sec-load').forEach((btn) => {
     btn.onclick = () => {

@@ -5,6 +5,8 @@ import {
   readSessionFromRequest,
 } from '../_lib/session.js';
 
+const STREAM_TIMEOUT_MS = 7500;
+
 /**
  * Parse the final valid JSON object from an NDJSON stream (used by explorer.lichess.org/player).
  */
@@ -22,6 +24,61 @@ export function parseLastNdjsonObject(ndjsonText) {
     }
   }
   return null;
+}
+
+/**
+ * Read a streaming NDJSON response up to `timeoutMs` so on-demand Lichess player
+ * indexing cannot cause a Vercel 504 timeout.
+ */
+async function readNdjsonWithTimeout(upstream, timeoutMs = STREAM_TIMEOUT_MS) {
+  if (!upstream.body?.getReader) {
+    const text = await upstream.text();
+    return { frame: parseLastNdjsonObject(text), timedOut: false };
+  }
+
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let lastFrame = null;
+  let timedOut = false;
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      reader.cancel();
+    } catch (_) {}
+  }, timeoutMs);
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split(/\r?\n/);
+      buf = parts.pop() || '';
+      for (const raw of parts) {
+        const line = raw.trim();
+        if (!line) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (obj && typeof obj === 'object') lastFrame = obj;
+        } catch (_) {}
+      }
+    }
+    const tail = (buf + decoder.decode()).trim();
+    if (tail) {
+      try {
+        const obj = JSON.parse(tail);
+        if (obj && typeof obj === 'object') lastFrame = obj;
+      } catch (_) {}
+    }
+  } catch (_) {
+    // Expected when timer cancels reader
+  } finally {
+    clearTimeout(timer);
+  }
+
+  return { frame: lastFrame, timedOut };
 }
 
 export default async function handler(req, res) {
@@ -70,13 +127,14 @@ export default async function handler(req, res) {
     } else if (source === 'lichess') {
       targetUrl = `https://explorer.lichess.org/lichess?fen=${encodeURIComponent(fen)}&ratings=2000,2200,2500&speeds=blitz,rapid,classical&topGames=4&recentGames=6`;
     } else {
-      targetUrl = `https://explorer.lichess.org/player?player=${encodeURIComponent(user.username)}&color=${color}&fen=${encodeURIComponent(fen)}&recentGames=8`;
+      // Lichess /player explorer caps recentGames at 4
+      targetUrl = `https://explorer.lichess.org/player?player=${encodeURIComponent(user.username)}&color=${color}&fen=${encodeURIComponent(fen)}&recentGames=4`;
     }
 
     const upstream = await fetch(targetUrl, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        Accept: source === 'player' ? 'application/x-ndjson, application/json' : 'application/json',
+        Accept: source === 'player' ? 'application/x-ndjson' : 'application/json',
       },
     });
 
@@ -90,14 +148,29 @@ export default async function handler(req, res) {
       return res.status(429).json({ error: 'Lichess Explorer rate limited' });
     }
     if (!upstream.ok) {
-      return res.status(upstream.status).json({ error: `Explorer error (${upstream.status})` });
+      const detail = (await upstream.text().catch(() => '')).slice(0, 160);
+      return res.status(upstream.status).json({ error: detail || `Explorer error (${upstream.status})` });
     }
 
-    const bodyText = await upstream.text();
-    const data = source === 'player' ? parseLastNdjsonObject(bodyText) : JSON.parse(bodyText);
-    if (!data) {
-      return res.status(200).json({ white: 0, draws: 0, black: 0, moves: [], recentGames: [] });
+    if (source === 'player') {
+      const { frame, timedOut } = await readNdjsonWithTimeout(upstream);
+      if (!frame) {
+        return res.status(200).json({
+          white: 0,
+          draws: 0,
+          black: 0,
+          moves: [],
+          recentGames: [],
+          indexing: timedOut,
+        });
+      }
+      return res.status(200).json({
+        ...frame,
+        indexing: Boolean(timedOut || typeof frame.queuePosition === 'number'),
+      });
     }
+
+    const data = await upstream.json();
     return res.status(200).json(data);
   } catch (err) {
     console.error('[api/lichess/explorer] failed:', err);

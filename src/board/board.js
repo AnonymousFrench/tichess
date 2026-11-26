@@ -284,6 +284,11 @@ export function initBoardInteractions() {
   if (!boardEl || !ghostEl) return;
 
   boardEl.addEventListener('contextmenu', (e) => e.preventDefault());
+  const preventBoardTouchScroll = (e) => {
+    if (e.cancelable) e.preventDefault();
+  };
+  boardEl.addEventListener('touchstart', preventBoardTouchScroll, { passive: false });
+  boardEl.addEventListener('touchmove', preventBoardTouchScroll, { passive: false });
 
   boardEl.addEventListener('pointerdown', (e) => {
     const sqEl = e.target.closest('.sq');

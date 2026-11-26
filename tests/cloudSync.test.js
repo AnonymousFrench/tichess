@@ -14,7 +14,7 @@ import {
 } from '../api/_lib/session.js';
 import { mergeScoutTargets } from '../api/sync/index.js';
 import { parseLastNdjsonObject } from '../api/lichess/explorer.js';
-import { parseExplorerPlayerNdjson } from '../src/api/lichess.js';
+import { parseExplorerPlayerNdjson, buildLocalPlayerExplorerIndex } from '../src/api/lichess.js';
 import { decideRepertoireSyncAction } from '../src/sync/cloudSync.js';
 
 describe('Cloud Sync auth session & PKCE helpers', () => {
@@ -127,5 +127,32 @@ describe('Two-way repertoire and scout target sync resolution', () => {
 
     expect(parseLastNdjsonObject(stream).moves[0].san).toBe('e4');
     expect(parseExplorerPlayerNdjson(stream).moves[0].san).toBe('e4');
+  });
+
+  it('builds a local White/Black opening explorer index from user Lichess games as fallback', () => {
+    const byColor = buildLocalPlayerExplorerIndex(
+      [
+        {
+          id: 'g1',
+          white: 'Alice',
+          black: 'Bob',
+          result: '1-0',
+          date: '2026-11-20',
+          pgn: '1. d4 d5 2. c4 e6 1-0',
+        },
+        {
+          id: 'g2',
+          white: 'Carol',
+          black: 'Alice',
+          result: '0-1',
+          date: '2026-11-21',
+          pgn: '1. e4 c5 2. Nf3 d6 0-1',
+        },
+      ],
+      'Alice'
+    );
+    const startKey = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -';
+    expect(byColor.white.get(startKey).moves.get('d2d4').white).toBe(1);
+    expect(byColor.black.get(startKey).moves.get('e2e4').black).toBe(1);
   });
 });

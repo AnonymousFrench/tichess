@@ -432,3 +432,79 @@ html, body {
   }
   body.dock-dragging .dock-append.over { border-color: #10b981; color: #10b981; background: rgba(16, 185, 129, 0.08); }
 }
+
+/* Controls under the board: 36px targets on desktop, 44px on touch screens and phones. */
+.board-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+}
+.board-nav,
+.board-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.board-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  min-width: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  user-select: none;
+  touch-action: manipulation;
+  transition: background-color 0.12s, transform 0.06s;
+}
+.board-btn:active {
+  transform: translateY(1px);
+}
+.board-btn.hidden {
+  display: none;
+}
+.board-btn-nav {
+  min-width: 48px;
+}
+.board-ico {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+@media (max-width: 1023px), (pointer: coarse) {
+  .board-btn {
+    height: 44px;
+    font-size: 13.5px;
+    border-radius: 10px;
+  }
+  .board-ico {
+    width: 21px;
+    height: 21px;
+  }
+}
+@media (max-width: 640px) {
+  /* Phones: two full-width rows, every button an equal share of the width. */
+  .board-nav,
+  .board-actions {
+    width: 100%;
+  }
+  .board-nav > .board-btn,
+  .board-actions > .board-btn:not(.hidden) {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 6px;
+  }
+}

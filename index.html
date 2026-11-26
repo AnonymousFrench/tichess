@@ -154,24 +154,24 @@
             <span id="botPlayerClock" class="font-mono font-bold px-2 py-0.5 rounded bg-surface border border-borderSubtle text-txt text-[11px]">--:--</span>
           </div>
 
-          <!-- Instant Navigation Bar directly below board -->
-          <div class="px-2 py-1.5 border-t border-borderSubtle bg-bg/55 flex flex-wrap items-center justify-between gap-1">
-            <div class="flex items-center gap-1">
-              <button id="btnFirst" class="px-2 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[11px]" title="First Move (Home)" aria-label="First move">⏮</button>
-              <button id="btnPrev" class="px-2.5 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[11px]" title="Previous Move (←)" aria-label="Previous move">◀</button>
-              <button id="btnNext" class="px-2.5 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[11px]" title="Next Move (→)" aria-label="Next move">▶</button>
-              <button id="btnLast" class="px-2 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[11px]" title="Last Move (End)" aria-label="Last move">⏭</button>
+          <!-- Controls directly below the board: large, touch-friendly targets -->
+          <div class="board-controls border-t border-borderSubtle bg-bg/55">
+            <div class="board-nav" role="group" aria-label="Move navigation">
+              <button id="btnFirst" class="board-btn board-btn-nav bg-surface hover:bg-surfaceHover border border-borderSubtle" title="First move (Home)" aria-label="First move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6v12M18 6l-6 6 6 6"/></svg></button>
+              <button id="btnPrev" class="board-btn board-btn-nav bg-surface hover:bg-surfaceHover border border-borderSubtle" title="Previous move (←)" aria-label="Previous move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+              <button id="btnNext" class="board-btn board-btn-nav bg-surface hover:bg-surfaceHover border border-borderSubtle" title="Next move (→)" aria-label="Next move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+              <button id="btnLast" class="board-btn board-btn-nav bg-surface hover:bg-surfaceHover border border-borderSubtle" title="Last move (End)" aria-label="Last move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6v12M6 6l6 6-6 6"/></svg></button>
             </div>
 
-            <div class="flex items-center gap-1">
-              <button id="btnLiveFollow" class="hidden px-2 py-1 rounded bg-ro/20 text-ro border border-ro/40 text-[10.5px] font-semibold items-center gap-1" title="Auto-jump to latest live move">
-                <span class="w-1.5 h-1.5 rounded-full bg-ro live-dot"></span>
-                <span>Follow Live</span>
+            <div class="board-actions">
+              <button id="btnLiveFollow" class="hidden board-btn bg-ro/20 text-ro border border-ro/40" title="Jump to each new live move">
+                <span class="w-2 h-2 rounded-full bg-ro live-dot"></span>
+                <span>Follow</span>
               </button>
-              <button id="btnFlip" class="px-2 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11px]" title="Flip Board (f)">⇅ Flip</button>
-              <button id="btnCopyFen" class="px-2 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10.5px]" title="Copy FEN">FEN</button>
-              <button id="btnCopyPgn" class="px-2 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10.5px]" title="Copy PGN">PGN</button>
-              <button id="btnShareLink" class="px-2 py-1 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10.5px]" title="Copy Shareable Analysis Link">Share</button>
+              <button id="btnFlip" class="board-btn bg-surface hover:bg-surfaceHover border border-borderSubtle" title="Flip board (f)"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 20V4M4 7l3-3 3 3M17 4v16M14 17l3 3 3-3"/></svg><span>Flip</span></button>
+              <button id="btnCopyFen" class="board-btn bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono" title="Copy FEN">FEN</button>
+              <button id="btnCopyPgn" class="board-btn bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono" title="Copy PGN">PGN</button>
+              <button id="btnShareLink" class="board-btn bg-em/15 hover:bg-em/25 text-em border border-em/35" title="Copy a link to this analysis">Share</button>
             </div>
           </div>
         </div>

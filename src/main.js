@@ -310,6 +310,9 @@ function bindEvents() {
   document.addEventListener('click', () =>
     document.querySelectorAll('.menu-dropdown').forEach((d) => d.classList.add('hidden'))
   );
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.querySelectorAll('.menu-dropdown').forEach((d) => d.classList.add('hidden'));
+  });
 
   const copyShareLink = () => {
     const tab = getActiveTab();

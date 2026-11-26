@@ -15,6 +15,12 @@ const STOCKFISH_ST_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite
 
 let wasmSession = null;
 let wsSession = null;
+let mtInitTimer = null;
+
+// A multi-threaded build can load but stall while spawning its pthread
+// workers (seen in Safari). If `uciok` has not arrived by then, retry with
+// the single-threaded build instead of showing "Loading" forever.
+export const MT_INIT_TIMEOUT_MS = 5000;
 
 function canUseMultiThreadedWasm() {
   return (
@@ -31,8 +37,8 @@ function getDesiredThreads() {
 
 function getWasmBadgeLabel() {
   return state.sf.multiThreaded && state.sf.threads > 1
-    ? `SF 19 MT (${state.sf.threads}T)`
-    : 'SF 19 WASM';
+    ? `SF 19 Lite MT (${state.sf.threads}T)`
+    : 'SF 19 Lite';
 }
 
 function handleSfInfoLine(line, infoFen, expectedMode) {
@@ -63,6 +69,9 @@ export function initStockfish({ forceSingleThread = false } = {}) {
     state.sf.worker = null;
   }
 
+  clearTimeout(mtInitTimer);
+  mtInitTimer = null;
+
   const useMt = !forceSingleThread && canUseMultiThreadedWasm();
   const threads = useMt ? getDesiredThreads() : 1;
   const workerUrl = useMt ? STOCKFISH_MT_URL : STOCKFISH_ST_URL;
@@ -73,7 +82,7 @@ export function initStockfish({ forceSingleThread = false } = {}) {
   state.sf.threads = threads;
 
   const badge = document.getElementById('sfModeBadge');
-  if (badge) badge.textContent = useMt ? 'Loading SF 19 MT...' : 'Loading SF 19 WASM...';
+  if (badge) badge.textContent = useMt ? 'Loading SF 19 Lite MT...' : 'Loading SF 19 Lite...';
 
   try {
     const w = new Worker(workerUrl);
@@ -102,6 +111,8 @@ export function initStockfish({ forceSingleThread = false } = {}) {
       if (!line) return;
 
       if (line === 'uciok') {
+        clearTimeout(mtInitTimer);
+        mtInitTimer = null;
         if (state.sf.mode !== 'ws') {
           state.sf.mode = 'wasm';
           state.sf.ready = true;
@@ -120,6 +131,15 @@ export function initStockfish({ forceSingleThread = false } = {}) {
     };
 
     w.postMessage('uci');
+
+    if (useMt) {
+      mtInitTimer = setTimeout(() => {
+        mtInitTimer = null;
+        if (state.sf.worker !== w || state.sf.ready || state.sf.mode === 'ws') return;
+        console.warn('[stockfish] Multi-threaded build did not respond; falling back to single-threaded.');
+        initStockfish({ forceSingleThread: true });
+      }, MT_INIT_TIMEOUT_MS);
+    }
   } catch (err) {
     if (useMt) {
       initStockfish({ forceSingleThread: true });

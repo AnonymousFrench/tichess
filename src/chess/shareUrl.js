@@ -4,6 +4,12 @@ import { createNode } from './tree.js';
 
 const HASH_PREFIX = '#a=';
 
+// Limits that keep a crafted link from freezing the tab. Real analyses are
+// far below these (a 100-move game with variations is a few KB).
+export const MAX_SHARE_HASH_LENGTH = 50_000;
+export const MAX_SHARE_NODES = 2_000;
+export const MAX_SHARE_DEPTH = 600;
+
 function toBase64Url(str) {
   const bytes = new TextEncoder().encode(str);
   let binary = '';
@@ -66,9 +72,10 @@ export function encodeShareHash(tab, { flipped = false } = {}) {
   return HASH_PREFIX + toBase64Url(JSON.stringify(payload));
 }
 
-function rebuildSubtree(parentNode, serializedChildren) {
-  if (!Array.isArray(serializedChildren)) return;
+function rebuildSubtree(parentNode, serializedChildren, budget, depth = 0) {
+  if (!Array.isArray(serializedChildren) || depth >= MAX_SHARE_DEPTH) return;
   for (const item of serializedChildren) {
+    if (budget.nodes >= MAX_SHARE_NODES) return;
     if (!Array.isArray(item) || typeof item[0] !== 'string' || item[0].length < 4) continue;
     const uci = item[0];
     const subChildren = Array.isArray(item[1]) ? item[1] : [];
@@ -104,7 +111,8 @@ function rebuildSubtree(parentNode, serializedChildren) {
       nags,
     });
     parentNode.children.push(node);
-    rebuildSubtree(node, subChildren);
+    budget.nodes++;
+    rebuildSubtree(node, subChildren, budget, depth + 1);
   }
 }
 
@@ -115,7 +123,7 @@ function rebuildSubtree(parentNode, serializedChildren) {
 export function decodeShareHash(hash) {
   if (!hash || typeof hash !== 'string' || !hash.startsWith(HASH_PREFIX)) return null;
   const encoded = hash.slice(HASH_PREFIX.length).trim();
-  if (!encoded) return null;
+  if (!encoded || encoded.length > MAX_SHARE_HASH_LENGTH) return null;
 
   let payload;
   try {
@@ -135,7 +143,7 @@ export function decodeShareHash(hash) {
   }
 
   const root = createNode({ fen: validator.fen() });
-  rebuildSubtree(root, payload[1]);
+  rebuildSubtree(root, payload[1], { nodes: 0 });
 
   let current = root;
   const path = Array.isArray(payload[2]) ? payload[2] : [];

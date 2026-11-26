@@ -6,7 +6,7 @@ A lightweight, vanilla-JS + Vite chess analysis studio with multi-threaded Stock
 
 Every metric shown in the UI comes from a real engine or API response:
 
-- **No synthetic evaluations:** Stockfish runs real **Stockfish 19 Lite WASM** (multi-threaded via `SharedArrayBuffer` when `crossOriginIsolated`, with automatic single-threaded fallback) or Lichess Cloud Eval / your local UCI bridge. If WASM cannot load, the UI reports the error honestly instead of falling back to a fake evaluator.
+- **No synthetic evaluations:** Stockfish runs real **Stockfish 19 Lite WASM** (multi-threaded via `SharedArrayBuffer` when `crossOriginIsolated`, with automatic single-threaded fallback) or Lichess Cloud Eval / your local UCI bridge. If the multi-threaded build does not respond within 5 seconds (as can happen in Safari), it retries single-threaded. The Lite build uses Stockfish's smaller NNUE network, so it is somewhat weaker than desktop Stockfish. If WASM cannot load, the UI reports the error honestly instead of falling back to a fake evaluator.
 - **Real Lc0 only:** The Lc0 panel only displays evaluations and WDL bars when connected to a real local Lc0 instance over the UCI WebSocket bridge.
 - **No invented depths or speeds:** Cloud Eval shows the real depth and total node count (`nodes`, never mislabelled as `kn/s`). Unknown fields render `—`.
 - **Live broadcast status from Lichess:** Tournament rounds, start times, and `LIVE` badges come directly from the Lichess Broadcast API (`round.ongoing === true`), refresh periodically, and auto-advance when a new round starts.
@@ -51,6 +51,8 @@ ENGINE=stockfish PORT=8081 node tools/bridge.mjs
 ```
 
 The bridge binds to `127.0.0.1` and only accepts WebSocket `Origin` headers from `https://tichess.vercel.app` and `localhost`/`127.0.0.1` (set `ALLOWED_ORIGINS=https://your-domain.com` to allow a custom domain).
+
+> **Preview deployments:** Vercel preview URLs are deliberately *not* allowed by pattern, because anyone can create a Vercel project whose URL matches a `tichess-*.vercel.app` pattern. To test the bridge on a preview, pass its exact URL: `ALLOWED_ORIGINS=https://tichess-abc123-yourteam.vercel.app ENGINE=lc0 node tools/bridge.mjs`.
 
 Then open **Settings → 2. Local UCI WebSocket Bridge** and connect to `ws://localhost:8080` (Lc0) or `ws://localhost:8081` (Stockfish).
 

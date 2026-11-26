@@ -52,6 +52,7 @@ import {
   runChessComSync,
   handlePgnFileImport,
 } from './scout/scout.js';
+import { mountModals } from './ui/modals.js';
 
 function switchHub(hubName) {
   state.activeHub = hubName;
@@ -465,6 +466,7 @@ onPositionChange(() => {
 });
 
 async function bootstrap() {
+  mountModals();
   setLc0SettingsHandler(() => openModal('settingsModal'));
   updateTokenDot();
   initBoardInteractions();

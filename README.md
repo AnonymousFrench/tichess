@@ -39,16 +39,17 @@ Live broadcasts and Lichess Cloud Eval work without a token. To unlock the Maste
 
 ## Local UCI WebSocket Bridge (Lc0 / Native Stockfish)
 
-To connect a native GPU Lc0 or native Stockfish binary running on your machine, run the included localhost-only bridge script:
+To connect a native GPU Lc0 or native Stockfish binary running on your machine, run the included localhost-only bridge script (`ws` is already included in `devDependencies`):
 
 ```bash
-npm install ws
 ENGINE=lc0 PORT=8080 node tools/bridge.mjs
 # Optional extra flags:
 ENGINE=lc0 ENGINE_ARGS="--weights=/path/to/weights.pb.gz" PORT=8080 node tools/bridge.mjs
 # Native Stockfish on port 8081:
 ENGINE=stockfish PORT=8081 node tools/bridge.mjs
 ```
+
+The bridge binds to `127.0.0.1` and only accepts WebSocket `Origin` headers from `https://tichess.vercel.app` and `localhost`/`127.0.0.1` (set `ALLOWED_ORIGINS=https://your-domain.com` to allow a custom domain).
 
 Then open **Settings → 2. Local UCI WebSocket Bridge** and connect to `ws://localhost:8080` (Lc0) or `ws://localhost:8081` (Stockfish).
 

@@ -1,0 +1,92 @@
+/* tichess section switcher (shared by Insights, Studio and Repertoire) */
+.tn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+.tn-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #e5e7eb;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 13.5px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.tn-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #10b981, #38bdf8);
+  color: #051814;
+  font-size: 13px;
+  line-height: 1;
+}
+.tn-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: #1b1e25;
+  border: 1px solid #252934;
+}
+.tn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  color: #8e96a8;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.15s, background-color 0.15s;
+}
+.tn-link svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+.tn-link:hover {
+  color: #e5e7eb;
+}
+.tn-link.is-active {
+  background: #10b981;
+  color: #04130d;
+}
+.tn-link:focus-visible,
+.tn-brand:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+@media (max-width: 640px) {
+  .tn-word {
+    display: none;
+  }
+  .tn-link {
+    padding: 4px 8px;
+  }
+}
+@media (max-width: 520px) {
+  /* Phones: icons for the other sections, icon + label for the current one. */
+  .tn-link:not(.is-active) span {
+    display: none;
+  }
+  .tn-nav {
+    gap: 0;
+  }
+}

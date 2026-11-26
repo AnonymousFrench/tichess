@@ -1,34 +1,6 @@
 @import "tailwindcss";
 
-@theme {
-  --font-sans: "Inter", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", monospace;
-  --color-bg: #0b0c0f;
-  --color-panel: #13151a;
-  --color-surface: #1b1e25;
-  --color-surfaceHover: #242833;
-  --color-borderSubtle: #252934;
-  --color-borderBright: #353b4a;
-  --color-txt: #e5e7eb;
-  --color-txtMuted: #8e96a8;
-  --color-em: #10b981;
-  --color-cy: #38bdf8;
-  --color-vi: #a78bfa;
-  --color-ro: #fb7185;
-  --color-am: #f59e0b;
-}
-
-:root {
-  --bg: #0b0c0f;
-  --panel: #13151a;
-  --surface: #1b1e25;
-  --border: #252934;
-  --sq-light: #dce3ea;
-  --sq-dark: #708499;
-  --sq-last-light: #cadc88;
-  --sq-last-dark: #88a45c;
-  --sq-select: rgba(16, 185, 129, 0.48);
-}
+@import "./theme.css";
 
 * {
   box-sizing: border-box;
@@ -295,4 +267,94 @@ html, body {
 }
 .live-dot {
   animation: pulseDot 1.4s infinite ease-in-out;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Studio dock layout: resizable board column, rows and movable panels     */
+/* ---------------------------------------------------------------------- */
+.studio-left { width: 100%; }
+.studio-board-wrap { width: 100%; max-width: 490px; }
+.dock-row { display: flex; flex-direction: column; gap: 6px; min-height: 0; min-width: 0; }
+.dock-row > [data-dock] { flex: 1 1 0; min-width: 0; min-height: 240px; }
+.dock-row-below > [data-dock] { min-height: 180px; }
+.studio-splitter-v, .studio-splitter-h, .panel-grip, .dock-append { display: none; }
+.dock-row.hidden, [data-dock].hidden { display: none; }
+
+@media (min-width: 768px) {
+  .dock-row { flex-direction: row; }
+  .dock-row > [data-dock] { min-height: 220px; }
+}
+
+@media (min-width: 1024px) {
+  .studio-left { width: var(--left-w, 41%); max-width: 100%; }
+  body.studio-no-right #rightWorkspaceCol,
+  body.studio-no-right #colSplitter { display: none; }
+  body.studio-no-right .studio-left { width: 100%; }
+  .studio-board-wrap { flex: 0 0 auto; width: var(--board-size, min(100%, 50vh)); max-width: 100%; }
+  #rightWorkspaceCol { gap: 0; }
+  #rightWorkspaceCol > .dock-row { flex: var(--w, 1) 1 0; }
+  .dock-row > [data-dock] { min-height: 0; }
+  .dock-row-below { flex: 1 1 0; min-height: 150px; }
+
+  .studio-splitter-v {
+    display: block;
+    flex: none;
+    width: 8px;
+    cursor: col-resize;
+    position: relative;
+    touch-action: none;
+  }
+  .studio-splitter-h {
+    display: block;
+    flex: none;
+    height: 8px;
+    cursor: row-resize;
+    position: relative;
+    touch-action: none;
+  }
+  .studio-splitter-v::after,
+  .studio-splitter-h::after {
+    content: '';
+    position: absolute;
+    border-radius: 3px;
+    transition: background-color 0.15s;
+  }
+  .studio-splitter-v::after { inset: 30% 3px; }
+  .studio-splitter-h::after { inset: 3px 35%; }
+  .studio-splitter-v:hover::after,
+  .studio-splitter-h:hover::after { background: #353b4a; }
+  .studio-splitter-v.dragging::after,
+  .studio-splitter-h.dragging::after,
+  .studio-splitter-v:focus-visible::after { background: #10b981; inset: 0 3px; }
+  .studio-splitter-h.dragging::after { inset: 3px 0; }
+  .studio-splitter-v:focus-visible { outline: none; }
+  body.studio-resizing { user-select: none; }
+  body.studio-resizing iframe { pointer-events: none; }
+
+  .panel-grip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 4px 0 1px;
+    margin-right: 2px;
+    color: #4b5263;
+    font-size: 12px;
+    line-height: 1;
+    cursor: grab;
+    user-select: none;
+    flex: none;
+  }
+  .panel-grip:hover { color: #10b981; }
+  .panel-grip:active { cursor: grabbing; }
+  .dock-drop-target { outline: 2px dashed #10b981; outline-offset: -3px; }
+  body.dock-dragging .dock-row:not(.hidden) > .dock-append {
+    display: flex;
+    flex: 0 0 36px;
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed #353b4a;
+    border-radius: 12px;
+    color: #8e96a8;
+    font-size: 18px;
+  }
+  body.dock-dragging .dock-append.over { border-color: #10b981; color: #10b981; background: rgba(16, 185, 129, 0.08); }
 }

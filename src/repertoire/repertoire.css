@@ -253,3 +253,7 @@ details.eng summary::-webkit-details-marker{display:none}
   .toplinks{margin-left:auto}
 }
 html,body{max-width:100%;overflow-x:hidden}
+
+/* Shared tichess section switcher in the top bar */
+.whoami{font:500 12px var(--f-body);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+@media (max-width:760px){ .whoami{display:none} .topbar .in{gap:8px} }

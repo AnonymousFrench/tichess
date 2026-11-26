@@ -1,6 +1,37 @@
-# ChessMonitor Studio (`tichess`)
+# tichess
 
-A lightweight, vanilla-JS + Vite chess analysis studio with multi-threaded Stockfish 19 WASM, an optional local UCI WebSocket bridge for GPU Lc0 / native Stockfish, live Lichess tournament broadcasts, Lichess Opening Explorer, zero-backend shareable analysis links, and local IndexedDB player scouting.
+A lightweight, vanilla-JS + Vite chess app with three sections, switched from the top bar on every page:
+
+- **Insights** (`insights.html`): your own games from Lichess, Chess.com or PGN files, explained: openings, opponents, habits, activity and rating.
+- **Studio** (`/`): analysis board with multi-threaded Stockfish 19 WASM, an optional local UCI bridge for Lc0 / native Stockfish, live Lichess broadcasts, opening explorers, player scouting and shareable analysis links, in a workspace you can rearrange.
+- **Repertoire** (`repertoire.html`): build and drill your opening repertoire with spaced repetition.
+
+## Insights
+
+Add a Lichess or Chess.com username (or import a PGN file) and Insights downloads your games into this browser's IndexedDB. Large accounts stream in over a few minutes the first time, with results filling in as games arrive; later visits only fetch new games, and an interrupted download resumes where it stopped. A Lichess token from Settings, if present, raises Lichess's download rate.
+
+- **Overview:** games, score, current rating, recent performance, and plain-language findings: openings that cost or win you points, results after a loss, long sessions, best time of day, losses on time, color balance. Each finding links to the evidence.
+- **Games:** search, filter by result and ending, sort, open any game in the Studio, and download the selection as PGN.
+- **Explorer:** your own move tree as White or Black with results per move, on a board with frequency arrows.
+- **Openings:** by family or variation, sorted by most played, best or worst, with score and performance.
+- **Opponents:** results by rating gap against what Elo predicts, how games end, most played and titled opponents.
+- **Activity:** a calendar of every day you played, an hour × weekday grid, results by hour, weekday and month, and session habits.
+- **Rating:** history per time control, peak and change, and performance over your last 10 to 5,000 games.
+
+Global filters (time control, color, period, opponent strength, rated, account) apply to every view. Performance is the standard rating-performance calculation (average opponent rating plus the Elo difference implied by your score, capped at ±800). Insights does not convert online ratings to FIDE, because no published formula is accurate enough to show as a number.
+
+The Studio's opening explorer gets a **Mine** source once Insights has games: your games from every linked account at the current position, offline and without signing in.
+
+## Studio workspace
+
+- **Board size:** drag the divider between the board and the panels (double-click or `=` to fit the screen), or use `[` / `]` and **View → Board size**. The board always fits the screen height.
+- **Rearrange:** drag any panel by its `⠿` grip onto another panel to swap them, or onto a row's `+` strip to move it there. Drag the dividers between rows to resize them.
+- **Layouts:** **Panels → Layouts** offers Prep, Analysis, Broadcast and Focus presets.
+- **Board themes:** Slate, Green, Wood, Blue and Graphite under **View**.
+- **Engine:** choose 1–5 Stockfish lines and the search depth (14 to unlimited) in the Stockfish panel.
+- **Shortcuts:** press `?` for the full list.
+
+Layout, sizes and theme are saved in this browser.
 
 ## Honesty Policy
 
@@ -36,7 +67,7 @@ Live broadcasts and Lichess Cloud Eval work without a token. To unlock the Maste
 
 1. Create a free personal access token at [lichess.org/account/oauth/token/create?description=tichess](https://lichess.org/account/oauth/token/create?description=tichess).
 2. **Leave all scopes unchecked** — Opening Explorer only needs an unscoped read token.
-3. Paste the token into **Settings → 1. Lichess Personal Access Token**. It is stored only in your browser's `localStorage` and sent exclusively to `explorer.lichess.org` and `lichess.org/game/export/...`.
+3. Paste the token into **Settings → 1. Lichess Personal Access Token**. It is stored only in your browser's `localStorage` and sent only to Lichess (`explorer.lichess.org`, game exports, and the game downloads that power Insights).
 
 ## Local UCI WebSocket Bridge (Lc0 / Native Stockfish)
 

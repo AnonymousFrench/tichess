@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ChessMonitor Studio — Live FIDE Events, Database Scouting &amp; Dual Engines</title>
+  <title>Studio · tichess</title>
 </head>
 <body class="bg-bg text-txt flex flex-col">
 
@@ -13,14 +13,10 @@
   <!-- ======================================================================= -->
   <!-- TOP 34px STUDIO MENU BAR                                                -->
   <!-- ======================================================================= -->
-  <header class="h-[34px] shrink-0 bg-panel border-b border-borderSubtle px-2.5 flex items-center justify-between gap-2 select-none z-40">
-    <!-- Left: Brand + Menus -->
-    <div class="flex items-center gap-0.5 sm:gap-1">
-      <div class="flex items-center gap-1.5 mr-2">
-        <div class="w-5 h-5 rounded bg-gradient-to-br from-em to-cy flex items-center justify-center text-[#051814] font-bold text-[11px] shadow-sm">♞</div>
-        <span class="font-bold text-[12.5px] tracking-tight text-txt hidden sm:inline">ChessMonitor <span class="text-em">Studio</span></span>
-        <span class="font-bold text-[12.5px] tracking-tight text-txt sm:hidden">CM <span class="text-em">Studio</span></span>
-      </div>
+  <header class="min-h-[40px] lg:h-[40px] shrink-0 bg-panel border-b border-borderSubtle px-2.5 py-1 lg:py-0 flex flex-wrap lg:flex-nowrap items-center justify-between gap-x-2 gap-y-1 select-none z-40">
+    <!-- Left: Sections + Menus -->
+    <div class="flex flex-wrap items-center gap-0.5 sm:gap-1 min-w-0">
+      <div data-app-nav class="mr-2 shrink-0"></div>
 
       <!-- File -->
       <div class="relative">
@@ -55,6 +51,16 @@
           <button class="menu-item" id="actToggleCoords"><span>Toggle Coordinates</span><span id="chkCoords" class="text-em font-mono">✓</span></button>
           <button class="menu-item" id="actToggleArrows"><span>Toggle Engine Arrows</span><span id="chkArrows" class="text-em font-mono">✓</span></button>
           <button class="menu-item" id="actToggleEvalBar"><span>Toggle Eval Bar</span><span id="chkEvalBar" class="text-em font-mono">✓</span></button>
+          <div class="menu-sep"></div>
+          <div class="px-2.5 py-1 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">Board size</div>
+          <button class="menu-item" id="actBoardLarger"><span>Larger board</span><span class="font-mono text-[10px] text-txtMuted">]</span></button>
+          <button class="menu-item" id="actBoardSmaller"><span>Smaller board</span><span class="font-mono text-[10px] text-txtMuted">[</span></button>
+          <button class="menu-item" id="actBoardFit"><span>Fit board to screen</span><span class="font-mono text-[10px] text-txtMuted">=</span></button>
+          <div class="menu-sep"></div>
+          <div class="px-2.5 py-1 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">Board theme</div>
+          <div id="boardThemeItems"></div>
+          <div class="menu-sep"></div>
+          <button class="menu-item" id="actShortcuts"><span>Keyboard shortcuts</span><span class="font-mono text-[10px] text-txtMuted">?</span></button>
         </div>
       </div>
 
@@ -72,12 +78,10 @@
       <!-- Settings -->
       <button id="btnMenuSettings" class="px-2 py-1 rounded text-[11.5px] text-txtMuted hover:text-txt hover:bg-surface">Settings</button>
 
-      <!-- Repertoire trainer (separate page; data stays in this browser) -->
-      <a href="repertoire.html" id="lnkRepertoire" class="px-2 py-1 rounded text-[11.5px] font-semibold text-cy hover:text-txt hover:bg-surface" title="Train your opening repertoire">Repertoire</a>
     </div>
 
     <!-- Right: Live ECO Pill + Dynamic Broadcast Quick-Jump Badge -->
-    <div class="flex items-center gap-2 min-w-0">
+    <div class="flex items-center gap-2 min-w-0 ml-auto">
       <div id="openingPill" class="hidden xl:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface border border-borderSubtle text-[11px] max-w-[260px] truncate">
         <span id="openingEco" class="font-mono font-bold text-em">—</span>
         <span id="openingName" class="text-txtMuted truncate">Starting Position</span>
@@ -95,6 +99,9 @@
           <span class="hidden sm:inline">Panels</span>
         </button>
         <div id="menu-panels" class="menu-dropdown menu-dropdown-right hidden">
+          <div class="px-2.5 py-1 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">Layouts</div>
+          <div id="layoutPresetItems"></div>
+          <div class="menu-sep"></div>
           <div class="px-2.5 py-1 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">Workspace Panels</div>
           <button class="menu-item panel-toggle-item" data-panel="hub"><span>Live &amp; Games Hub</span><span data-panel-chk="hub" class="text-em font-mono">✓</span></button>
           <button class="menu-item panel-toggle-item" data-panel="explorer"><span>Opening Explorer</span><span data-panel-chk="explorer" class="text-em font-mono">✓</span></button>
@@ -104,6 +111,7 @@
           <button class="menu-item panel-toggle-item" data-panel="tree"><span>Variation Tree</span><span data-panel-chk="tree" class="text-em font-mono">✓</span></button>
           <div class="menu-sep"></div>
           <button class="menu-item" id="actResetPanels"><span>Reset Default Layout</span></button>
+          <div class="px-2.5 pt-1 pb-1.5 text-[10px] text-txtMuted leading-snug max-w-[230px]">Drag a panel by its ⠿ grip onto another panel to swap them. Drag the dividers to resize.</div>
         </div>
       </div>
 
@@ -159,12 +167,12 @@
     <!-- ===================================================================== -->
     <!-- WORKSPACE GRID                                                        -->
     <!-- ===================================================================== -->
-    <main class="flex-1 flex flex-col lg:flex-row min-h-0 min-w-0 p-1.5 gap-1.5 overflow-y-auto lg:overflow-hidden">
+    <main id="studioMain" class="flex-1 flex flex-col lg:flex-row min-h-0 min-w-0 p-1.5 gap-1.5 lg:gap-0 overflow-y-auto lg:overflow-hidden">
 
       <!-- =================================================================== -->
       <!-- LEFT COLUMN (~42%): MULTI-TAB BOARD + NAV + VARIATION TREE          -->
       <!-- =================================================================== -->
-      <section class="lg:w-[42%] xl:w-[41%] flex flex-col gap-1.5 min-h-0 shrink-0">
+      <section id="leftCol" class="studio-left flex flex-col gap-1.5 min-h-0 shrink-0">
 
         <!-- Multi-Tab Board Panel -->
         <div class="bg-panel border border-borderSubtle rounded-xl flex flex-col min-h-0 shrink-0 overflow-hidden">
@@ -195,7 +203,7 @@
             </div>
 
             <!-- Chessboard -->
-            <div class="relative flex-1 max-w-[490px] lg:max-w-[min(100%,50vh)] mx-auto">
+            <div class="relative flex-1 mx-auto studio-board-wrap">
               <div id="chessboard" class="board-grid"></div>
               <svg id="arrowOverlay" viewBox="0 0 800 800" class="absolute inset-0 w-full h-full pointer-events-none z-20"></svg>
             </div>
@@ -233,8 +241,10 @@
           </div>
         </div>
 
+        <!-- Dock slot under the board (variation tree by default) -->
+        <div id="row-below" class="dock-row dock-row-below" data-row="below">
         <!-- Branching Variation Tree & Annotations Panel -->
-        <div id="panel-tree" class="flex-1 bg-panel border border-borderSubtle rounded-xl flex flex-col min-h-[155px] overflow-hidden">
+        <div id="panel-tree" data-dock="tree" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden">
           <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex flex-wrap items-center justify-between gap-1">
             <div class="flex items-center gap-1.5">
               <span class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted">Variation Tree</span>
@@ -269,7 +279,11 @@
 
           <div id="variationTreeContainer" class="flex-1 p-2 overflow-y-auto font-mono text-[11.5px] leading-relaxed"></div>
         </div>
+        </div>
       </section>
+
+      <!-- Drag to resize the board column -->
+      <div id="colSplitter" class="studio-splitter-v" role="separator" aria-orientation="vertical" aria-label="Resize board" tabindex="0" title="Drag to resize the board · double-click to fit"></div>
 
       <!-- =================================================================== -->
       <!-- RIGHT COLUMN (~58%): 3-TIER PRO WORKSPACE                           -->
@@ -288,7 +302,8 @@
         <!-- ================================================================= -->
         <!-- TIER 1 (TOP-RIGHT): LIVE EVENTS & GAMES HUB (~39% height)         -->
         <!-- ================================================================= -->
-        <div id="panel-hub" class="lg:h-[39%] min-h-[250px] bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden">
+        <div id="row-r1" class="dock-row" data-row="r1">
+        <div id="panel-hub" data-dock="hub" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden">
           <!-- Hub Tabs Bar -->
           <div class="flex items-center justify-between border-b border-borderSubtle bg-bg/55 px-1.5 pt-1 gap-2">
             <div role="tablist" aria-label="Broadcast and game hub" class="flex items-center gap-1 overflow-x-auto">
@@ -440,19 +455,21 @@
           <!-- HUB VIEW D: INTEGRATED OPENING REPERTOIRE -->
           <div id="hub-repertoire" class="hidden flex-1 overflow-y-auto p-2"></div>
         </div>
+        </div>
 
         <!-- ================================================================= -->
         <!-- TIER 2 (MIDDLE-RIGHT): OPENING EXPLORER + PLAYER SCOUT            -->
         <!-- ================================================================= -->
-        <div id="panel-tier2" class="lg:h-[30%] min-h-[195px] grid grid-cols-1 md:grid-cols-2 gap-1.5 min-h-0">
+        <div id="panel-tier2" class="dock-row" data-row="r2">
 
           <!-- LEFT: MASTERS OTB / LICHESS DB / MY GAMES EXPLORER -->
-          <div id="panel-explorer" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+          <div id="panel-explorer" data-dock="explorer" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
             <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
               <div class="flex items-center gap-1 min-w-0">
                 <button id="refSrcMasters" class="px-2 py-0.5 rounded text-[11px] font-semibold bg-em/20 text-em border border-em/35 whitespace-nowrap">Masters OTB</button>
                 <button id="refSrcLichess" class="px-2 py-0.5 rounded text-[11px] font-semibold text-txtMuted hover:text-txt whitespace-nowrap">Lichess DB</button>
                 <button id="refSrcPlayer" class="hidden px-2 py-0.5 rounded text-[11px] font-semibold text-txtMuted hover:text-txt whitespace-nowrap" title="Your Lichess games">My Games</button>
+                <button id="refSrcMine" class="hidden px-2 py-0.5 rounded text-[11px] font-semibold text-txtMuted hover:text-txt whitespace-nowrap" title="Your games downloaded in Insights (all accounts, works offline)">Mine</button>
                 <div id="refPlayerColorWrap" class="hidden items-center bg-surface rounded border border-borderSubtle p-0.5 font-mono text-[9.5px]">
                   <button class="ref-pcol-btn px-1.5 rounded bg-vi/25 text-vi font-bold" data-pcol="white" title="Games as White">W</button>
                   <button class="ref-pcol-btn px-1.5 rounded text-txtMuted hover:text-txt" data-pcol="black" title="Games as Black">B</button>
@@ -501,7 +518,7 @@
           </div>
 
           <!-- RIGHT: PLAYER SCOUT (CHESS.COM + LOCAL PGN + INDEXEDDB) -->
-          <div id="panel-scout" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+          <div id="panel-scout" data-dock="scout" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
             <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
               <div class="flex items-center gap-1 min-w-0 flex-1">
                 <select id="scoutCollectionSelect" class="max-w-[160px] px-1.5 py-0.5 rounded bg-surface border border-borderSubtle text-[11px] font-semibold text-em focus:outline-none truncate"></select>
@@ -534,10 +551,10 @@
         <!-- ================================================================= -->
         <!-- TIER 3 (BOTTOM-RIGHT): ENGINES (Stockfish + Optional Lc0 Bridge)  -->
         <!-- ================================================================= -->
-        <div id="panel-tier3" class="lg:flex-1 min-h-[195px] grid grid-cols-1 md:grid-cols-2 gap-1.5 min-h-0">
+        <div id="panel-tier3" class="dock-row" data-row="r3">
 
           <!-- LEFT: Lc0 (LOCAL UCI BRIDGE ONLY — hidden by default; enable via ⊞ Panels) -->
-          <div id="panel-lc0" class="hidden bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+          <div id="panel-lc0" data-dock="lc0" class="hidden bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
             <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
               <div class="flex items-center gap-1.5 min-w-0">
                 <button id="btnLc0Toggle" class="w-5 h-5 rounded bg-vi/20 hover:bg-vi/30 text-vi border border-vi/40 flex items-center justify-center text-[10px]" title="Start / Stop Lc0" aria-label="Start or stop Lc0">⏸</button>
@@ -570,7 +587,7 @@
           </div>
 
           <!-- RIGHT: STOCKFISH 19 WASM / CLOUD / LOCAL UCI -->
-          <div id="panel-sf" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+          <div id="panel-sf" data-dock="sf" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
             <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
               <div class="flex items-center gap-1.5 min-w-0">
                 <button id="btnSfToggle" class="w-5 h-5 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/40 flex items-center justify-center text-[10px]" title="Start / Stop Stockfish" aria-label="Start or stop Stockfish">⏸</button>
@@ -578,6 +595,12 @@
                 <span id="sfModeBadge" class="px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted truncate">Loading SF 19 Lite...</span>
               </div>
               <div class="flex items-center gap-1 shrink-0">
+                <select id="sfLinesSelect" aria-label="Engine lines" title="Number of engine lines" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-cy">
+                  <option value="1">1 line</option><option value="2">2 lines</option><option value="3">3 lines</option><option value="4">4 lines</option><option value="5">5 lines</option>
+                </select>
+                <select id="sfDepthSelect" aria-label="Engine depth" title="How deep the in-browser engine searches" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-cy">
+                  <option value="14">d14</option><option value="18">d18</option><option value="22">d22</option><option value="26">d26</option><option value="0">∞</option>
+                </select>
                 <button id="btnSfCloud" class="px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 text-[10px] font-medium" title="Toggle Free Lichess Cloud Eval">☁ Cloud</button>
                 <button class="panel-close-btn" data-panel-close="sf" title="Hide Stockfish" aria-label="Hide Stockfish">✕</button>
               </div>

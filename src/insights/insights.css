@@ -1,0 +1,15 @@
+@import "tailwindcss";
+@import "../theme.css";
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: #e5e7eb;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: #2c313f; border-radius: 99px; }
+select { color-scheme: dark; }
+.tabular-nums { font-variant-numeric: tabular-nums; }

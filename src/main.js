@@ -10,7 +10,6 @@ import './styles.css';
 import {
   state,
   START_FEN,
-  DEFAULT_PANELS,
   getActiveTab,
   getCurrentFen,
   showToast,
@@ -34,6 +33,7 @@ import {
 import { updateEvalBarFromState } from './engines/uci.js';
 import {
   initStockfish,
+  setSfOptions,
   stopLocalSf,
   triggerSfAnalysis,
   connectSfWs,
@@ -61,6 +61,7 @@ import {
   startLivePollTimer,
 } from './live/liveEvents.js';
 import { refreshReferenceExplorer, renderMasterGamesTable } from './explorer/explorer.js';
+import { countMyGames } from './explorer/mineSource.js';
 import {
   refreshPlayerScout,
   renderScoutedGamesTable,
@@ -86,6 +87,19 @@ import {
   signOutCloudSync,
 } from './sync/cloudSync.js';
 import { mountModals } from './ui/modals.js';
+import { mountAppNav } from './shared/appNav.js';
+import {
+  initLayout,
+  applyDockLayout,
+  applyPreset,
+  resetLayout,
+  setBoardTheme,
+  nudgeBoard,
+  fitBoardToScreen,
+  layout,
+  PRESETS,
+  BOARD_THEMES,
+} from './ui/layout.js';
 
 function persistPanels() {
   try {
@@ -94,54 +108,44 @@ function persistPanels() {
 }
 
 function applyPanelLayout() {
-  const p = state.panels;
-  const setHidden = (id, hidden) => {
-    const el = document.getElementById(id);
-    if (el) el.classList.toggle('hidden', hidden);
-  };
-
-  setHidden('panel-hub', !p.hub);
-  setHidden('panel-explorer', !p.explorer);
-  setHidden('panel-scout', !p.scout);
-  setHidden('panel-lc0', !p.lc0);
-  setHidden('panel-sf', !p.sf);
-  setHidden('panel-tree', !p.tree);
-
-  const tier2Count = (p.explorer ? 1 : 0) + (p.scout ? 1 : 0);
-  const tier3Count = (p.lc0 ? 1 : 0) + (p.sf ? 1 : 0);
-
-  const tier2 = document.getElementById('panel-tier2');
-  if (tier2) {
-    tier2.classList.toggle('hidden', tier2Count === 0);
-    tier2.classList.toggle('md:grid-cols-2', tier2Count === 2);
-    tier2.classList.toggle('md:grid-cols-1', tier2Count === 1);
-    tier2.classList.toggle('lg:flex-1', tier2Count > 0 && tier3Count === 0);
-    tier2.classList.toggle('lg:h-[30%]', tier2Count > 0 && tier3Count > 0);
-  }
-
-  const tier3 = document.getElementById('panel-tier3');
-  if (tier3) {
-    tier3.classList.toggle('hidden', tier3Count === 0);
-    tier3.classList.toggle('md:grid-cols-2', tier3Count === 2);
-    tier3.classList.toggle('md:grid-cols-1', tier3Count === 1);
-  }
-
-  const hubEl = document.getElementById('panel-hub');
-  if (hubEl && p.hub) {
-    const soloHub = tier2Count === 0 && tier3Count === 0;
-    hubEl.classList.toggle('lg:flex-1', soloHub);
-    hubEl.classList.toggle('lg:h-[39%]', !soloHub);
-  }
-
-  const anyRight = p.hub || tier2Count > 0 || tier3Count > 0;
-  setHidden('panelsEmptyNotice', anyRight);
-
-  document.querySelectorAll('[data-panel-chk]').forEach((el) => {
-    const key = el.dataset.panelChk;
-    el.textContent = p[key] ? '✓' : '';
-  });
-
+  applyDockLayout();
   persistPanels();
+}
+
+function renderLayoutMenus() {
+  const presetsEl = document.getElementById('layoutPresetItems');
+  if (presetsEl) {
+    presetsEl.innerHTML = Object.entries(PRESETS)
+      .map(
+        ([id, p]) =>
+          `<button class="menu-item" data-preset="${id}"><span>${p.label}</span><span class="text-[10px] text-txtMuted">${p.hint}</span></button>`
+      )
+      .join('');
+    presetsEl.querySelectorAll('[data-preset]').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        applyPreset(btn.dataset.preset);
+        applyPanelLayout();
+        document.querySelectorAll('.menu-dropdown').forEach((d) => d.classList.add('hidden'));
+        showToast(`${PRESETS[btn.dataset.preset].label} layout`);
+      };
+    });
+  }
+  const themesEl = document.getElementById('boardThemeItems');
+  if (themesEl) {
+    themesEl.innerHTML = Object.entries(BOARD_THEMES)
+      .map(
+        ([id, t]) =>
+          `<button class="menu-item" data-theme="${id}"><span class="flex items-center gap-2"><span class="inline-flex w-6 h-3 rounded-sm overflow-hidden"><i class="flex-1" style="background:${t.light}"></i><i class="flex-1" style="background:${t.dark}"></i></span>${t.label}</span><span data-theme-chk="${id}" class="text-em font-mono">${layout.boardTheme === id ? '✓' : ''}</span></button>`
+      )
+      .join('');
+    themesEl.querySelectorAll('[data-theme]').forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        setBoardTheme(btn.dataset.theme);
+      };
+    });
+  }
 }
 
 function switchHub(hubName) {
@@ -510,7 +514,7 @@ function bindEvents() {
 
   // Workspace Panels Configurator (close X buttons & Panels menu)
   const resetPanels = () => {
-    state.panels = { ...DEFAULT_PANELS };
+    resetLayout();
     applyPanelLayout();
     showToast('Workspace layout reset');
   };
@@ -537,6 +541,22 @@ function bindEvents() {
   if (actResetPanels) actResetPanels.onclick = resetPanels;
   const btnEmptyResetPanels = document.getElementById('btnEmptyResetPanels');
   if (btnEmptyResetPanels) btnEmptyResetPanels.onclick = resetPanels;
+  const largerBoard = () => {
+    if (!nudgeBoard(48)) {
+      showToast('The board is as big as the screen allows. Hide or move the panel under it to go bigger.');
+    }
+  };
+  document.getElementById('actBoardLarger').onclick = largerBoard;
+  document.getElementById('actBoardSmaller').onclick = () => nudgeBoard(-48);
+  document.getElementById('actBoardFit').onclick = fitBoardToScreen;
+  document.getElementById('actShortcuts').onclick = () => openModal('shortcutsModal');
+  const sfLines = document.getElementById('sfLinesSelect');
+  const sfDepth = document.getElementById('sfDepthSelect');
+  sfLines.value = String(state.sf.multiPv);
+  sfDepth.value = String(state.sf.depth);
+  if (sfDepth.value !== String(state.sf.depth)) sfDepth.value = '18';
+  sfLines.onchange = () => setSfOptions({ multiPv: Number(sfLines.value) });
+  sfDepth.onchange = () => setSfOptions({ depth: Number(sfDepth.value) });
 
   // Explorers
   const setRefSource = (src) => {
@@ -546,6 +566,8 @@ function bindEvents() {
     const mBtn = document.getElementById('refSrcMasters');
     const lBtn = document.getElementById('refSrcLichess');
     const pBtn = document.getElementById('refSrcPlayer');
+    const meBtn = document.getElementById('refSrcMine');
+    const personal = src === 'player' || src === 'mine';
     const pColWrap = document.getElementById('refPlayerColorWrap');
     const pFilterBar = document.getElementById('refPlayerFilterBar');
     if (mBtn) mBtn.className = src === 'masters' ? `${base} bg-em/20 text-em border border-em/35` : inactive;
@@ -554,19 +576,31 @@ function bindEvents() {
       const hidden = pBtn.classList.contains('hidden');
       pBtn.className = `${hidden ? 'hidden ' : ''}${src === 'player' ? `${base} bg-vi/20 text-vi border border-vi/35` : inactive}`;
     }
+    if (meBtn) {
+      const hidden = meBtn.classList.contains('hidden');
+      meBtn.className = `${hidden ? 'hidden ' : ''}${src === 'mine' ? `${base} bg-am/15 text-am border border-am/35` : inactive}`;
+    }
     if (pColWrap) {
-      pColWrap.classList.toggle('hidden', src !== 'player');
-      pColWrap.classList.toggle('flex', src === 'player');
+      pColWrap.classList.toggle('hidden', !personal);
+      pColWrap.classList.toggle('flex', personal);
     }
     if (pFilterBar) {
-      pFilterBar.classList.toggle('hidden', src !== 'player');
-      pFilterBar.classList.toggle('flex', src === 'player');
+      pFilterBar.classList.toggle('hidden', !personal);
+      pFilterBar.classList.toggle('flex', personal);
     }
+    document.getElementById('refPlayerMax')?.classList.toggle('hidden', src === 'mine');
     refreshReferenceExplorer();
   };
   document.getElementById('refSrcMasters').onclick = () => setRefSource('masters');
   document.getElementById('refSrcLichess').onclick = () => setRefSource('lichess');
   document.getElementById('refSrcPlayer').onclick = () => setRefSource('player');
+  document.getElementById('refSrcMine').onclick = () => setRefSource('mine');
+  countMyGames().then((n) => {
+    const btn = document.getElementById('refSrcMine');
+    if (!btn || !n) return;
+    btn.classList.remove('hidden');
+    btn.title = `Your ${n.toLocaleString('en-US')} games downloaded in Insights (all accounts, works offline)`;
+  });
   document.querySelectorAll('.ref-pcol-btn').forEach((b) => {
     b.onclick = () => {
       state.refPlayerColor = b.dataset.pcol === 'black' ? 'black' : 'white';
@@ -577,7 +611,7 @@ function bindEvents() {
               ? 'ref-pcol-btn px-1.5 rounded bg-vi/25 text-vi font-bold'
               : 'ref-pcol-btn px-1.5 rounded text-txtMuted hover:text-txt')
       );
-      if (state.refSource === 'player') refreshReferenceExplorer();
+      if (state.refSource === 'player' || state.refSource === 'mine') refreshReferenceExplorer();
     };
   });
   const refSinceSel = document.getElementById('refPlayerSince');
@@ -585,7 +619,7 @@ function bindEvents() {
     refSinceSel.value = state.refPlayerSince || '3m';
     refSinceSel.onchange = (e) => {
       state.refPlayerSince = e.target.value;
-      if (state.refSource === 'player') refreshReferenceExplorer();
+      if (state.refSource === 'player' || state.refSource === 'mine') refreshReferenceExplorer();
     };
   }
   const refMaxSel = document.getElementById('refPlayerMax');
@@ -593,7 +627,7 @@ function bindEvents() {
     refMaxSel.value = state.refPlayerMax || '200';
     refMaxSel.onchange = (e) => {
       state.refPlayerMax = e.target.value;
-      if (state.refSource === 'player') refreshReferenceExplorer();
+      if (state.refSource === 'player' || state.refSource === 'mine') refreshReferenceExplorer();
     };
   }
   document.getElementById('refAuthNote').onclick = () => openModal('settingsModal');
@@ -736,6 +770,14 @@ function bindEvents() {
       emitPositionChanged();
     } else if (e.key === 'f' || e.key === 'F') {
       flipBoard();
+    } else if (e.key === ']') {
+      largerBoard();
+    } else if (e.key === '[') {
+      nudgeBoard(-48);
+    } else if (e.key === '=') {
+      fitBoardToScreen();
+    } else if (e.key === '?') {
+      openModal('shortcutsModal');
     } else if (e.key === ' ') {
       if (tag === 'BUTTON' || tag === 'A') return;
       e.preventDefault();
@@ -784,11 +826,14 @@ function openSharedFromHash() {
 }
 
 async function bootstrap() {
+  mountAppNav('studio');
   mountModals();
   setLc0SettingsHandler(() => openModal('settingsModal'));
   updateTokenDot();
   initBoardInteractions();
   bindEvents();
+  renderLayoutMenus();
+  initLayout(applyPanelLayout);
   applyPanelLayout();
   renderTournamentRoundsTable();
 

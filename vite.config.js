@@ -21,6 +21,7 @@ export default defineConfig({
       input: {
         main: resolve(import.meta.dirname, 'index.html'),
         repertoire: resolve(import.meta.dirname, 'repertoire.html'),
+        insights: resolve(import.meta.dirname, 'insights.html'),
       },
     },
   },

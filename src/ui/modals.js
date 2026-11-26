@@ -1,4 +1,28 @@
+const SHORTCUTS = [
+  ['← / →', 'Previous / next move'],
+  ['Home / End', 'First / last move'],
+  ['f', 'Flip board'],
+  ['Space', 'Start or stop engines'],
+  ['[ / ]', 'Smaller / larger board'],
+  ['=', 'Fit board to screen'],
+  ['Alt+N', 'New analysis tab'],
+  ['?', 'Show this list'],
+];
+
 const MODALS_HTML = `
+  <!-- Keyboard Shortcuts -->
+  <div id="shortcutsModal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+    <div class="bg-panel border border-borderBright rounded-lg w-full max-w-sm p-4 shadow-2xl">
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="font-bold text-sm">Keyboard shortcuts</h2>
+        <button class="modal-close text-txtMuted hover:text-txt px-1.5" aria-label="Close modal">✕</button>
+      </div>
+      <div class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12px]">
+        ${SHORTCUTS.map(([k, d]) => `<kbd class="font-mono text-[11px] px-1.5 py-0.5 rounded bg-surface border border-borderSubtle text-txt justify-self-start">${k}</kbd><span class="text-txtMuted">${d}</span>`).join('')}
+      </div>
+    </div>
+  </div>
+
   <!-- Promotion Modal -->
   <div id="promotionModal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
     <div class="bg-panel border border-borderBright rounded-lg p-4 shadow-2xl">

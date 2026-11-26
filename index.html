@@ -212,7 +212,15 @@
         <!-- Branching Variation Tree & Annotations Panel -->
         <div class="flex-1 bg-panel border border-borderSubtle rounded-lg flex flex-col min-h-[155px] overflow-hidden">
           <div class="px-2 py-1 border-b border-borderSubtle bg-[#0d131f] flex flex-wrap items-center justify-between gap-1">
-            <span class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted">Variation Tree</span>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted">Variation Tree</span>
+              <button id="btnGameReview" class="px-2 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10px]" title="Run local Stockfish full-game review &amp; eval graph">⚡ Review</button>
+              <select id="reviewDepthSelect" aria-label="Game review depth" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-em" title="Stockfish depth per ply">
+                <option value="10">d10</option>
+                <option value="12" selected>d12</option>
+                <option value="15">d15</option>
+              </select>
+            </div>
             <div class="flex items-center gap-0.5 flex-wrap">
               <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px] text-cy" data-nag="!" title="Good move" aria-label="Annotate good move">!</button>
               <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px] text-ro" data-nag="?" title="Mistake" aria-label="Annotate mistake">?</button>
@@ -226,6 +234,8 @@
               <button id="btnDeleteVar" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] text-ro" title="Delete Variation" aria-label="Delete variation">🗑</button>
             </div>
           </div>
+
+          <div id="gameReviewPanel" class="hidden px-2 py-1.5 bg-[#0c1220] border-b border-borderSubtle"></div>
 
           <div id="commentEditorWrap" class="hidden px-2 py-1.5 bg-[#0e1522] border-b border-borderSubtle flex items-center gap-1.5">
             <input id="commentInput" type="text" placeholder="Add annotation note for current move..." class="flex-1 px-2 py-1 rounded bg-surface border border-borderSubtle text-[11px] focus:outline-none focus:border-em" />

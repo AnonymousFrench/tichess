@@ -47,6 +47,11 @@ import {
   setLc0SettingsHandler,
 } from './engines/lc0.js';
 import {
+  startActiveTabReview,
+  cancelGameReview,
+  renderGameReviewPanel,
+} from './engines/gameReview.js';
+import {
   discoverAndSyncLiveBroadcasts,
   renderTournamentRoundsTable,
   renderAllBroadcastsList,
@@ -163,8 +168,10 @@ function bindEvents() {
   document.getElementById('actShareLink').onclick = copyShareLink;
   document.getElementById('actResetTab').onclick = () => {
     const t = getActiveTab();
+    cancelGameReview();
     t.root = createNode({ fen: START_FEN });
     t.current = t.root;
+    t.review = null;
     emitPositionChanged();
   };
   document.getElementById('actFlipBoard').onclick = flipBoard;
@@ -291,6 +298,10 @@ function bindEvents() {
   };
   document.getElementById('btnPromoteVar').onclick = promoteVar;
   document.getElementById('btnDeleteVar').onclick = deleteVar;
+  document.getElementById('btnGameReview').onclick = () => {
+    const depth = parseInt(document.getElementById('reviewDepthSelect')?.value || '12', 10) || 12;
+    startActiveTabReview({ depth });
+  };
 
   // Top-Right Hub
   document.querySelectorAll('.hub-tab').forEach((b) => (b.onclick = () => switchHub(b.dataset.hub)));
@@ -491,6 +502,7 @@ onPositionChange(() => {
   renderBoardTabs();
   renderBoard();
   renderVariationTree();
+  renderGameReviewPanel();
   if (state.activeHub === 'repertoire') renderStudioRepertoirePanel();
   stopLocalSf();
   debouncedPositionLookups();

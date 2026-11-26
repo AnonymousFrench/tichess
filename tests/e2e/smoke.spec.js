@@ -330,3 +330,37 @@ test('Player Scout syncs Lichess username games and indexes opening moves', asyn
   await expect(page.locator('#scoutTableBody')).toContainText('d4');
   expect(pageErrors).toEqual([]);
 });
+
+test('Game Review evaluates a loaded game locally, renders eval graph, and jumps on click', async ({
+  page,
+}) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await page.route('https://lichess.org/**', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+
+  await page.goto('/');
+
+  // Load Fool's Mate via Load PGN modal
+  await page.click('[data-menu="file"]');
+  await page.click('#actLoadModal');
+  await page.fill('#loadPgnTextarea', '1. f3 e5 2. g4 Qh4#');
+  await page.click('#btnConfirmLoad');
+
+  // Run fast local Stockfish review at depth 10
+  await page.selectOption('#reviewDepthSelect', '10');
+  await page.click('#btnGameReview');
+
+  // Wait for review to complete and render summary + SVG eval graph + blunder tag on 2.g4
+  await expect(page.locator('#btnReviewNextIssue')).toBeVisible({ timeout: 25_000 });
+  await expect(page.locator('#evalGraphContainer svg')).toBeVisible();
+  await expect(page.locator('#variationTreeContainer')).toContainText('g4??');
+
+  // Jump to the flagged blunder via Next ?! button and verify move callout appears
+  await page.click('#btnReviewNextIssue');
+  await expect(page.locator('#reviewMoveCallout')).toBeVisible();
+  await expect(page.locator('#reviewMoveCallout')).toContainText('Best:');
+  expect(pageErrors).toEqual([]);
+});
+

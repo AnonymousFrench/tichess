@@ -150,7 +150,19 @@ export function renderVariationTree() {
     const active = n.id === tab.current.id;
     const num = n.color === 'w' ? `${n.moveNum}.` : showNum ? `${n.moveNum}...` : '';
     const nags = n.nags.length
-      ? `<span class="text-cy font-bold">${escapeHtml(n.nags.join(''))}</span>`
+      ? n.nags
+          .map((g) => {
+            const cls =
+              g === '??'
+                ? 'text-ro'
+                : g === '?'
+                  ? 'text-am'
+                  : g === '!!' || g === '!'
+                    ? 'text-em'
+                    : 'text-cy';
+            return `<span class="${cls} font-bold">${escapeHtml(g)}</span>`;
+          })
+          .join('')
       : '';
     const cmt = n.comment
       ? ` <span class="text-em font-sans italic text-[11px] bg-em/10 px-1 rounded">${escapeHtml(n.comment)}</span>`

@@ -58,6 +58,12 @@ Then open **Settings → 2. Local UCI WebSocket Bridge** and connect to `ws://lo
 
 > **Browser note:** Connecting from an HTTPS deployment to `ws://localhost` works in Chrome and Firefox; Safari may block mixed-content WebSockets on HTTPS pages.
 
+## Repertoire Trainer
+
+`repertoire.html` (the **Repertoire** link in the menu bar) is a spaced-repetition opening trainer: learn new lines with explanations, review due moves, play through an opening against random replies from your repertoire, drill weak spots, browse the repertoire tree with stored engine lines, and play out positions against Stockfish 19 Lite. **Open in analysis** sends the current line to the main studio.
+
+The app ships **no repertoire data**. Load your own `tichess-repertoire` JSON file on the page; the repertoire is stored in IndexedDB and review progress in `localStorage`, both only in that browser. Use **Back up** to download the repertoire with current progress (for another device or a fresh browser); importing a file merges progress, keeping the most recent result per move. `*repertoire*.json` is git-ignored so a personal file can't be committed by accident.
+
 ## Licenses & Attribution
 
 - **Application source code:** [MIT License](LICENSE).

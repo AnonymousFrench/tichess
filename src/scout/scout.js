@@ -15,6 +15,10 @@ import { fetchChessComArchives, fetchChessComMonthGames } from '../api/chesscom.
 import { fetchLichessUserGames } from '../api/lichess.js';
 import { playMoveOnTree, renderArrows } from '../board/board.js';
 import { addBoardTab } from '../board/tabs.js';
+import {
+  getLoadedRepertoireState,
+  lookupRepertoirePosition,
+} from '../repertoire/studioPanel.js';
 
 function renderWdlBar(w, d, l) {
   const tot = w + d + l || 1;
@@ -42,7 +46,8 @@ export async function refreshPlayerScout() {
     return;
   }
 
-  const rec = await dbLookupPos(col.id, normalizeFen(getCurrentFen()));
+  const fen = getCurrentFen();
+  const rec = await dbLookupPos(col.id, normalizeFen(fen));
   if (reqId !== scoutMovesReqId) return;
   if (!rec || !rec.entries?.length) {
     tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">No games in ${escapeHtml(col.name)} reached this position.</td></tr>`;
@@ -56,6 +61,13 @@ export async function refreshPlayerScout() {
     tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">No games for selected color filter.</td></tr>`;
     return;
   }
+
+  // Check if current position is in the user's loaded repertoire to badge Book vs Gap
+  const { loadedRep, loadedProg, fenIndex } = getLoadedRepertoireState();
+  const repHit = loadedRep?.repertoire
+    ? lookupRepertoirePosition(fenIndex, loadedRep.repertoire, loadedProg, fen)
+    : null;
+  const repUcis = repHit ? new Set(repHit.moves.map((x) => x.uci)) : null;
 
   const agg = new Map();
   for (const e of filtered) {
@@ -71,10 +83,14 @@ export async function refreshPlayerScout() {
 
   const rows = Array.from(agg.values()).sort((a, b) => b.w + b.d + b.l - (a.w + a.d + a.l));
   tbody.innerHTML = rows
-    .map(
-      (m) =>
-        `<tr class="sc-mv cursor-pointer" data-uci="${escapeHtml(m.uci)}" data-san="${escapeHtml(m.san)}"><td class="font-bold text-txt">${escapeHtml(m.san)}</td><td class="text-txtMuted">${m.w + m.d + m.l}</td><td>${renderWdlBar(m.w, m.d, m.l)}</td></tr>`
-    )
+    .map((m) => {
+      const badge = repUcis
+        ? repUcis.has(m.uci)
+          ? '<span class="ml-1 px-1 py-[0.5px] rounded bg-em/15 text-em text-[8.5px] font-semibold" title="Prepared in your repertoire">Book</span>'
+          : '<span class="ml-1 px-1 py-[0.5px] rounded bg-am/20 text-am text-[8.5px] font-semibold" title="Not yet in your repertoire at this position">Gap</span>'
+        : '';
+      return `<tr class="sc-mv cursor-pointer" data-uci="${escapeHtml(m.uci)}" data-san="${escapeHtml(m.san)}"><td class="font-bold text-txt whitespace-nowrap">${escapeHtml(m.san)}${badge}</td><td class="text-txtMuted">${m.w + m.d + m.l}</td><td>${renderWdlBar(m.w, m.d, m.l)}</td></tr>`;
+    })
     .join('');
 
   tbody.querySelectorAll('.sc-mv').forEach((r) => {

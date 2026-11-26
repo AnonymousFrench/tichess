@@ -24,13 +24,27 @@ import {
   loadProgress,
   saveProgress,
 } from './storage.js';
+import {
+  PREP_DRILL_STORAGE_KEY,
+  collectRepertoireOpponentFens,
+  analyzeOpponentAgainstRepertoire,
+} from './opponentPrep.js';
+import { dbLookupPositionsBatch } from '../db/indexedDb.js';
 import { playMoveOnTree, renderArrows } from '../board/board.js';
 import { addBoardTab } from '../board/tabs.js';
 
 let loadedRep = null; // { repertoire, name }
 let loadedProg = {};
 let fenIndex = new Map();
-let activeDrawer = null; // null | 'pgn' | 'addLine'
+let activeDrawer = null; // null | 'pgn' | 'addLine' | 'prep'
+let addLineDraft = null; // optional { color, sectionName, lineName }
+let prepState = {
+  colId: '',
+  userColor: 'both',
+  loading: false,
+  result: null,
+  reqId: 0,
+};
 
 export function getLoadedRepertoireState() {
   return {
@@ -383,7 +397,9 @@ function renderAddLineDrawer(sections) {
         .map((m, i) => (i % 2 === 0 ? `${Math.floor(i / 2) + 1}.${m.san}` : m.san))
         .join(' ')
     : 'Play moves on the board first';
-  const defaultColor = state.flipped ? 'b' : 'w';
+  const defaultColor = addLineDraft?.color || (state.flipped ? 'b' : 'w');
+  const defaultSec = addLineDraft?.sectionName ?? sections?.[0]?.name ?? '';
+  const defaultLine = addLineDraft?.lineName || '';
   const datalistOpts = (sections || [])
     .map((s) => `<option value="${escapeHtml(s.name)}"></option>`)
     .join('');
@@ -402,9 +418,9 @@ function renderAddLineDrawer(sections) {
           <option value="w"${defaultColor === 'w' ? ' selected' : ''}>Play as White</option>
           <option value="b"${defaultColor === 'b' ? ' selected' : ''}>Play as Black</option>
         </select>
-        <input id="repAddSection" list="repExistingSections" type="text" placeholder="Opening (e.g. Sicilian)" value="${escapeHtml(sections?.[0]?.name || '')}" class="px-2 py-1 rounded bg-surface border border-borderSubtle text-[10.5px] focus:outline-none focus:border-em" />
+        <input id="repAddSection" list="repExistingSections" type="text" placeholder="Opening (e.g. Sicilian)" value="${escapeHtml(defaultSec)}" class="px-2 py-1 rounded bg-surface border border-borderSubtle text-[10.5px] focus:outline-none focus:border-em" />
         <datalist id="repExistingSections">${datalistOpts}</datalist>
-        <input id="repAddLineName" type="text" placeholder="Line name (optional)" class="px-2 py-1 rounded bg-surface border border-borderSubtle text-[10.5px] focus:outline-none focus:border-em" />
+        <input id="repAddLineName" type="text" placeholder="Line name (optional)" value="${escapeHtml(defaultLine)}" class="px-2 py-1 rounded bg-surface border border-borderSubtle text-[10.5px] focus:outline-none focus:border-em" />
       </div>
       <div class="flex items-center gap-1.5">
         <input id="repAddNote" type="text" placeholder="Idea / plan note (optional; move comments are also saved)" class="flex-1 px-2 py-1 rounded bg-surface border border-borderSubtle text-[10.5px] focus:outline-none focus:border-em" />
@@ -414,11 +430,181 @@ function renderAddLineDrawer(sections) {
   `;
 }
 
+export async function runOpponentPrepCheck({ colId = null, userColor = null } = {}) {
+  if (!loadedRep?.repertoire) return;
+  const targetColId =
+    colId ||
+    (state.collections.some((c) => c.id === prepState.colId)
+      ? prepState.colId
+      : state.activeScoutId || state.collections[0]?.id || '');
+  const targetColor = userColor || prepState.userColor || 'both';
+  prepState.colId = targetColId;
+  prepState.userColor = targetColor;
+
+  if (!targetColId) {
+    prepState.loading = false;
+    prepState.result = null;
+    renderStudioRepertoirePanel();
+    return;
+  }
+
+  const reqId = ++prepState.reqId;
+  prepState.loading = true;
+  renderStudioRepertoirePanel();
+
+  const fens = collectRepertoireOpponentFens(loadedRep.repertoire, targetColor);
+  const scoutPosMap = await dbLookupPositionsBatch(targetColId, fens);
+  if (reqId !== prepState.reqId) return;
+
+  prepState.loading = false;
+  prepState.result = analyzeOpponentAgainstRepertoire({
+    repertoire: loadedRep.repertoire,
+    scoutPosMap,
+    userColor: targetColor,
+    progress: loadedProg,
+  });
+  renderStudioRepertoirePanel();
+}
+
+function renderPrepDrawer() {
+  const cols = state.collections || [];
+  if (!cols.length) {
+    return `
+      <div id="studioRepPrepDrawer" class="p-2.5 rounded-lg bg-[#0d1422] border border-am/40 flex flex-col gap-2 text-[11px]">
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-bold text-am">🎯 Opponent Prep (Scout × Repertoire)</span>
+          <button id="btnCloseRepDrawer" class="text-txtMuted hover:text-txt text-xs">✕</button>
+        </div>
+        <div class="text-txtMuted text-[11px]">
+          No scouted opponent database yet. Click <b>+ Scout</b> in the Player Scout panel to sync a Lichess/Chess.com opponent or PGN, then cross-check their replies against your repertoire.
+        </div>
+      </div>
+    `;
+  }
+
+  const activeColId = cols.some((c) => c.id === prepState.colId)
+    ? prepState.colId
+    : state.activeScoutId || cols[0].id;
+  const activeCol = cols.find((c) => c.id === activeColId) || cols[0];
+  const res = prepState.result;
+
+  const colOpts = cols
+    .map(
+      (c) =>
+        `<option value="${escapeHtml(c.id)}"${c.id === activeColId ? ' selected' : ''}>${escapeHtml(c.name)} (${c.gameCount})</option>`
+    )
+    .join('');
+
+  let bodyHtml;
+  if (prepState.loading) {
+    bodyHtml = `<div class="py-3 text-center text-txtMuted font-mono text-[10.5px]">Cross-checking ${escapeHtml(activeCol.name)} against your repertoire...</div>`;
+  } else if (!res || res.totalOpponentDecisions === 0) {
+    bodyHtml = `<div class="py-2 text-txtMuted text-[10.5px]">No overlapping opening positions found between your repertoire and <b>${escapeHtml(activeCol.name)}</b> for this color filter.</div>`;
+  } else {
+    const covColor =
+      res.coveragePct >= 75 ? 'text-em' : res.coveragePct >= 45 ? 'text-am' : 'text-ro';
+    const drillBtn = res.drillCardIds.length
+      ? `<button id="btnRepPrepDrill" class="px-2 py-0.5 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-bold text-[10px]">🎯 Drill ${res.drillCardIds.length} Likely Moves ↗</button>`
+      : '';
+
+    const gapsHtml = res.gaps.length
+      ? `<div class="flex flex-col gap-1">
+          <div class="text-[10px] font-semibold uppercase tracking-wider text-am">Unprepared Opponent Replies (${res.gaps.length})</div>
+          <div class="divide-y divide-borderSubtle/50 rounded border border-borderSubtle bg-[#0b101b] max-h-[140px] overflow-y-auto">
+            ${res.gaps
+              .slice(0, 10)
+              .map(
+                (g, i) => `
+              <div class="px-2 py-1.5 flex items-center justify-between gap-2 text-[10.5px]">
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-1.5 flex-wrap font-mono">
+                    <span class="px-1 py-[0.5px] rounded bg-am/20 text-am font-bold">${escapeHtml(g.moveLabel)}</span>
+                    <span class="text-txtMuted text-[10px] truncate">after ${escapeHtml(g.prefixLabel)}</span>
+                  </div>
+                  <div class="text-[9.5px] text-txtMuted font-mono mt-0.5">
+                    ${g.games} game${g.games === 1 ? '' : 's'} · Opp W${g.oppWins}/D${g.oppDraws}/L${g.oppLosses} · ${escapeHtml(g.sectionName)}
+                  </div>
+                </div>
+                <button class="rep-prep-gap px-2 py-0.5 rounded bg-am/15 hover:bg-am/25 text-am border border-am/35 font-semibold text-[10px] shrink-0" data-gidx="${i}">Prep →</button>
+              </div>
+            `
+              )
+              .join('')}
+          </div>
+        </div>`
+      : `<div class="px-2 py-1 rounded bg-em/10 border border-em/30 text-em text-[10.5px]">All scouted opponent replies at your repertoire positions are covered!</div>`;
+
+    const overlapsHtml = res.overlaps.length
+      ? `<div class="flex flex-col gap-1">
+          <div class="text-[10px] font-semibold uppercase tracking-wider text-em">Likely Battlegrounds (${res.overlaps.length})</div>
+          <div class="divide-y divide-borderSubtle/50 rounded border border-borderSubtle bg-[#0b101b] max-h-[120px] overflow-y-auto">
+            ${res.overlaps
+              .slice(0, 8)
+              .map(
+                (ov, i) => `
+              <div class="px-2 py-1 flex items-center justify-between gap-2 text-[10.5px]">
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <span class="font-mono font-bold text-txt">${escapeHtml(ov.line.id)}</span>
+                    <span class="text-txt/90 truncate">${escapeHtml(ov.line.name)}</span>
+                    ${ov.dueOrNewCards > 0 ? `<span class="px-1 rounded bg-ro/20 text-ro font-mono text-[9.5px] font-bold">${ov.dueOrNewCards} due/new</span>` : '<span class="px-1 rounded bg-em/15 text-em font-mono text-[9.5px]">Ready</span>'}
+                  </div>
+                  <div class="text-[9.5px] text-txtMuted font-mono">
+                    ${ov.games} game${ov.games === 1 ? '' : 's'} via ${escapeHtml(ov.triggerMove)} · Opp W${ov.oppWins}/D${ov.oppDraws}/L${ov.oppLosses}
+                  </div>
+                </div>
+                <button class="rep-prep-ov px-2 py-0.5 rounded bg-cy/15 hover:bg-cy/25 text-cy border border-cy/35 font-mono text-[10px] shrink-0" data-oidx="${i}">Load</button>
+              </div>
+            `
+              )
+              .join('')}
+          </div>
+        </div>`
+      : '';
+
+    bodyHtml = `
+      <div class="flex flex-wrap items-center justify-between gap-2 px-2 py-1 rounded bg-surface/60 border border-borderSubtle font-mono text-[10px]">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span>Coverage: <b class="${covColor}">${res.coveragePct}%</b> (${res.coveredDecisions}/${res.totalOpponentDecisions})</span>
+          <span class="text-borderSubtle">|</span>
+          <span class="text-am font-bold">${res.gaps.length} gap${res.gaps.length === 1 ? '' : 's'}</span>
+          <span class="text-borderSubtle">|</span>
+          <span class="text-em">${res.overlaps.length} matched line${res.overlaps.length === 1 ? '' : 's'}</span>
+        </div>
+        ${drillBtn}
+      </div>
+      ${gapsHtml}
+      ${overlapsHtml}
+    `;
+  }
+
+  return `
+    <div id="studioRepPrepDrawer" class="p-2.5 rounded-lg bg-[#0d1422] border border-am/40 flex flex-col gap-2 text-[11px]">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <span class="font-bold text-am">🎯 Opponent Prep (Scout × Repertoire)</span>
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <select id="repPrepColSelect" class="max-w-[160px] px-1.5 py-0.5 rounded bg-surface border border-borderSubtle text-[10.5px] font-semibold text-em">
+            ${colOpts}
+          </select>
+          <select id="repPrepColorSelect" class="px-1.5 py-0.5 rounded bg-surface border border-borderSubtle text-[10.5px] text-txt">
+            <option value="both"${prepState.userColor === 'both' ? ' selected' : ''}>Both sides</option>
+            <option value="w"${prepState.userColor === 'w' ? ' selected' : ''}>My White rep</option>
+            <option value="b"${prepState.userColor === 'b' ? ' selected' : ''}>My Black rep</option>
+          </select>
+          <button id="btnCloseRepDrawer" class="text-txtMuted hover:text-txt text-xs">✕</button>
+        </div>
+      </div>
+      ${bodyHtml}
+    </div>
+  `;
+}
+
 function bindDrawerEvents(host) {
   const closeBtn = host.querySelector('#btnCloseRepDrawer');
   if (closeBtn) {
     closeBtn.onclick = () => {
       activeDrawer = null;
+      addLineDraft = null;
       renderStudioRepertoirePanel();
     };
   }
@@ -461,8 +647,63 @@ function bindDrawerEvents(host) {
       const sectionName = host.querySelector('#repAddSection')?.value?.trim() || 'Custom Lines';
       const lineName = host.querySelector('#repAddLineName')?.value?.trim() || '';
       const note = host.querySelector('#repAddNote')?.value?.trim() || '';
+      addLineDraft = null;
       saveCurrentBoardLineToRepertoire({ color, sectionName, lineName, note });
     };
+  }
+
+  const prepColSel = host.querySelector('#repPrepColSelect');
+  if (prepColSel) {
+    prepColSel.onchange = (e) => runOpponentPrepCheck({ colId: e.target.value });
+  }
+  const prepColorSel = host.querySelector('#repPrepColorSelect');
+  if (prepColorSel) {
+    prepColorSel.onchange = (e) => runOpponentPrepCheck({ userColor: e.target.value });
+  }
+
+  const drillBtn = host.querySelector('#btnRepPrepDrill');
+  if (drillBtn && prepState.result?.drillCardIds?.length) {
+    drillBtn.onclick = () => {
+      const col = state.collections.find((c) => c.id === prepState.colId);
+      try {
+        localStorage.setItem(
+          PREP_DRILL_STORAGE_KEY,
+          JSON.stringify({
+            opponentName: col?.name || 'Opponent',
+            cardIds: prepState.result.drillCardIds,
+            createdAt: Date.now(),
+          })
+        );
+      } catch (_) {}
+      window.location.href = 'repertoire.html?prep=1';
+    };
+  }
+
+  if (prepState.result?.gaps?.length) {
+    host.querySelectorAll('.rep-prep-gap').forEach((btn) => {
+      btn.onclick = () => {
+        const gap = prepState.result.gaps[parseInt(btn.dataset.gidx, 10)];
+        if (!gap) return;
+        addLineDraft = {
+          color: gap.userColor,
+          sectionName: gap.sectionName,
+          lineName: `vs ${gap.moveLabel}`,
+        };
+        activeDrawer = 'addLine';
+        addBoardTab(`Prep vs ${gap.moveLabel}`, gap.pgn, null, { jumpEnd: true });
+        showToast(`Loaded gap ${gap.moveLabel} — play your reply & click Save Line`);
+      };
+    });
+  }
+
+  if (prepState.result?.overlaps?.length) {
+    host.querySelectorAll('.rep-prep-ov').forEach((btn) => {
+      btn.onclick = () => {
+        const ov = prepState.result.overlaps[parseInt(btn.dataset.oidx, 10)];
+        if (!ov) return;
+        addBoardTab(`${ov.line.id} ${ov.line.name}`, ov.pgn, null, { jumpEnd: true });
+      };
+    });
   }
 }
 
@@ -546,7 +787,9 @@ export function renderStudioRepertoirePanel() {
       ? renderPgnDrawer(true)
       : activeDrawer === 'addLine'
         ? renderAddLineDrawer(sections)
-        : '';
+        : activeDrawer === 'prep'
+          ? renderPrepDrawer()
+          : '';
 
   const movesHtml = hit?.moves?.length
     ? `
@@ -634,6 +877,7 @@ export function renderStudioRepertoirePanel() {
         </div>
         <div class="flex items-center gap-1 flex-wrap shrink-0">
           <a href="repertoire.html" class="px-2 py-0.5 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-bold text-[10.5px]">Train ↗</a>
+          <button id="btnStudioRepPrepToggle" class="px-2 py-0.5 rounded bg-am/15 hover:bg-am/25 text-am border border-am/35 font-semibold text-[10.5px]" title="Cross-check scouted opponent against your repertoire">🎯 Prep</button>
           <button id="btnStudioRepAddLine" class="px-2 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10.5px]">+ Add Line</button>
           <button id="btnStudioRepPgnToggle" class="px-2 py-0.5 rounded bg-cy/15 hover:bg-cy/25 text-cy border border-cy/35 font-semibold text-[10.5px]">+ PGN</button>
           <label class="px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-txt text-[10.5px] cursor-pointer">
@@ -664,6 +908,18 @@ export function renderStudioRepertoirePanel() {
       }
     };
   }
+  const prepBtn = host.querySelector('#btnStudioRepPrepToggle');
+  if (prepBtn) {
+    prepBtn.onclick = () => {
+      if (activeDrawer === 'prep') {
+        activeDrawer = null;
+        renderStudioRepertoirePanel();
+      } else {
+        activeDrawer = 'prep';
+        runOpponentPrepCheck();
+      }
+    };
+  }
   const pgnBtn = host.querySelector('#btnStudioRepPgnToggle');
   if (pgnBtn) {
     pgnBtn.onclick = () => {
@@ -674,6 +930,7 @@ export function renderStudioRepertoirePanel() {
   const addBtn = host.querySelector('#btnStudioRepAddLine');
   if (addBtn) {
     addBtn.onclick = () => {
+      addLineDraft = null;
       activeDrawer = activeDrawer === 'addLine' ? null : 'addLine';
       renderStudioRepertoirePanel();
     };

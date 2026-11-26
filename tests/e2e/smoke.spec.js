@@ -407,4 +407,75 @@ test('Repertoire hub imports a Lichess Study PGN, saves a board line, and opens 
   expect(pageErrors).toEqual([]);
 });
 
+test('Scout x Repertoire Opponent Prep finds gaps, badges moves, preps gap, and launches drill', async ({
+  page,
+}) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  // Mock Lichess opponent playing Black: 2x Sicilian (gap against SAMPLE_REPERTOIRE) and 1x 1...e5 (book)
+  const makeGame = (id, moves, winner) =>
+    JSON.stringify({
+      id,
+      variant: 'standard',
+      perf: 'blitz',
+      createdAt: Date.UTC(2026, 10, 24),
+      winner,
+      players: {
+        white: { user: { name: 'RandomWhite' }, rating: 2200 },
+        black: { user: { name: 'PrepRival' }, rating: 2250 },
+      },
+      pgn: `[Event "rated blitz"]\n[White "RandomWhite"]\n[Black "PrepRival"]\n[Result "${winner === 'black' ? '0-1' : '1-0'}"]\n\n${moves}`,
+    });
+
+  const ndjson = [
+    makeGame('r1', '1. e4 c5 2. Nf3 d6 0-1', 'black'),
+    makeGame('r2', '1. e4 c5 2. Nc3 Nc6 0-1', 'black'),
+    makeGame('r3', '1. e4 e5 2. Nf3 Nc6 1-0', 'white'),
+  ].join('\n');
+
+  await page.route('https://lichess.org/api/games/user/PrepRival*', (r) =>
+    r.fulfill({ contentType: 'application/x-ndjson', body: ndjson + '\n' })
+  );
+  await page.route('https://lichess.org/api/broadcast/**', (r) => r.abort());
+  await page.route('https://lichess.org/api/cloud-eval*', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+
+  await page.goto('/');
+  await seedRepertoireInIdb(page);
+  await page.reload();
+
+  // Sync opponent in Player Scout
+  await page.click('#btnOpenScoutModal');
+  await page.fill('#scLichessUser', 'PrepRival');
+  await page.click('#btnRunLichessSync');
+  await expect(page.locator('#scoutCollectionSelect')).toContainText('PrepRival (Lichess)', {
+    timeout: 10_000,
+  });
+
+  // Open Repertoire hub -> Opponent Prep drawer
+  await page.click('[data-hub="repertoire"]');
+  await page.click('#btnStudioRepPrepToggle');
+
+  await expect(page.locator('#studioRepPrepDrawer')).toContainText('Coverage:');
+  await expect(page.locator('#studioRepPrepDrawer')).toContainText('1...c5');
+  await expect(page.locator('#studioRepPrepDrawer')).toContainText('A1');
+
+  // Clicking Prep -> on the 1...c5 gap loads 1. e4 c5 and opens pre-filled Add Line drawer
+  await page.locator('.rep-prep-gap').first().click();
+  await expect(page.locator('#variationTreeContainer')).toContainText('c5');
+  await expect(page.locator('#studioRepAddLineDrawer')).toBeVisible();
+
+  // Re-open Prep drawer and launch targeted opponent drill on repertoire.html?prep=1
+  await page.click('#btnStudioRepPrepToggle');
+  await expect(page.locator('#btnRepPrepDrill')).toBeVisible();
+  await page.click('#btnRepPrepDrill');
+
+  await expect(page).toHaveURL(/repertoire\.html\?prep=1/, { timeout: 10_000 });
+  await expect(page.locator('#session')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('#se-title')).toContainText('Prep vs PrepRival');
+  expect(pageErrors).toEqual([]);
+});
+
+
 

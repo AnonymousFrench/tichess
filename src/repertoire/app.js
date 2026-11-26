@@ -11,6 +11,7 @@ import { Chess } from 'chess.js';
 import { PIECE_SVG } from '../chess/pieces.js';
 import { encodeMoveLine } from '../chess/shareUrl.js';
 import { MIN, HOUR, DAY, cardStatus, gradeRecord, learnRecord } from './model.js';
+import { PREP_DRILL_STORAGE_KEY } from './opponentPrep.js';
 
 const STOCKFISH_MT_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite.js`;
 const STOCKFISH_ST_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite-single.js`;
@@ -304,6 +305,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(kind==="review"){ const due=ALLCARDS.filter(c=>status(c)==="due").sort((a,b)=>prog[a].d-prog[b].d); runs=buildReviewRuns(due,"review"); title="Review"; }
     else if(kind==="weak"){ runs=buildReviewRuns(weakCards().slice(0,12),"weak"); title="Weak moves"; }
     else if(kind==="redo"){ runs=buildReviewRuns(opt.cards,"weak"); title="Missed moves"; }
+    else if(kind==="prep"){ const valid=(opt.cards||[]).filter(c=>CARDS[c]); runs=buildReviewRuns(valid,"review"); title=opt.title||"Opponent Prep"; }
     else if(kind==="learn"){ const ln=opt.line!==undefined?LINES[opt.line]:nextLearnLine(learnSec); if(!ln) return; const newC=ln.cards.filter(x=>status(x.c)==="new"); const from=Math.max(0,(newC[0]?newC[0].p:0)-1); runs=[{line:ln.i,from,mode:"learn"},{line:ln.i,from,mode:"recall",gradeSet:new Set(newC.map(x=>x.c))}]; title="Learn · "+ln.id; }
     else if(kind==="play"){ runs=[{tree:true,sec:opt.sec,startPos:opt.pos,prefixSan:opt.prefix,color:opt.color||(SECBY[opt.sec]||{}).color,mode:"play"}]; title="Play · "+(opt.pos!==undefined?"from this position":SECBY[opt.sec].name); }
     if(!runs.length) return;
@@ -838,4 +840,21 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   let startTab="train"; try{ startTab=localStorage.getItem("rt2-tab")||"train"; }catch(_){}
   setTab(["train","study","explore","stats"].includes(startTab)?startTab:"train");
   initStore();
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("prep") === "1") {
+      const raw = localStorage.getItem(PREP_DRILL_STORAGE_KEY);
+      if (raw) {
+        const spec = JSON.parse(raw);
+        const valid = Array.isArray(spec?.cardIds) ? spec.cardIds.filter((c) => CARDS[c]) : [];
+        if (valid.length) {
+          startSession("prep", {
+            cards: valid,
+            title: spec.opponentName ? `Prep vs ${spec.opponentName}` : "Opponent Prep",
+          });
+        }
+      }
+    }
+  } catch (_) {}
 }

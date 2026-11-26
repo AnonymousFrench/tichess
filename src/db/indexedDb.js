@@ -113,6 +113,33 @@ export async function dbLookupPos(colId, normFen) {
   }
 }
 
+export async function dbLookupPositionsBatch(colId, normFens) {
+  const out = new Map();
+  if (!colId || !Array.isArray(normFens) || !normFens.length) return out;
+  const unique = Array.from(new Set(normFens));
+  try {
+    const db = await openDB();
+    return await new Promise((resolve) => {
+      const store = db.transaction('positions', 'readonly').objectStore('positions');
+      let left = unique.length;
+      for (const nf of unique) {
+        const r = store.get(`${colId}|${nf}`);
+        r.onsuccess = () => {
+          if (r.result?.entries?.length) {
+            out.set(nf, r.result.entries);
+          }
+          if (--left === 0) resolve(out);
+        };
+        r.onerror = () => {
+          if (--left === 0) resolve(out);
+        };
+      }
+    });
+  } catch (_) {
+    return out;
+  }
+}
+
 export async function dbGetGamesByIds(ids) {
   if (!ids || !ids.length) return [];
   const db = await openDB();

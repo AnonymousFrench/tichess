@@ -1,10 +1,17 @@
 import { Chess } from 'chess.js';
 import { state, getCurrentFen, showToast } from '../state.js';
 import { renderArrows } from '../board/board.js';
-import { parseUciInfoLine, renderEngineLines, updateEvalBarFromState } from './uci.js';
+import {
+  parseUciInfoLine,
+  normalizePv,
+  renderEngineLines,
+  updateEvalBarFromState,
+} from './uci.js';
+import { createUciSession } from './uciSession.js';
 import { updateBridgeStatusBadge } from './stockfish.js';
 
 let openSettingsModalCb = null;
+let lc0Session = null;
 
 export function setLc0SettingsHandler(fn) {
   openSettingsModalCb = fn;
@@ -53,28 +60,34 @@ export function triggerLc0Analysis() {
   state.lc0.topArrowUci = null;
   renderArrows();
 
-  if (state.lc0.mode !== 'ws' || state.lc0.ws?.readyState !== WebSocket.OPEN) {
+  if (state.lc0.mode !== 'ws' || state.lc0.ws?.readyState !== WebSocket.OPEN || !lc0Session) {
     renderLc0Disconnected();
     return;
   }
 
   const linesEl = document.getElementById('lc0LinesList');
   if (!state.lc0.running) {
-    state.lc0.ws.send('stop');
+    lc0Session.stop();
     if (linesEl) linesEl.innerHTML = `<div class="p-2 text-txtMuted">Paused</div>`;
     return;
   }
 
-  if (new Chess(fen).isGameOver()) {
-    state.lc0.ws.send('stop');
+  let isOver = false;
+  try {
+    isOver = new Chess(fen).isGameOver();
+  } catch (_) {
+    lc0Session.stop();
+    if (linesEl) linesEl.innerHTML = `<div class="p-2 text-txtMuted">Invalid Position</div>`;
+    return;
+  }
+
+  if (isOver) {
+    lc0Session.stop();
     if (linesEl) linesEl.innerHTML = `<div class="p-2 text-txtMuted">Game Over</div>`;
     return;
   }
 
-  state.lc0.ws.send('stop');
-  state.lc0.ws.send(`setoption name Contempt value ${state.lc0.contempt}`);
-  state.lc0.ws.send(`position fen ${fen}`);
-  state.lc0.ws.send('go infinite');
+  lc0Session.analyze(fen, 'go infinite', [`setoption name Contempt value ${state.lc0.contempt}`]);
 }
 
 export function renderLc0UI() {
@@ -84,7 +97,9 @@ export function renderLc0UI() {
   const top = state.lc0.lines[1];
 
   if (top) {
-    document.getElementById('lc0Depth').textContent = `D:${top.depth}`;
+    const depthEl = document.getElementById('lc0Depth');
+    const mainEvalEl = document.getElementById('lc0MainEval');
+    if (depthEl) depthEl.textContent = `D:${top.depth}`;
     const wVal = top.scoreVal * flip;
     const lbl =
       top.scoreType === 'mate'
@@ -92,7 +107,7 @@ export function renderLc0UI() {
         : `${wVal >= 0 ? '+' : ''}${(wVal / 100).toFixed(2)}`;
     state.lc0.evalWhiteCp = top.scoreType === 'mate' ? (wVal > 0 ? 9999 : -9999) : wVal;
     state.lc0.evalLabel = lbl;
-    document.getElementById('lc0MainEval').textContent = lbl;
+    if (mainEvalEl) mainEvalEl.textContent = lbl;
 
     const wdlEl = document.getElementById('lc0WdlBar');
     if (top.wdl && wdlEl) {
@@ -118,6 +133,10 @@ export function renderLc0UI() {
 }
 
 export function connectLc0Ws(url) {
+  if (lc0Session) {
+    lc0Session.reset();
+    lc0Session = null;
+  }
   if (state.lc0.ws) {
     try {
       state.lc0.ws.close();
@@ -127,8 +146,26 @@ export function connectLc0Ws(url) {
 
   try {
     const ws = new WebSocket(url);
+    const session = createUciSession((cmd) => {
+      if (state.lc0.ws === ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(cmd);
+      }
+    });
+    session.onInfo((line, infoFen) => {
+      if (state.lc0.mode !== 'ws' || !state.lc0.running) return;
+      if (infoFen !== state.lc0.currentFen || infoFen !== getCurrentFen()) return;
+      if (!line.includes(' pv ') || !line.includes(' score ')) return;
+      const parsed = parseUciInfoLine(line);
+      if (!parsed || parsed.multipv > 3) return;
+      parsed.pv = normalizePv(infoFen, parsed.pv);
+      if (!parsed.pv.length) return;
+      state.lc0.lines[parsed.multipv] = parsed;
+      renderLc0UI();
+    });
+
     ws.onopen = () => {
       state.lc0.ws = ws;
+      lc0Session = session;
       state.lc0.mode = 'ws';
       state.lc0.wsUrl = url;
       localStorage.setItem('cms_lc0_ws', url);
@@ -136,23 +173,19 @@ export function connectLc0Ws(url) {
       ws.send('setoption name MultiPV value 3');
       ws.send('setoption name UCI_ShowWDL value true');
       ws.send('isready');
-      document.getElementById('lc0ModeBadge').textContent = 'Lc0 Local UCI';
+      const badge = document.getElementById('lc0ModeBadge');
+      if (badge) badge.textContent = 'Lc0 Local UCI';
       updateBridgeStatusBadge();
       showToast('Connected to Local Lc0 UCI Bridge');
       triggerLc0Analysis();
     };
     ws.onmessage = (ev) => {
-      const line = String(ev.data || '');
-      if (line.startsWith('info ') && line.includes(' pv ') && line.includes(' score ')) {
-        const parsed = parseUciInfoLine(line);
-        if (parsed && parsed.multipv <= 3) {
-          state.lc0.lines[parsed.multipv] = parsed;
-          renderLc0UI();
-        }
-      }
+      session.onLine(String(ev.data || ''));
     };
     ws.onclose = () => {
       if (state.lc0.ws === ws) {
+        session.reset();
+        lc0Session = null;
         state.lc0.ws = null;
         state.lc0.mode = 'disconnected';
         state.lc0.lines = {};
@@ -170,6 +203,10 @@ export function connectLc0Ws(url) {
 }
 
 export function disconnectLc0Ws() {
+  if (lc0Session) {
+    lc0Session.reset();
+    lc0Session = null;
+  }
   if (state.lc0.ws) {
     try {
       state.lc0.ws.close();

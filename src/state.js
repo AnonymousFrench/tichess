@@ -26,13 +26,14 @@ export const state = {
 
   // Top-Right Hub
   activeHub: 'live', // 'live' | 'masters' | 'scouted'
-  liveSubView: 'rounds', // 'rounds' | 'all'
   liveAutoPoll: true,
   liveCountdown: 15,
   featuredTour: null, // Full Lichess broadcast tournament object { tour, rounds }
   liveRoundId: null,
   liveRoundName: '',
   liveRoundGames: [],
+  userPinnedRound: false,
+  lastTourRefreshAt: 0,
   allBroadcasts: [],
   mastersGamesCache: [],
 

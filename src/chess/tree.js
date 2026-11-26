@@ -96,13 +96,20 @@ export function createTreeFromPgn(pgnText, fallbackFen = START_FEN) {
 
   const headers = parser.getHeaders();
   const startFen = headers.FEN || START_FEN;
-  const root = createNode({ fen: startFen });
-  const replay = new Chess(startFen);
+  let replay;
+  try {
+    replay = new Chess(startFen);
+  } catch (_) {
+    const root = createNode({ fen: fallbackFen });
+    return { root, current: root, meta: null, invalidFen: true };
+  }
+
+  const root = createNode({ fen: replay.fen() });
   const verbose = parser.history({ verbose: true });
   const clocks = extractClocksFromPgn(trimmed);
 
   let cur = root;
-  let moveNum = parseInt(startFen.split(' ')[5] || '1', 10);
+  let moveNum = parseInt(replay.fen().split(' ')[5] || '1', 10) || 1;
   for (let i = 0; i < verbose.length; i++) {
     let m = null;
     try {
@@ -133,7 +140,7 @@ export function createTreeFromPgn(pgnText, fallbackFen = START_FEN) {
   }
 
   const meta =
-    headers.White || headers.Black || headers.Event
+    headers.White || headers.Black || headers.Event || headers.ECO || headers.Opening
       ? {
           white: headers.White || 'White',
           whiteElo: headers.WhiteElo || '',
@@ -142,10 +149,73 @@ export function createTreeFromPgn(pgnText, fallbackFen = START_FEN) {
           event: headers.Event || '',
           date: headers.Date || headers.UTCDate || '',
           result: headers.Result || '*',
+          eco: headers.ECO || '',
+          opening: headers.Opening || '',
         }
       : null;
 
   return { root, current: cur, meta };
+}
+
+/**
+ * Merge a freshly parsed broadcast mainline into an existing variation tree
+ * without losing user variations or detaching `tab.current`.
+ *
+ * If the broadcast mainline diverges (e.g. a broadcast correction), the old
+ * continuation is demoted to a variation rather than deleted.
+ */
+export function mergeMainline(existingRoot, newRoot) {
+  if (!existingRoot || !newRoot) {
+    return { added: 0, clockChanged: false, lastNode: existingRoot };
+  }
+
+  let curExisting = existingRoot;
+  let curNew = newRoot.children[0] || null;
+  let added = 0;
+  let clockChanged = false;
+
+  while (curNew) {
+    const matchIdx = curExisting.children.findIndex((ch) => ch.san === curNew.san);
+    if (matchIdx === 0) {
+      const matched = curExisting.children[0];
+      if (curNew.clk && matched.clk !== curNew.clk) {
+        matched.clk = curNew.clk;
+        clockChanged = true;
+      }
+      curExisting = matched;
+    } else if (matchIdx > 0) {
+      const [matched] = curExisting.children.splice(matchIdx, 1);
+      curExisting.children.unshift(matched);
+      if (curNew.clk && matched.clk !== curNew.clk) {
+        matched.clk = curNew.clk;
+        clockChanged = true;
+      }
+      added++;
+      curExisting = matched;
+    } else {
+      const inserted = createNode({
+        parent: curExisting,
+        san: curNew.san,
+        uci: curNew.uci,
+        from: curNew.from,
+        to: curNew.to,
+        promotion: curNew.promotion,
+        fen: curNew.fen,
+        color: curNew.color,
+        moveNum: curNew.moveNum,
+        comment: curNew.comment,
+        clk: curNew.clk,
+        nags: curNew.nags,
+      });
+      // Insert as mainline (index 0), demoting any prior continuation to a variation
+      curExisting.children.unshift(inserted);
+      added++;
+      curExisting = inserted;
+    }
+    curNew = curNew.children[0] || null;
+  }
+
+  return { added, clockChanged, lastNode: curExisting };
 }
 
 export function exportTreeToPgn(tab) {

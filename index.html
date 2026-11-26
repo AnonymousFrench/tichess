@@ -80,13 +80,13 @@
     <!-- Right: Live ECO Pill + Dynamic Broadcast Quick-Jump Badge -->
     <div class="flex items-center gap-2 min-w-0">
       <div id="openingPill" class="hidden xl:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface border border-borderSubtle text-[11px] max-w-[260px] truncate">
-        <span id="openingEco" class="font-mono font-bold text-em">A00</span>
+        <span id="openingEco" class="font-mono font-bold text-em">—</span>
         <span id="openingName" class="text-txtMuted truncate">Starting Position</span>
       </div>
 
-      <button id="btnLiveQuickJump" class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-ro/15 hover:bg-ro/25 border border-ro/40 text-ro text-[11px] font-semibold transition-colors shrink-0 max-w-[240px]" title="Jump to Featured Live Broadcast">
+      <button id="btnLiveQuickJump" class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted text-[11px] font-semibold transition-colors shrink-0 max-w-[240px]" title="Jump to Featured Broadcast">
         <span id="liveQuickJumpDot" class="hidden w-2 h-2 rounded-full bg-ro live-dot shrink-0"></span>
-        <span id="liveQuickJumpLabel" class="truncate">Live Broadcasts</span>
+        <span id="liveQuickJumpLabel" class="truncate">Broadcasts</span>
       </button>
 
       <button id="btnTokenPill" class="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] text-txtMuted" title="Lichess Token & Storage Settings">
@@ -245,7 +245,7 @@
           <div class="flex items-center justify-between border-b border-borderSubtle bg-[#0d131f] px-1.5 pt-1 gap-2">
             <div class="flex items-center gap-1 overflow-x-auto">
               <button data-hub="live" class="hub-tab flex items-center gap-1.5 px-2.5 py-1 rounded-t text-[11.5px] font-semibold bg-panel text-txt border-t border-x border-borderSubtle whitespace-nowrap">
-                <span class="w-2 h-2 rounded-full bg-ro live-dot"></span>
+                <span id="liveHubDot" class="w-2 h-2 rounded-full bg-txtMuted/50"></span>
                 <span>Live Events</span>
               </button>
               <button data-hub="masters" class="hub-tab px-2.5 py-1 rounded-t text-[11.5px] font-medium text-txtMuted hover:text-txt whitespace-nowrap">

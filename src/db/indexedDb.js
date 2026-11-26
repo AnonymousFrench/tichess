@@ -2,7 +2,42 @@ import { Chess } from 'chess.js';
 import { START_FEN, normalizeFen } from '../state.js';
 
 const DB_NAME = 'ChessMonitorStudioLiveDB_v1';
+const MIGRATION_KEY = 'cms_migr_v2';
+const LEGACY_SAMPLE_ID = 'sample:wcc';
 let dbPromise = null;
+
+function deleteCollectionInDb(db, colId) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['collections', 'games', 'positions'], 'readwrite');
+    tx.objectStore('collections').delete(colId);
+    ['games', 'positions'].forEach((sn) => {
+      const r = tx.objectStore(sn).index('by_col').openKeyCursor(IDBKeyRange.only(colId));
+      r.onsuccess = (e) => {
+        const c = e.target.result;
+        if (c) {
+          tx.objectStore(sn).delete(c.primaryKey);
+          c.continue();
+        }
+      };
+    });
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function runLegacyMigrations(db) {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem(MIGRATION_KEY) === '1') {
+      return;
+    }
+    await deleteCollectionInDb(db, LEGACY_SAMPLE_ID);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(MIGRATION_KEY, '1');
+    }
+  } catch (_) {
+    // Non-fatal: retry on next open
+  }
+}
 
 export function openDB() {
   if (dbPromise) return dbPromise;
@@ -20,7 +55,11 @@ export function openDB() {
         db.createObjectStore('positions', { keyPath: 'key' }).createIndex('by_col', 'collectionId', { unique: false });
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = async () => {
+      const db = req.result;
+      await runLegacyMigrations(db);
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
   });
   return dbPromise;
@@ -41,22 +80,7 @@ export async function dbGetCollections() {
 
 export async function dbDeleteCollection(colId) {
   const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(['collections', 'games', 'positions'], 'readwrite');
-    tx.objectStore('collections').delete(colId);
-    ['games', 'positions'].forEach((sn) => {
-      const r = tx.objectStore(sn).index('by_col').openKeyCursor(IDBKeyRange.only(colId));
-      r.onsuccess = (e) => {
-        const c = e.target.result;
-        if (c) {
-          tx.objectStore(sn).delete(c.primaryKey);
-          c.continue();
-        }
-      };
-    });
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
+  return deleteCollectionInDb(db, colId);
 }
 
 export async function dbSaveCollection(meta, games, posMap) {
@@ -142,6 +166,13 @@ export async function indexGamesCollection(meta, rawGames, progressCb = null) {
     const verbose = parser.history({ verbose: true });
     if (!verbose.length) continue;
 
+    let replay;
+    try {
+      replay = new Chess(startFen);
+    } catch (_) {
+      continue;
+    }
+
     const white = rg.white || h.White || 'White';
     const black = rg.black || h.Black || 'Black';
     const whiteElo = parseInt(rg.whiteElo || h.WhiteElo || '0', 10) || 0;
@@ -177,7 +208,6 @@ export async function indexGamesCollection(meta, rawGames, progressCb = null) {
       pgn: rg.pgn,
     });
 
-    const replay = new Chess(startFen);
     const lim = Math.min(verbose.length, 40);
     for (let p = 0; p < lim; p++) {
       const norm = normalizeFen(replay.fen());

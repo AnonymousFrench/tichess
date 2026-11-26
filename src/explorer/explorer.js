@@ -1,6 +1,7 @@
 import {
   state,
   START_FEN,
+  getActiveTab,
   getCurrentFen,
   normalizeFen,
   escapeHtml,
@@ -23,6 +24,27 @@ export function renderWdbBar(w, d, b) {
   }</div>`;
 }
 
+function setOpeningPill(eco, name) {
+  const ecoEl = document.getElementById('openingEco');
+  const nameEl = document.getElementById('openingName');
+  if (ecoEl) ecoEl.textContent = eco || '—';
+  if (nameEl) nameEl.textContent = name || '—';
+}
+
+function getFallbackOpeningForCurrentPosition(fen) {
+  if (normalizeFen(fen) === normalizeFen(START_FEN)) {
+    return { eco: '—', name: 'Starting Position' };
+  }
+  const tab = getActiveTab();
+  if (tab?.meta && (tab.meta.eco || tab.meta.opening)) {
+    return {
+      eco: tab.meta.eco || '—',
+      name: tab.meta.opening || '—',
+    };
+  }
+  return { eco: '—', name: '—' };
+}
+
 export async function refreshReferenceExplorer() {
   const reqId = ++state.refReqId;
   const fen = getCurrentFen();
@@ -30,17 +52,18 @@ export async function refreshReferenceExplorer() {
   if (authNote) authNote.classList.add('hidden');
 
   if (normalizeFen(fen) === normalizeFen(START_FEN)) {
-    document.getElementById('openingEco').textContent = 'A00';
-    document.getElementById('openingName').textContent = 'Starting Position';
+    setOpeningPill('—', 'Starting Position');
   }
 
   try {
     const data = await fetchExplorer(state.refSource, fen);
     if (reqId !== state.refReqId) return;
 
-    if (data.opening) {
-      document.getElementById('openingEco').textContent = data.opening.eco || '';
-      document.getElementById('openingName').textContent = data.opening.name || '';
+    if (data.opening && (data.opening.eco || data.opening.name)) {
+      setOpeningPill(data.opening.eco || '—', data.opening.name || '—');
+    } else {
+      const fb = getFallbackOpeningForCurrentPosition(fen);
+      setOpeningPill(fb.eco, fb.name);
     }
 
     renderRefTable(data.moves || []);
@@ -49,6 +72,8 @@ export async function refreshReferenceExplorer() {
     renderMasterGamesTable();
   } catch (err) {
     if (reqId !== state.refReqId) return;
+    const fb = getFallbackOpeningForCurrentPosition(fen);
+    setOpeningPill(fb.eco, fb.name);
     if (err.authRequired || !state.lichessToken) {
       if (authNote) authNote.classList.remove('hidden');
     }

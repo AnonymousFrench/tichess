@@ -1,12 +1,41 @@
 import { Chess } from 'chess.js';
-import { state, getCurrentFen, showToast } from '../state.js';
+import { state, getCurrentFen, escapeHtml, formatCount, showToast } from '../state.js';
 import { fetchCloudEval } from '../api/lichess.js';
 import { renderArrows } from '../board/board.js';
-import { parseUciInfoLine, renderEngineLines, updateEvalBarFromState } from './uci.js';
+import {
+  parseUciInfoLine,
+  normalizePv,
+  renderEngineLines,
+  updateEvalBarFromState,
+} from './uci.js';
+import { createUciSession } from './uciSession.js';
 
 const STOCKFISH_WORKER_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite-single.js`;
 
+let wasmSession = null;
+let wsSession = null;
+
+function handleSfInfoLine(line, infoFen, expectedMode) {
+  if (state.sf.mode !== expectedMode) return;
+  if (!state.sf.running) return;
+  if (infoFen !== state.sf.currentFen || infoFen !== getCurrentFen()) return;
+  if (!line.includes(' pv ') || !line.includes(' score ')) return;
+
+  const parsed = parseUciInfoLine(line);
+  if (!parsed || parsed.multipv > 3) return;
+
+  parsed.pv = normalizePv(infoFen, parsed.pv);
+  if (!parsed.pv.length) return;
+
+  state.sf.lines[parsed.multipv] = parsed;
+  renderSfUI();
+}
+
 export function initStockfish() {
+  if (wasmSession) {
+    wasmSession.reset();
+    wasmSession = null;
+  }
   if (state.sf.worker) {
     try {
       state.sf.worker.terminate();
@@ -22,6 +51,12 @@ export function initStockfish() {
   try {
     const w = new Worker(STOCKFISH_WORKER_URL);
     state.sf.worker = w;
+
+    const session = createUciSession((cmd) => {
+      if (state.sf.worker === w) w.postMessage(cmd);
+    });
+    session.onInfo((line, infoFen) => handleSfInfoLine(line, infoFen, 'wasm'));
+    wasmSession = session;
 
     w.onerror = (err) => {
       if (state.sf.mode === 'ws') return;
@@ -45,18 +80,7 @@ export function initStockfish() {
         return;
       }
 
-      if (
-        line.startsWith('info ') &&
-        line.includes(' pv ') &&
-        line.includes(' score ') &&
-        state.sf.mode === 'wasm'
-      ) {
-        const parsed = parseUciInfoLine(line);
-        if (parsed && parsed.multipv <= 3) {
-          state.sf.lines[parsed.multipv] = parsed;
-          renderSfUI();
-        }
-      }
+      session.onLine(line);
     };
 
     w.postMessage('uci');
@@ -72,21 +96,22 @@ function renderSfError(message) {
   const list = document.getElementById('sfLinesList');
   if (badge) badge.textContent = 'WASM Unavailable';
   if (list && !Object.keys(state.sf.lines).length) {
-    list.innerHTML = `<div class="p-2.5 text-ro font-sans text-[11px] leading-relaxed">${message} Lichess Cloud Eval or a Local UCI Bridge can still be used.</div>`;
+    list.innerHTML = `<div class="p-2.5 text-ro font-sans text-[11px] leading-relaxed">${escapeHtml(message)} Lichess Cloud Eval or a Local UCI Bridge can still be used.</div>`;
   }
 }
 
 export function stopLocalSf() {
-  if (state.sf.ws?.readyState === WebSocket.OPEN) {
-    state.sf.ws.send('stop');
+  if (wsSession) {
+    wsSession.stop();
   }
-  if (state.sf.worker && state.sf.ready) {
-    state.sf.worker.postMessage('stop');
+  if (wasmSession) {
+    wasmSession.stop();
   }
 }
 
 export async function triggerSfAnalysis() {
   const fen = getCurrentFen();
+  const reqId = ++state.sf.cloudReqId;
   state.sf.currentFen = fen;
   state.sf.lines = {};
   state.sf.topArrowUci = null;
@@ -100,56 +125,76 @@ export async function triggerSfAnalysis() {
     return;
   }
 
-  if (new Chess(fen).isGameOver()) {
+  let isOver = false;
+  try {
+    isOver = new Chess(fen).isGameOver();
+  } catch (_) {
+    stopLocalSf();
+    if (linesEl) linesEl.innerHTML = `<div class="p-2 text-txtMuted">Invalid Position</div>`;
+    return;
+  }
+
+  if (isOver) {
     stopLocalSf();
     if (linesEl) linesEl.innerHTML = `<div class="p-2 text-txtMuted">Game Over</div>`;
     return;
   }
 
+  // Stop any previous search immediately so old info lines cannot leak during cloud fetch
+  stopLocalSf();
+
   // 1. Try Lichess Cloud Eval first if enabled (and not overridden by local UCI bridge)
   if (state.sf.cloudEnabled && state.sf.mode !== 'ws') {
-    const reqId = ++state.sf.cloudReqId;
     try {
       const data = await fetchCloudEval(fen, 3);
-      if (reqId !== state.sf.cloudReqId) return;
+      if (reqId !== state.sf.cloudReqId || fen !== getCurrentFen()) return;
       if (data?.pvs?.length) {
         stopLocalSf();
         const flip = fen.split(' ')[1] === 'b' ? -1 : 1;
+        const nodes = typeof data.knodes === 'number' ? data.knodes * 1000 : null;
         data.pvs.slice(0, 3).forEach((pvObj, idx) => {
           const isMate = typeof pvObj.mate === 'number';
+          const rawPv = (pvObj.moves || '').trim().split(/\s+/).filter(Boolean);
+          const normPv = normalizePv(fen, rawPv);
+          if (!normPv.length) return;
           state.sf.lines[idx + 1] = {
             multipv: idx + 1,
             depth: typeof data.depth === 'number' ? data.depth : null,
-            nps: (data.knodes || 0) * 1000,
+            nps: null,
+            nodes,
             scoreType: isMate ? 'mate' : 'cp',
             scoreVal: (isMate ? pvObj.mate : pvObj.cp || 0) * flip,
-            pv: (pvObj.moves || '').trim().split(/\s+/),
+            pv: normPv,
           };
         });
-        document.getElementById('sfModeBadge').textContent = 'Lichess Cloud';
-        renderSfUI();
-        return;
+        if (Object.keys(state.sf.lines).length) {
+          const badge = document.getElementById('sfModeBadge');
+          if (badge) badge.textContent = 'Lichess Cloud';
+          renderSfUI();
+          return;
+        }
       }
     } catch (_) {
+      if (reqId !== state.sf.cloudReqId || fen !== getCurrentFen()) return;
       // Fall through to local Stockfish 19 WASM
     }
   }
 
+  if (reqId !== state.sf.cloudReqId || fen !== getCurrentFen()) return;
+
   // 2. Local WebSocket UCI Bridge
-  if (state.sf.mode === 'ws' && state.sf.ws?.readyState === WebSocket.OPEN) {
-    document.getElementById('sfModeBadge').textContent = 'SF Local UCI';
-    state.sf.ws.send('stop');
-    state.sf.ws.send(`position fen ${fen}`);
-    state.sf.ws.send('go infinite');
+  if (state.sf.mode === 'ws' && state.sf.ws?.readyState === WebSocket.OPEN && wsSession) {
+    const badge = document.getElementById('sfModeBadge');
+    if (badge) badge.textContent = 'SF Local UCI';
+    wsSession.analyze(fen, 'go infinite');
     return;
   }
 
   // 3. Real Stockfish 19 WASM in Web Worker
-  if (state.sf.ready && state.sf.worker && state.sf.mode === 'wasm') {
-    document.getElementById('sfModeBadge').textContent = 'SF 19 WASM';
-    state.sf.worker.postMessage('stop');
-    state.sf.worker.postMessage(`position fen ${fen}`);
-    state.sf.worker.postMessage('go depth 18');
+  if (state.sf.ready && state.sf.worker && state.sf.mode === 'wasm' && wasmSession) {
+    const badge = document.getElementById('sfModeBadge');
+    if (badge) badge.textContent = 'SF 19 WASM';
+    wasmSession.analyze(fen, 'go depth 18');
     return;
   }
 
@@ -164,11 +209,23 @@ export function renderSfUI() {
   const top = state.sf.lines[1];
 
   if (top) {
-    document.getElementById('sfDepth').textContent =
-      typeof top.depth === 'number' ? `Depth: ${top.depth}` : 'Depth: —';
-    document.getElementById('sfNps').textContent = top.nps
-      ? `${Math.round(top.nps / 1000)} kn/s`
-      : '';
+    const depthEl = document.getElementById('sfDepth');
+    const npsEl = document.getElementById('sfNps');
+    const mainEvalEl = document.getElementById('sfMainEval');
+
+    if (depthEl) {
+      depthEl.textContent = typeof top.depth === 'number' ? `Depth: ${top.depth}` : 'Depth: —';
+    }
+    if (npsEl) {
+      if (top.nps) {
+        npsEl.textContent = `${Math.round(top.nps / 1000)} kn/s`;
+      } else if (top.nodes) {
+        npsEl.textContent = `${formatCount(top.nodes)} nodes`;
+      } else {
+        npsEl.textContent = '';
+      }
+    }
+
     const wVal = top.scoreVal * flip;
     const lbl =
       top.scoreType === 'mate'
@@ -176,7 +233,7 @@ export function renderSfUI() {
         : `${wVal >= 0 ? '+' : ''}${(wVal / 100).toFixed(2)}`;
     state.sf.evalWhiteCp = top.scoreType === 'mate' ? (wVal > 0 ? 9999 : -9999) : wVal;
     state.sf.evalLabel = lbl;
-    document.getElementById('sfMainEval').textContent = lbl;
+    if (mainEvalEl) mainEvalEl.textContent = lbl;
 
     if (top.pv?.[0]) {
       state.sf.topArrowUci = top.pv[0];
@@ -191,6 +248,10 @@ export function renderSfUI() {
 }
 
 export function connectSfWs(url) {
+  if (wsSession) {
+    wsSession.reset();
+    wsSession = null;
+  }
   if (state.sf.ws) {
     try {
       state.sf.ws.close();
@@ -200,32 +261,36 @@ export function connectSfWs(url) {
 
   try {
     const ws = new WebSocket(url);
+    const session = createUciSession((cmd) => {
+      if (state.sf.ws === ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(cmd);
+      }
+    });
+    session.onInfo((line, infoFen) => handleSfInfoLine(line, infoFen, 'ws'));
+
     ws.onopen = () => {
       stopLocalSf();
       state.sf.ws = ws;
+      wsSession = session;
       state.sf.mode = 'ws';
       state.sf.wsUrl = url;
       localStorage.setItem('cms_sf_ws', url);
       ws.send('uci');
       ws.send('setoption name MultiPV value 3');
       ws.send('isready');
-      document.getElementById('sfModeBadge').textContent = 'SF Local UCI';
+      const badge = document.getElementById('sfModeBadge');
+      if (badge) badge.textContent = 'SF Local UCI';
       updateBridgeStatusBadge();
       showToast('Connected to Local Stockfish UCI Bridge');
       triggerSfAnalysis();
     };
     ws.onmessage = (ev) => {
-      const line = String(ev.data || '');
-      if (line.startsWith('info ') && line.includes(' pv ') && line.includes(' score ')) {
-        const parsed = parseUciInfoLine(line);
-        if (parsed && parsed.multipv <= 3) {
-          state.sf.lines[parsed.multipv] = parsed;
-          renderSfUI();
-        }
-      }
+      session.onLine(String(ev.data || ''));
     };
     ws.onclose = () => {
       if (state.sf.ws === ws) {
+        session.reset();
+        wsSession = null;
         state.sf.ws = null;
         state.sf.mode = state.sf.ready ? 'wasm' : 'error';
         updateBridgeStatusBadge();
@@ -239,6 +304,10 @@ export function connectSfWs(url) {
 }
 
 export function disconnectSfWs() {
+  if (wsSession) {
+    wsSession.reset();
+    wsSession = null;
+  }
   if (state.sf.ws) {
     try {
       state.sf.ws.close();

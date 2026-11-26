@@ -24,7 +24,12 @@ export function renderBoard() {
   const tab = getActiveTab();
   if (!boardEl || !tab) return;
 
-  const chess = new Chess(tab.current.fen);
+  let chess;
+  try {
+    chess = new Chess(tab.current.fen);
+  } catch (_) {
+    return;
+  }
   const board = chess.board();
   const last = tab.current.san ? tab.current : null;
   const inCheck = chess.inCheck();
@@ -173,7 +178,12 @@ export function renderArrows() {
 export function playMoveOnTree(moveInput) {
   const tab = getActiveTab();
   if (!tab) return false;
-  const chess = new Chess(tab.current.fen);
+  let chess;
+  try {
+    chess = new Chess(tab.current.fen);
+  } catch (_) {
+    return false;
+  }
   let res = null;
   try {
     if (typeof moveInput === 'string') {
@@ -224,7 +234,12 @@ export function playMoveOnTree(moveInput) {
 }
 
 export function attemptUserMove(from, to) {
-  const chess = new Chess(getCurrentFen());
+  let chess;
+  try {
+    chess = new Chess(getCurrentFen());
+  } catch (_) {
+    return;
+  }
   const legal = chess.moves({ square: from, verbose: true }).filter((m) => m.to === to);
   if (!legal.length) {
     state.selectedSq = null;
@@ -285,7 +300,12 @@ export function initBoardInteractions() {
       state.userArrows = [];
     }
 
-    const chess = new Chess(getCurrentFen());
+    let chess;
+    try {
+      chess = new Chess(getCurrentFen());
+    } catch (_) {
+      return;
+    }
     const piece = chess.get(sq);
 
     if (state.selectedSq && state.legalTargets.includes(sq)) {

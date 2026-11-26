@@ -67,9 +67,15 @@ export function renderBoardTabs() {
 }
 
 export function addBoardTab(title, pgnOrFen = '', metaOverride = null, opts = {}) {
-  const { root, current, meta } = createTreeFromPgn(pgnOrFen);
+  const { root, current, meta, invalidFen } = createTreeFromPgn(pgnOrFen);
+  if (invalidFen) {
+    showToast('Invalid FEN in PGN', true);
+    return null;
+  }
   const id = 'tab_' + Date.now() + '_' + Math.floor(Math.random() * 999);
-  const finalMeta = metaOverride || meta;
+  const finalMeta = metaOverride
+    ? { ...metaOverride, eco: metaOverride.eco || meta?.eco || '', opening: metaOverride.opening || meta?.opening || '' }
+    : meta;
   const finalTitle =
     title ||
     (finalMeta

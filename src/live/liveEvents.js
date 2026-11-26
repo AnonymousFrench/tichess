@@ -10,9 +10,11 @@ import {
   fetchBroadcastTournament,
   fetchBroadcastRoundPgn,
 } from '../api/lichess.js';
-import { createTreeFromPgn, extractClocksFromPgn } from '../chess/tree.js';
+import { createTreeFromPgn, mergeMainline, extractClocksFromPgn } from '../chess/tree.js';
 import { renderPlayerClockBars } from '../board/board.js';
-import { addBoardTab } from '../board/tabs.js';
+import { addBoardTab, renderVariationTree } from '../board/tabs.js';
+
+const TOUR_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 
 function formatRoundDate(startsAt) {
   if (!startsAt) return '—';
@@ -26,6 +28,124 @@ function formatRoundTime(startsAt) {
   const d = new Date(startsAt);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * Normalize a `{ tour, round }` entry from `/api/broadcast/top` or
+ * `/api/broadcast/search` into a consistent item with an honest status.
+ */
+export function parseBroadcastItem(item, now = Date.now()) {
+  const tour = item?.tour || null;
+  const round = item?.round || null;
+
+  let status = 'unknown';
+  if (round?.ongoing === true) {
+    status = 'live';
+  } else if (round?.finished === true) {
+    status = 'finished';
+  } else if (typeof round?.startsAt === 'number' && round.startsAt > now) {
+    status = 'upcoming';
+  }
+
+  return {
+    tourId: tour?.id || '',
+    tourName: tour?.name || 'Tournament',
+    roundId: round?.id || '',
+    roundName: round?.name || '',
+    status,
+    tour,
+    round,
+  };
+}
+
+/**
+ * Combine and deduplicate `/api/broadcast/top` and `/api/broadcast/search`
+ * results by `tourId`, preferring live entries over non-live duplicates.
+ */
+export function mergeBroadcastLists(topData, searchData, now = Date.now()) {
+  const raw = [];
+  if (topData) {
+    (topData.active || []).forEach((item) => raw.push(parseBroadcastItem(item, now)));
+    (topData.upcoming || []).slice(0, 8).forEach((item) => raw.push(parseBroadcastItem(item, now)));
+  }
+  if (searchData) {
+    (searchData.currentPageResults || []).forEach((item) => raw.push(parseBroadcastItem(item, now)));
+  }
+
+  const byTour = new Map();
+  const anonymous = [];
+  for (const b of raw) {
+    if (!b.tourId) {
+      if (b.roundId) anonymous.push(b);
+      continue;
+    }
+    const prev = byTour.get(b.tourId);
+    if (!prev || (prev.status !== 'live' && b.status === 'live')) {
+      byTour.set(b.tourId, b);
+    }
+  }
+  return [...byTour.values(), ...anonymous];
+}
+
+/**
+ * Pick the featured broadcast: prefer a live World Championship, else first
+ * genuinely live broadcast, else first available broadcast.
+ */
+export function selectFeaturedBroadcast(items) {
+  if (!Array.isArray(items) || !items.length) return null;
+  const wccLive = items.find((b) => {
+    const hay = `${b.tourName} ${b.roundName}`;
+    return b.status === 'live' && /world (chess )?championship/i.test(hay);
+  });
+  if (wccLive) return wccLive;
+  const anyLive = items.find((b) => b.status === 'live' && b.tourId);
+  if (anyLive) return anyLive;
+  return items.find((b) => b.tourId) || items[0];
+}
+
+/**
+ * Pure reducer for tournament refresh & auto-advancing to a newly live round.
+ */
+export function computeRoundTransition({ currentRoundId, userPinnedRound, tourData }) {
+  const tour = tourData?.tour;
+  const rounds = tourData?.rounds || [];
+  const ongoingRound = rounds.find((r) => r.ongoing === true) || null;
+
+  if (!userPinnedRound && ongoingRound && ongoingRound.id !== currentRoundId) {
+    return {
+      nextRoundId: ongoingRound.id,
+      nextRoundName: `${tour?.name || 'Broadcast'} · ${ongoingRound.name || ''}`,
+      advanced: Boolean(currentRoundId),
+      round: ongoingRound,
+    };
+  }
+
+  if (!currentRoundId) {
+    const chosen =
+      ongoingRound ||
+      (tourData?.defaultRoundId && rounds.find((r) => r.id === tourData.defaultRoundId)) ||
+      [...rounds].reverse().find((r) => r.finished === true) ||
+      rounds[0] ||
+      null;
+    if (chosen) {
+      return {
+        nextRoundId: chosen.id,
+        nextRoundName: `${tour?.name || 'Broadcast'} · ${chosen.name || ''}`,
+        advanced: false,
+        round: chosen,
+      };
+    }
+  }
+
+  const currentRound = rounds.find((r) => r.id === currentRoundId) || null;
+  return {
+    nextRoundId: currentRoundId,
+    nextRoundName: currentRound
+      ? `${tour?.name || 'Broadcast'} · ${currentRound.name || ''}`
+      : state.liveRoundName,
+    advanced: false,
+    round: currentRound,
+  };
 }
 
 /**
@@ -50,6 +170,8 @@ export function parseBroadcastRoundPgn(pgnText) {
     const blackElo = getH('BlackElo');
     const result = getH('Result') || '*';
     const event = getH('Event') || state.liveRoundName || 'Live Broadcast';
+    const eco = getH('ECO');
+    const opening = getH('Opening');
     const clocks = extractClocksFromPgn(raw);
     let wClk = '';
     let bClk = '';
@@ -67,6 +189,8 @@ export function parseBroadcastRoundPgn(pgnText) {
       blackElo,
       result,
       event,
+      eco,
+      opening,
       pgn: raw,
       whiteClk: wClk,
       blackClk: bClk,
@@ -75,27 +199,53 @@ export function parseBroadcastRoundPgn(pgnText) {
   return games;
 }
 
+function getSelectedRound() {
+  const rounds = state.featuredTour?.rounds || [];
+  return rounds.find((r) => r.id === state.liveRoundId) || null;
+}
+
+function updateLiveIndicators(isTourLive) {
+  const anyLiveBroadcast =
+    isTourLive || state.allBroadcasts.some((b) => b.status === 'live');
+  const hubDot = document.getElementById('liveHubDot');
+  if (hubDot) {
+    hubDot.className = anyLiveBroadcast
+      ? 'w-2 h-2 rounded-full bg-ro live-dot'
+      : 'w-2 h-2 rounded-full bg-txtMuted/50';
+  }
+}
+
 function updateSpotlightBanner() {
   const titleEl = document.getElementById('featuredEventTitle');
   const subEl = document.getElementById('featuredEventSubtitle');
   const badgeEl = document.getElementById('featuredEventBadge');
   const statusEl = document.getElementById('wccBroadcastStatus');
   const watchBtn = document.getElementById('btnWatchWccLive');
+  const quickJumpBtn = document.getElementById('btnLiveQuickJump');
   const quickJumpText = document.getElementById('liveQuickJumpLabel');
   const quickJumpDot = document.getElementById('liveQuickJumpDot');
 
   const tour = state.featuredTour?.tour;
   const rounds = state.featuredTour?.rounds || [];
-  const ongoingRound = rounds.find((r) => r.ongoing);
+  const ongoingRound = rounds.find((r) => r.ongoing === true);
   const activeRound =
     rounds.find((r) => r.id === state.liveRoundId) ||
     ongoingRound ||
     rounds[rounds.length - 1];
 
+  const isOngoing = Boolean(ongoingRound);
+  updateLiveIndicators(isOngoing);
+
   if (!tour) {
     if (titleEl) titleEl.textContent = 'Live FIDE & Lichess Broadcasts';
     if (subEl) subEl.textContent = 'Select a tournament below or paste any Lichess broadcast URL.';
-    if (badgeEl) badgeEl.innerHTML = 'LICHESS BROADCASTS';
+    if (badgeEl) {
+      badgeEl.innerHTML = 'LICHESS BROADCASTS';
+      badgeEl.className =
+        'inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cy/15 text-cy border border-cy/35 font-mono text-[9.5px] font-bold';
+    }
+    if (quickJumpText) quickJumpText.textContent = 'Broadcasts';
+    if (quickJumpDot) quickJumpDot.classList.add('hidden');
     if (watchBtn) {
       watchBtn.disabled = !state.liveRoundGames.length;
       watchBtn.textContent = state.liveRoundGames.length ? '▶ Watch Top Board' : 'No Live Board';
@@ -112,7 +262,6 @@ function updateSpotlightBanner() {
     subEl.textContent = infoParts.join(' · ') || tour.description || 'Official Lichess Broadcast';
   }
 
-  const isOngoing = Boolean(ongoingRound);
   if (badgeEl) {
     badgeEl.innerHTML = isOngoing
       ? `<span class="w-1.5 h-1.5 rounded-full bg-ro live-dot"></span> LIVE BROADCAST`
@@ -123,24 +272,31 @@ function updateSpotlightBanner() {
   }
 
   if (quickJumpText) {
-    quickJumpText.textContent = isOngoing
-      ? `LIVE: ${tour.name}`
-      : `Broadcasts`;
+    quickJumpText.textContent = isOngoing ? `LIVE: ${tour.name}` : tour.name || 'Broadcasts';
   }
   if (quickJumpDot) {
     quickJumpDot.classList.toggle('hidden', !isOngoing);
+  }
+  if (quickJumpBtn) {
+    quickJumpBtn.className = isOngoing
+      ? 'flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-ro/15 hover:bg-ro/25 border border-ro/40 text-ro text-[11px] font-semibold transition-colors shrink-0 max-w-[240px]'
+      : 'flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted text-[11px] font-semibold transition-colors shrink-0 max-w-[240px]';
   }
 
   if (statusEl) {
     if (state.liveRoundGames.length) {
       const liveCount = state.liveRoundGames.filter((g) => g.result === '*').length;
-      statusEl.textContent = liveCount > 0 ? `● ${liveCount} Live Game(s)` : `${state.liveRoundGames.length} Game(s) Loaded`;
+      statusEl.textContent =
+        liveCount > 0 ? `● ${liveCount} Live Game(s)` : `${state.liveRoundGames.length} Game(s) Loaded`;
       statusEl.className =
         liveCount > 0
           ? 'font-mono text-[10px] px-2 py-0.5 rounded bg-em/15 border border-em/35 text-em'
           : 'font-mono text-[10px] px-2 py-0.5 rounded bg-surface border border-borderSubtle text-cy';
     } else {
       statusEl.textContent = isOngoing ? '● Round Live' : 'Connected';
+      statusEl.className = isOngoing
+        ? 'font-mono text-[10px] px-2 py-0.5 rounded bg-em/15 border border-em/35 text-em'
+        : 'font-mono text-[10px] px-2 py-0.5 rounded bg-surface border border-borderSubtle text-cy';
     }
   }
 
@@ -174,8 +330,8 @@ export function renderTournamentRoundsTable() {
   tbody.innerHTML = rounds
     .map((r) => {
       const isSelected = r.id === state.liveRoundId;
-      const isLive = Boolean(r.ongoing);
-      const isDone = Boolean(r.finished);
+      const isLive = r.ongoing === true;
+      const isDone = r.finished === true;
 
       let statusHtml = `<span class="text-txtMuted font-mono text-[10px]">Upcoming</span>`;
       if (isLive) {
@@ -203,23 +359,64 @@ export function renderTournamentRoundsTable() {
       const rid = tr.dataset.rid;
       const rname = tr.dataset.rname;
       if (!rid) return;
+      state.userPinnedRound = true;
       state.liveRoundId = rid;
       state.liveRoundName = `${state.featuredTour?.tour?.name || 'Broadcast'} · ${rname}`;
       renderTournamentRoundsTable();
+      updateSpotlightBanner();
       await pollActiveRoundPgn();
     };
   });
 }
 
-export async function selectFeaturedTournament(tourId, preferredRoundId = null) {
+export async function refreshFeaturedTournament({ silent = true } = {}) {
+  const tourId = state.featuredTour?.tour?.id;
+  if (!tourId) return;
   try {
     const full = await fetchBroadcastTournament(tourId);
     state.featuredTour = full;
+    state.lastTourRefreshAt = Date.now();
+
+    const transition = computeRoundTransition({
+      currentRoundId: state.liveRoundId,
+      userPinnedRound: state.userPinnedRound,
+      tourData: full,
+    });
+
+    if (transition.nextRoundId && transition.nextRoundId !== state.liveRoundId) {
+      state.liveRoundId = transition.nextRoundId;
+      state.liveRoundName = transition.nextRoundName;
+      if (transition.advanced && transition.round?.name) {
+        showToast(`Now live: ${transition.round.name}`);
+      }
+      renderTournamentRoundsTable();
+      updateSpotlightBanner();
+      await pollActiveRoundPgn();
+      return;
+    }
+
+    renderTournamentRoundsTable();
+    updateSpotlightBanner();
+  } catch (_) {
+    if (!silent) {
+      showToast('Failed to refresh tournament status', true);
+    }
+  }
+}
+
+export async function selectFeaturedTournament(tourId, preferredRoundId = null, { userPicked = false } = {}) {
+  try {
+    const full = await fetchBroadcastTournament(tourId);
+    state.featuredTour = full;
+    state.lastTourRefreshAt = Date.now();
+    state.userPinnedRound = Boolean(userPicked && preferredRoundId);
+
     const rounds = full.rounds || [];
     const chosen =
       (preferredRoundId && rounds.find((r) => r.id === preferredRoundId)) ||
-      rounds.find((r) => r.ongoing) ||
-      [...rounds].reverse().find((r) => r.finished) ||
+      rounds.find((r) => r.ongoing === true) ||
+      (full.defaultRoundId && rounds.find((r) => r.id === full.defaultRoundId)) ||
+      [...rounds].reverse().find((r) => r.finished === true) ||
       rounds[0];
 
     if (chosen?.id) {
@@ -249,39 +446,17 @@ export async function discoverAndSyncLiveBroadcasts() {
       searchBroadcasts('World Championship'),
     ]);
 
-    const broadcasts = [];
-    if (topRes.status === 'fulfilled') {
-      const td = topRes.value;
-      const active = td.active || [];
-      const upcoming = td.upcoming || [];
-      active.forEach((item) => broadcasts.push({ ...item, isLive: true }));
-      upcoming.slice(0, 8).forEach((item) => broadcasts.push({ ...item, isLive: false }));
-    }
-
-    if (searchRes.status === 'fulfilled') {
-      const sd = searchRes.value;
-      (sd.currentPageResults || []).forEach((t) => {
-        if (!broadcasts.some((b) => b.tour?.id === t.id)) {
-          const ongoing = t.rounds?.find((r) => r.ongoing);
-          const round = ongoing || t.rounds?.[t.rounds.length - 1];
-          broadcasts.push({ tour: t, round, isLive: Boolean(ongoing) });
-        }
-      });
-    }
+    const topData = topRes.status === 'fulfilled' ? topRes.value : null;
+    const searchData = searchRes.status === 'fulfilled' ? searchRes.value : null;
+    const broadcasts = mergeBroadcastLists(topData, searchData);
 
     state.allBroadcasts = broadcasts;
     renderAllBroadcastsList();
 
-    // Prefer an active World Championship broadcast if one exists; otherwise top active broadcast
-    const wccMatch = broadcasts.find((b) => {
-      const hay = `${b.tour?.name || ''} ${b.round?.name || ''}`.toLowerCase();
-      return b.isLive && hay.includes('world championship');
-    });
-    const fallbackMatch = broadcasts.find((b) => b.isLive && b.tour?.id) || broadcasts[0];
-    const picked = wccMatch || fallbackMatch;
+    const picked = selectFeaturedBroadcast(broadcasts);
 
-    if (picked?.tour?.id) {
-      await selectFeaturedTournament(picked.tour.id, picked.round?.id || null);
+    if (picked?.tourId) {
+      await selectFeaturedTournament(picked.tourId, picked.roundId || null, { userPicked: false });
     } else if (statusEl) {
       statusEl.textContent = 'No Active Broadcasts';
       updateSpotlightBanner();
@@ -297,28 +472,63 @@ export async function pollActiveRoundPgn() {
   try {
     const pgnText = await fetchBroadcastRoundPgn(state.liveRoundId);
     const games = parseBroadcastRoundPgn(pgnText);
+    const hadLiveGamesBefore = state.liveRoundGames.some((g) => g.result === '*');
     state.liveRoundGames = games;
     renderLiveRoundGamesStrip();
     updateSpotlightBanner();
 
-    // Update any open LIVE board tabs matching this round
-    let updatedActive = false;
+    // Update any open LIVE board tabs matching this round non-destructively
+    let activeChangedPosition = false;
+    let activeChangedClocksOnly = false;
     for (const tab of state.tabs) {
       if (tab.liveMeta && tab.liveMeta.roundId === state.liveRoundId) {
         const matched =
           games.find((g) => g.white === tab.liveMeta.white && g.black === tab.liveMeta.black) ||
           games[tab.liveMeta.gameIdx];
         if (matched && matched.pgn) {
-          const { root, current, meta } = createTreeFromPgn(matched.pgn);
-          tab.root = root;
-          tab.meta = meta || tab.meta;
+          const { root: freshRoot, meta: freshMeta, invalidFen } = createTreeFromPgn(matched.pgn);
+          if (invalidFen) continue;
+
+          const { added, clockChanged, lastNode } = mergeMainline(tab.root, freshRoot);
+          const prevResult = tab.liveMeta.lastResult ?? tab.meta?.result ?? '*';
+          const resultChanged = matched.result !== prevResult;
+          tab.liveMeta.lastResult = matched.result;
+
+          const prevClocks = tab.liveClocks || { white: '', black: '' };
+          const liveClocksChanged =
+            prevClocks.white !== matched.whiteClk || prevClocks.black !== matched.blackClk;
+
+          tab.meta = freshMeta ? { ...(tab.meta || {}), ...freshMeta } : tab.meta;
           tab.liveClocks = { white: matched.whiteClk, black: matched.blackClk };
-          if (tab.autoFollow) tab.current = current;
-          if (tab.id === state.activeTabId) updatedActive = true;
+
+          if (added > 0 && tab.autoFollow) {
+            tab.current = lastNode;
+          }
+
+          if (tab.id === state.activeTabId) {
+            if (added > 0 || resultChanged) {
+              activeChangedPosition = true;
+            } else if (clockChanged || liveClocksChanged) {
+              activeChangedClocksOnly = true;
+            }
+          }
         }
       }
     }
-    if (updatedActive) emitPositionChanged();
+
+    if (activeChangedPosition) {
+      emitPositionChanged();
+    } else if (activeChangedClocksOnly) {
+      renderPlayerClockBars();
+      renderVariationTree();
+    }
+
+    // If the round was live and all games just finished, refresh tournament metadata immediately
+    const selectedRound = getSelectedRound();
+    const allGamesFinished = games.length > 0 && games.every((g) => g.result !== '*');
+    if (allGamesFinished && (hadLiveGamesBefore || selectedRound?.ongoing === true)) {
+      refreshFeaturedTournament({ silent: true });
+    }
   } catch (_) {
     // Silent retry on next poll
   }
@@ -387,12 +597,21 @@ export function openBroadcastGameTab(g, roundId) {
       blackElo: g.blackElo,
       event: g.event,
       result: g.result,
+      eco: g.eco || '',
+      opening: g.opening || '',
     },
     {
       jumpEnd: true,
-      liveMeta: { roundId, white: g.white, black: g.black, gameIdx: g.idx },
+      liveMeta: {
+        roundId,
+        white: g.white,
+        black: g.black,
+        gameIdx: g.idx,
+        lastResult: g.result,
+      },
     }
   );
+  if (!tab) return;
   tab.liveClocks = { white: g.whiteClk, black: g.blackClk };
   renderPlayerClockBars();
   showToast(`Watching: ${g.white} vs ${g.black}`);
@@ -407,14 +626,22 @@ export function openFeaturedLiveGame() {
   }
 }
 
+function getStatusBadgeInfo(status) {
+  if (status === 'live') return { label: 'LIVE', cls: 'bg-ro/20 text-ro' };
+  if (status === 'upcoming') return { label: 'SOON', cls: 'bg-panel text-txtMuted' };
+  if (status === 'finished') return { label: 'ENDED', cls: 'bg-panel text-txtMuted/75' };
+  return { label: 'ACTIVE', cls: 'bg-panel text-cy' };
+}
+
 export function renderAllBroadcastsList() {
   const list = document.getElementById('allBroadcastsList');
   if (!list) return;
   const q = (document.getElementById('broadcastSearchInput')?.value || '').toLowerCase();
   const filtered = state.allBroadcasts.filter((b) =>
-    `${b.tour?.name || ''} ${b.round?.name || ''}`.toLowerCase().includes(q)
+    `${b.tourName} ${b.roundName}`.toLowerCase().includes(q)
   );
-  document.getElementById('broadcastCountBadge').textContent = `${filtered.length} events`;
+  const countBadge = document.getElementById('broadcastCountBadge');
+  if (countBadge) countBadge.textContent = `${filtered.length} events`;
 
   if (!filtered.length) {
     list.innerHTML = `<div class="col-span-full py-4 text-center text-txtMuted text-xs">No broadcasts matched. Paste any Lichess Broadcast URL above to load directly.</div>`;
@@ -423,19 +650,18 @@ export function renderAllBroadcastsList() {
 
   list.innerHTML = filtered
     .slice(0, 16)
-    .map(
-      (b) => `
-      <button class="bc-item text-left px-2.5 py-2 rounded bg-surface/60 hover:bg-surfaceHover border border-borderSubtle flex items-center justify-between gap-2 text-[11px]" data-tid="${escapeHtml(b.tour?.id || '')}" data-rid="${escapeHtml(b.round?.id || '')}" data-name="${escapeHtml((b.tour?.name || 'Broadcast') + ' · ' + (b.round?.name || ''))}">
+    .map((b) => {
+      const badge = getStatusBadgeInfo(b.status);
+      return `
+      <button class="bc-item text-left px-2.5 py-2 rounded bg-surface/60 hover:bg-surfaceHover border border-borderSubtle flex items-center justify-between gap-2 text-[11px]" data-tid="${escapeHtml(b.tourId)}" data-rid="${escapeHtml(b.roundId)}" data-name="${escapeHtml(b.tourName + (b.roundName ? ' · ' + b.roundName : ''))}">
         <div class="min-w-0">
-          <div class="font-semibold text-txt truncate">${escapeHtml(b.tour?.name || 'Tournament')}</div>
-          <div class="text-[10px] text-txtMuted truncate">${escapeHtml(b.round?.name || 'Round')}</div>
+          <div class="font-semibold text-txt truncate">${escapeHtml(b.tourName)}</div>
+          <div class="text-[10px] text-txtMuted truncate">${escapeHtml(b.roundName || 'Round')}</div>
         </div>
-        <span class="px-1.5 py-0.5 rounded font-mono text-[9.5px] font-bold shrink-0 ${
-          b.isLive ? 'bg-ro/20 text-ro' : 'bg-panel text-txtMuted'
-        }">${b.isLive ? 'LIVE' : 'SOON'}</span>
+        <span class="px-1.5 py-0.5 rounded font-mono text-[9.5px] font-bold shrink-0 ${badge.cls}">${badge.label}</span>
       </button>
-    `
-    )
+    `;
+    })
     .join('');
 
   list.querySelectorAll('.bc-item').forEach((btn) => {
@@ -444,8 +670,9 @@ export function renderAllBroadcastsList() {
       const rid = btn.dataset.rid;
       showToast(`Loading ${btn.dataset.name}...`);
       if (tid) {
-        await selectFeaturedTournament(tid, rid || null);
+        await selectFeaturedTournament(tid, rid || null, { userPicked: false });
       } else if (rid) {
+        state.userPinnedRound = true;
         state.liveRoundId = rid;
         state.liveRoundName = btn.dataset.name;
         await pollActiveRoundPgn();
@@ -478,6 +705,7 @@ export async function loadCustomBroadcastFromInput() {
     roundId = parts[parts.length - 1];
   }
 
+  state.userPinnedRound = true;
   state.liveRoundId = roundId;
   state.liveRoundName = `Custom Broadcast (${roundId})`;
   showToast(`Connecting to broadcast round ${roundId}...`);
@@ -491,6 +719,9 @@ export async function loadCustomBroadcastFromInput() {
 
 export function startLivePollTimer() {
   setInterval(() => {
+    if (state.featuredTour?.tour?.id && Date.now() - state.lastTourRefreshAt >= TOUR_REFRESH_INTERVAL_MS) {
+      refreshFeaturedTournament({ silent: true });
+    }
     if (!state.liveAutoPoll) return;
     state.liveCountdown--;
     if (state.liveCountdown <= 0) {

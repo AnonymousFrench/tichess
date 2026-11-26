@@ -73,6 +73,7 @@ const S = {
   takeaways: [],
   sync: null, // { label, fetched, total, unit, startedAt }
   syncCtrl: null,
+  lastSyncError: '',
   version: 0,
   filteredKey: '',
   filtered: [],
@@ -102,7 +103,7 @@ function toast(msg, isError = false) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
     el.className += ' opacity-0 pointer-events-none translate-y-3';
-  }, 3200);
+  }, isError ? 5500 : 3200);
 }
 
 /* ------------------------------------------------------------------ */
@@ -170,7 +171,11 @@ function renderHeader() {
       const left = Math.max(0, total - fetched) / Math.max(1, rate);
       eta = left > 90 ? ` · ~${Math.round(left / 60)} min left` : left > 5 ? ` · ${Math.round(left)} s left` : '';
     }
-    const amount = total ? `${fmtInt(fetched)} / ${fmtInt(total)}${unit === 'months' ? ' months' : ''}` : `${fmtInt(fetched)} games`;
+    const amount = total
+      ? `${fmtInt(fetched)} / ${fmtInt(total)}${unit === 'months' ? ' months' : ''}`
+      : fetched
+        ? `${fmtInt(fetched)} games`
+        : 'Connecting…';
     status = `<span class="flex items-center gap-1.5 text-[11px] text-txtMuted min-w-0"><span class="w-2 h-2 rounded-full bg-em animate-pulse shrink-0"></span><span class="hidden sm:inline">${esc(S.sync.label)}</span> <span class="font-mono truncate">${amount}<span class="hidden sm:inline">${eta}</span></span></span>
       <button data-act="stop-sync" class="px-2 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11px]">Stop</button>`;
   } else {
@@ -301,6 +306,23 @@ function renderOnboarding(prefill = '') {
   </div>`;
 }
 
+function syncStatusText(sync) {
+  if (!sync) return '';
+  if (sync.total) {
+    return `${fmtInt(sync.fetched)} / ${fmtInt(sync.total)}${sync.unit === 'months' ? ' months' : ' games'}`;
+  }
+  return sync.fetched ? `${fmtInt(sync.fetched)} ${sync.unit === 'months' ? 'months' : 'games'}` : 'Connecting…';
+}
+
+function updateEmptySyncProgress() {
+  const countEl = $('syncViewCount');
+  if (countEl && S.sync) countEl.textContent = syncStatusText(S.sync);
+  const barEl = $('syncViewBar');
+  if (barEl && S.sync?.total) {
+    barEl.style.width = `${Math.min(100, (S.sync.fetched / S.sync.total) * 100).toFixed(1)}%`;
+  }
+}
+
 function render() {
   renderHeader();
   renderToolbar();
@@ -310,7 +332,31 @@ function render() {
   }
   const games = currentFiltered();
   if (!S.list.length) {
-    $('view').innerHTML = `<div class="py-16 text-center text-txtMuted text-[12.5px]">${S.sync ? 'Downloading your games… the first results appear in a moment.' : 'No games yet. Press Sync to download them.'}</div>`;
+    if (S.sync) {
+      const pct = S.sync.total ? Math.min(100, (S.sync.fetched / S.sync.total) * 100).toFixed(1) : '8';
+      $('view').innerHTML = `<div class="max-w-[440px] mx-auto my-12 bg-panel border border-borderSubtle rounded-2xl p-5 text-center grid gap-3">
+        <div class="inline-flex items-center justify-center gap-2 text-[13px] font-semibold text-txt">
+          <span class="w-2.5 h-2.5 rounded-full bg-em animate-pulse"></span>
+          <span>Downloading ${esc(S.sync.label)}</span>
+        </div>
+        <div id="syncViewCount" class="font-mono text-[12px] text-txtMuted">${esc(syncStatusText(S.sync))}</div>
+        <div class="h-1.5 rounded-full bg-surface overflow-hidden"><div id="syncViewBar" class="h-full bg-em transition-all duration-200" style="width:${pct}%"></div></div>
+        <p class="text-[11px] text-txtMuted">Results appear as soon as the first games arrive.</p>
+      </div>`;
+    } else {
+      $('view').innerHTML = `<div class="max-w-[460px] mx-auto my-12 bg-panel border border-borderSubtle rounded-2xl p-5 text-center grid gap-3">
+        <div class="text-[13px] font-semibold text-txt">No games downloaded yet</div>
+        ${
+          S.lastSyncError
+            ? `<p class="text-[12px] text-ro bg-ro/10 border border-ro/30 rounded-lg px-3 py-2">${esc(S.lastSyncError)}</p>`
+            : '<p class="text-[12px] text-txtMuted">Press Sync to download games for your linked accounts.</p>'
+        }
+        <div class="flex items-center justify-center gap-2 pt-1">
+          <button data-act="sync" class="px-4 py-1.5 rounded-lg bg-em hover:brightness-110 text-[#04130d] font-bold text-[12px]">↻ Sync now</button>
+          <button data-act="import-pgn" class="px-3 py-1.5 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[12px] text-txtMuted hover:text-txt">Import PGN</button>
+        </div>
+      </div>`;
+    }
     return;
   }
   const ctx = {
@@ -383,10 +429,10 @@ async function addAccount(src, name) {
     toast('That account is already added.');
     return;
   }
+  S.lastSyncError = '';
   S.accounts.push({ src, name, addedAt: Date.now() });
   await persistAccounts();
   closePopover();
-  render();
   runSync();
 }
 
@@ -416,19 +462,28 @@ async function runSync() {
   if (!targets.length) return;
   const ctrl = new AbortController();
   S.syncCtrl = ctrl;
+  S.lastSyncError = '';
   const before = S.games.size;
   try {
     for (const acct of targets) {
       S.sync = { label: `${acct.src === 'lichess' ? 'Lichess' : 'Chess.com'} · ${acct.name}`, fetched: 0, total: 0, unit: 'games', startedAt: Date.now() };
-      renderHeader();
+      if (!S.list.length) render();
+      else renderHeader();
       const save = async (records) => {
+        const wasEmpty = S.list.length === 0;
         await putGames(records);
         addRecords(records);
-        scheduleRender({ throttle: true });
+        if (wasEmpty && S.list.length > 0) {
+          lastSyncRender = Date.now();
+          scheduleRender({ throttle: false });
+        } else {
+          scheduleRender({ throttle: true });
+        }
       };
       const onProgress = (p) => {
         Object.assign(S.sync, p);
         renderHeader();
+        if (!S.list.length) updateEmptySyncProgress();
       };
       const opts = { signal: ctrl.signal, save, saveMeta: persistAccounts, onProgress };
       if (acct.src === 'lichess') await syncLichess(acct, opts);
@@ -437,10 +492,18 @@ async function runSync() {
     const added = S.games.size - before;
     toast(added ? `${fmtInt(added)} new game${added === 1 ? '' : 's'} added` : 'You are up to date');
   } catch (err) {
-    if (err?.name === 'AbortError') toast('Sync paused. It continues where it stopped next time.');
-    else if (err instanceof RateLimitError) toast(err.message, true);
-    else if (err?.status === 404) toast('Player not found. Check the username.', true);
-    else toast(`Sync stopped: ${err?.message || err}`, true);
+    if (err?.name === 'AbortError') {
+      toast('Sync paused. It continues where it stopped next time.');
+    } else if (err instanceof RateLimitError) {
+      S.lastSyncError = err.message;
+      toast(err.message, true);
+    } else if (err?.status === 404) {
+      S.lastSyncError = 'Player not found. Check the username.';
+      toast(S.lastSyncError, true);
+    } else {
+      S.lastSyncError = `Sync stopped: ${err?.message || err}`;
+      toast(S.lastSyncError, true);
+    }
   } finally {
     S.sync = null;
     S.syncCtrl = null;

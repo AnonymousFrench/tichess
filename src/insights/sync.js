@@ -8,7 +8,10 @@
  */
 import { normalizeLichessGame, normalizeChessComGame } from './normalize.js';
 
-const BATCH = 250;
+const FIRST_BATCH = 20;
+const BATCH = 60;
+const FLUSH_MS = 2000;
+const PROGRESS_MS = 250;
 
 export class RateLimitError extends Error {
   constructor(site) {
@@ -25,6 +28,19 @@ function lichessToken() {
   }
 }
 
+async function fetchLichessWithTokenFallback(url, { signal, headers = {} } = {}) {
+  const token = lichessToken();
+  const res = await fetch(url, {
+    signal,
+    headers: token ? { ...headers, Authorization: `Bearer ${token}` } : headers,
+  });
+  // If a saved manual token expired or was revoked, retry publicly instead of failing the sync.
+  if (token && res.status === 401) {
+    return fetch(url, { signal, headers });
+  }
+  return res;
+}
+
 async function getJson(url, { signal, headers } = {}) {
   const res = await fetch(url, { signal, headers });
   if (res.status === 429) throw new RateLimitError(url.includes('chess.com') ? 'Chess.com' : 'Lichess');
@@ -39,11 +55,18 @@ async function getJson(url, { signal, headers } = {}) {
 
 /** Look up a Lichess account: canonical name, title, ratings and game count. */
 export async function fetchLichessProfile(username, { signal } = {}) {
-  const token = lichessToken();
-  const u = await getJson(`https://lichess.org/api/user/${encodeURIComponent(username)}`, {
-    signal,
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
+  const res = await fetchLichessWithTokenFallback(
+    `https://lichess.org/api/user/${encodeURIComponent(username)}`,
+    { signal, headers: { Accept: 'application/json' } }
+  );
+  if (res.status === 429) throw new RateLimitError('Lichess');
+  if (res.status === 404) {
+    const err = new Error('Player not found');
+    err.status = 404;
+    throw err;
+  }
+  if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  const u = await res.json();
   if (u.disabled) throw new Error('This Lichess account is closed.');
   const perfs = {};
   for (const [k, v] of Object.entries(u.perfs || {})) {
@@ -74,13 +97,11 @@ export async function fetchChessComProfile(username, { signal } = {}) {
 }
 
 /**
- * Stream one Lichess export request. Calls onRecords(records) for each batch
- * and returns { count, ended } where ended is true if the stream completed.
+ * Stream one Lichess export request. Flushes the first small batch quickly so
+ * the page populates within ~1 second, then saves larger batches incrementally
+ * while ticking `onTick(count)` smoothly as lines arrive.
  */
-async function streamLichess(account, params, { signal, onRecords }) {
-  const token = lichessToken();
-  const headers = { Accept: 'application/x-ndjson' };
-  if (token) headers.Authorization = `Bearer ${token}`;
+async function streamLichess(account, params, { signal, onRecords, onTick }) {
   const qs = new URLSearchParams({
     moves: 'true',
     opening: 'true',
@@ -90,16 +111,32 @@ async function streamLichess(account, params, { signal, onRecords }) {
     perfType: 'ultraBullet,bullet,blitz,rapid,classical,correspondence',
     ...params,
   });
-  const res = await fetch(`https://lichess.org/api/games/user/${encodeURIComponent(account)}?${qs}`, { signal, headers });
+  const url = `https://lichess.org/api/games/user/${encodeURIComponent(account)}?${qs}`;
+  const res = await fetchLichessWithTokenFallback(url, {
+    signal,
+    headers: { Accept: 'application/x-ndjson' },
+  });
   if (res.status === 429) throw new RateLimitError('Lichess');
-  if (res.status === 404) throw new Error(`No Lichess player named "${account}"`);
-  if (!res.ok || !res.body) throw new Error(`Lichess export failed (${res.status})`);
+  if (res.status === 404) {
+    throw new Error(`Lichess refused game export for "${account}" (404). Try again in a moment or import a PGN file.`);
+  }
+  if (!res.ok) throw new Error(`Lichess export failed (${res.status})`);
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
   let batch = [];
   let count = 0;
+  let flushedAny = false;
+  let lastFlushAt = Date.now();
+  let lastTickAt = 0;
+
+  const flush = async () => {
+    if (!batch.length) return;
+    const toSave = batch;
+    batch = [];
+    flushedAny = true;
+    lastFlushAt = Date.now();
+    await onRecords(toSave, count);
+  };
+
   const take = async (rawLine) => {
     const line = rawLine.trim();
     if (!line) return;
@@ -113,11 +150,27 @@ async function streamLichess(account, params, { signal, onRecords }) {
     const r = normalizeLichessGame(g, account);
     // Pass the raw time too, so resume points advance even past skipped games.
     batch.push(r || { skipped: true, t: Number(g.createdAt) || 0 });
-    if (batch.length >= BATCH) {
-      await onRecords(batch, count);
-      batch = [];
+    const now = Date.now();
+    if (onTick && now - lastTickAt >= PROGRESS_MS) {
+      lastTickAt = now;
+      onTick(count);
+    }
+    const target = flushedAny ? BATCH : FIRST_BATCH;
+    if (batch.length >= target || (batch.length > 0 && now - lastFlushAt >= FLUSH_MS)) {
+      await flush();
     }
   };
+
+  if (!res.body?.getReader) {
+    const text = await res.text();
+    for (const line of text.split('\n')) await take(line);
+    await flush();
+    return { count, ended: true };
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -132,7 +185,7 @@ async function streamLichess(account, params, { signal, onRecords }) {
   // The last line may arrive without a trailing newline.
   buf += decoder.decode();
   await take(buf);
-  if (batch.length) await onRecords(batch, count);
+  await flush();
   return { count, ended: true };
 }
 
@@ -144,8 +197,10 @@ export async function syncLichess(acct, { signal, save, saveMeta, onProgress }) 
   const profile = await fetchLichessProfile(acct.name, { signal });
   Object.assign(acct, { name: profile.name, title: profile.title, perfs: profile.perfs, total: profile.total });
   await saveMeta();
+  const goalTotal = acct.complete ? null : profile.total;
+  onProgress?.({ fetched: 0, total: goalTotal });
 
-  let fetched = 0;
+  let committed = 0;
   const handle = (dir) => async (records) => {
     const good = records.filter((r) => !r.skipped);
     if (good.length) await save(good);
@@ -154,20 +209,34 @@ export async function syncLichess(acct, { signal, save, saveMeta, onProgress }) 
       if (dir === 'new' || !acct.newest) acct.newest = Math.max(acct.newest || 0, r.t);
       if (dir === 'old' || !acct.oldest) acct.oldest = acct.oldest ? Math.min(acct.oldest, r.t) : r.t;
     }
-    fetched += records.length;
+    committed += records.length;
     await saveMeta();
-    onProgress?.({ fetched, total: acct.complete ? null : profile.total });
+    onProgress?.({ fetched: committed, total: goalTotal });
   };
 
   // 1. New games since the last sync.
   if (acct.newest) {
+    const base = committed;
     // Oldest first, so an interrupted sync never leaves a gap behind `newest`.
-    await streamLichess(profile.name, { since: String(acct.newest + 1), sort: 'dateAsc' }, { signal, onRecords: handle('new') });
+    await streamLichess(
+      profile.name,
+      { since: String(acct.newest + 1), sort: 'dateAsc' },
+      {
+        signal,
+        onRecords: handle('new'),
+        onTick: (n) => onProgress?.({ fetched: base + n, total: goalTotal }),
+      }
+    );
   }
   // 2. Backfill older games until the account's first game.
   if (!acct.complete) {
+    const base = committed;
     const params = acct.oldest ? { until: String(acct.oldest - 1) } : {};
-    const { ended } = await streamLichess(profile.name, params, { signal, onRecords: handle('old') });
+    const { ended } = await streamLichess(profile.name, params, {
+      signal,
+      onRecords: handle('old'),
+      onTick: (n) => onProgress?.({ fetched: base + n, total: goalTotal }),
+    });
     if (ended) acct.complete = true;
   }
   acct.lastSync = Date.now();

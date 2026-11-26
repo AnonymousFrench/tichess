@@ -263,3 +263,52 @@ describe('stats', () => {
     expect(gamesWithPrefix(g, '', null)).toHaveLength(4);
   });
 });
+
+describe('syncLichess', () => {
+  it('flushes an early first batch, reports progress immediately, and retries publicly on stale token 401', async () => {
+    const { syncLichess } = await import('../src/insights/sync.js');
+    const origFetch = globalThis.fetch;
+    const origStorage = globalThis.localStorage;
+    const games = Array.from({ length: 35 }, (_, i) =>
+      JSON.stringify(lichessGame({ id: `g${i}`, createdAt: 1_700_000_000_000 - i * 1000 }))
+    ).join('\n');
+
+    const seenAuth = [];
+    globalThis.localStorage = { getItem: (k) => (k === 'cms_lichess_token' ? 'expired_tok' : null) };
+    globalThis.fetch = async (url, opts = {}) => {
+      const hasAuth = Boolean(opts.headers?.Authorization);
+      seenAuth.push([String(url).includes('/api/user/') ? 'profile' : 'games', hasAuth]);
+      if (hasAuth) return new Response('Unauthorized', { status: 401 });
+      if (String(url).includes('/api/user/')) {
+        return new Response(JSON.stringify({ username: 'Tibous', count: { all: 35 }, perfs: {} }), { status: 200 });
+      }
+      return new Response(games, { status: 200, headers: { 'content-type': 'application/x-ndjson' } });
+    };
+
+    try {
+      const acct = { src: 'lichess', name: 'tibous' };
+      const batchSizes = [];
+      const totals = [];
+      await syncLichess(acct, {
+        save: async (recs) => batchSizes.push(recs.length),
+        saveMeta: async () => {},
+        onProgress: (p) => totals.push(p),
+      });
+      // Retried without Authorization after 401 on both profile and games endpoints
+      expect(seenAuth).toEqual([
+        ['profile', true],
+        ['profile', false],
+        ['games', true],
+        ['games', false],
+      ]);
+      // First batch flushed at 20 games instead of buffering all 35
+      expect(batchSizes).toEqual([20, 15]);
+      // Profile total reported immediately before games finished
+      expect(totals[0]).toEqual({ fetched: 0, total: 35 });
+      expect(acct.complete).toBe(true);
+    } finally {
+      globalThis.fetch = origFetch;
+      globalThis.localStorage = origStorage;
+    }
+  });
+});

@@ -74,3 +74,61 @@ export async function fetchCloudEval(fen, multiPv = 3, { signal } = {}) {
     { signal, allow404: true }
   );
 }
+
+/**
+ * Parse Lichess NDJSON user-games response (`pgnInJson=true`) into normalized
+ * game objects suitable for Player Scout IndexedDB indexing.
+ */
+export function parseLichessNdjsonGames(ndjsonText) {
+  if (!ndjsonText || typeof ndjsonText !== 'string') return [];
+  const games = [];
+  for (const rawLine of ndjsonText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let g;
+    try {
+      g = JSON.parse(line);
+    } catch (_) {
+      continue;
+    }
+    if (!g || g.variant !== 'standard' || typeof g.pgn !== 'string' || !g.pgn.trim()) continue;
+    const white = g.players?.white?.user?.name || 'White';
+    const black = g.players?.black?.user?.name || 'Black';
+    const whiteElo = Number(g.players?.white?.rating) || 0;
+    const blackElo = Number(g.players?.black?.rating) || 0;
+    const result = g.winner === 'white' ? '1-0' : g.winner === 'black' ? '0-1' : '1/2-1/2';
+    const date = g.createdAt ? new Date(g.createdAt).toISOString().slice(0, 10) : '';
+    const event = `Lichess ${g.perf || g.speed || ''}`.trim();
+    games.push({ pgn: g.pgn, white, whiteElo, black, blackElo, result, date, event });
+  }
+  return games;
+}
+
+export async function fetchLichessUserGames(username, { max = 100, perfType = '', signal } = {}) {
+  const params = new URLSearchParams({
+    max: String(max),
+    pgnInJson: 'true',
+    opening: 'true',
+    clocks: 'false',
+    evals: 'false',
+  });
+  if (perfType) params.set('perfType', perfType);
+
+  const headers = { Accept: 'application/x-ndjson' };
+  if (state.lichessToken) {
+    headers.Authorization = `Bearer ${state.lichessToken}`;
+  }
+
+  try {
+    const text = await fetchText(
+      `https://lichess.org/api/games/user/${encodeURIComponent(username)}?${params.toString()}`,
+      { signal, headers }
+    );
+    return parseLichessNdjsonGames(text);
+  } catch (err) {
+    if (err.status === 404) {
+      throw new Error(`Player "${username}" not found on Lichess`, { cause: err });
+    }
+    throw err;
+  }
+}

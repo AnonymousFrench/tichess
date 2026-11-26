@@ -59,9 +59,15 @@ import {
   refreshPlayerScout,
   renderScoutedGamesTable,
   reloadCollections,
+  runLichessSync,
   runChessComSync,
   handlePgnFileImport,
 } from './scout/scout.js';
+import {
+  initStudioRepertoire,
+  bindStudioRepertoireSync,
+  renderStudioRepertoirePanel,
+} from './repertoire/studioPanel.js';
 import { mountModals } from './ui/modals.js';
 
 function switchHub(hubName) {
@@ -73,12 +79,13 @@ function switchHub(hubName) {
       ? 'hub-tab flex items-center gap-1.5 px-2.5 py-1 rounded-t text-[11.5px] font-semibold bg-panel text-txt border-t border-x border-borderSubtle whitespace-nowrap'
       : 'hub-tab flex items-center gap-1.5 px-2.5 py-1 rounded-t text-[11.5px] font-medium text-txtMuted hover:text-txt whitespace-nowrap';
   });
-  ['live', 'masters', 'scouted'].forEach((k) =>
+  ['live', 'masters', 'scouted', 'repertoire'].forEach((k) =>
     document.getElementById(`hub-${k}`).classList.toggle('hidden', k !== hubName)
   );
   document.getElementById('livePollBar').classList.toggle('hidden', hubName !== 'live');
   if (hubName === 'masters') renderMasterGamesTable();
   if (hubName === 'scouted') renderScoutedGamesTable();
+  if (hubName === 'repertoire') renderStudioRepertoirePanel();
 }
 
 function openModal(id) {
@@ -198,6 +205,7 @@ function bindEvents() {
     document.getElementById('chessboard').scrollIntoView({ behavior: 'smooth' });
   document.getElementById('railLive').onclick = () => switchHub('live');
   document.getElementById('railScout').onclick = () => openModal('scoutModal');
+  document.getElementById('railRepertoire').onclick = () => switchHub('repertoire');
   document.getElementById('railImportPgn').onclick = () => document.getElementById('globalPgnInput').click();
   document.getElementById('railSettings').onclick = () => openModal('settingsModal');
   document.getElementById('globalPgnInput').onchange = (e) => {
@@ -389,6 +397,7 @@ function bindEvents() {
     document.getElementById('loadTabTitle').value = '';
     document.getElementById('loadModal').classList.add('hidden');
   };
+  document.getElementById('btnRunLichessSync').onclick = runLichessSync;
   document.getElementById('btnRunChesscomSync').onclick = runChessComSync;
   document.getElementById('scPgnFileInput').onchange = (e) => {
     if (e.target.files?.[0]) {
@@ -482,6 +491,7 @@ onPositionChange(() => {
   renderBoardTabs();
   renderBoard();
   renderVariationTree();
+  if (state.activeHub === 'repertoire') renderStudioRepertoirePanel();
   stopLocalSf();
   debouncedPositionLookups();
 });
@@ -514,6 +524,8 @@ async function bootstrap() {
   renderTournamentRoundsTable();
 
   await reloadCollections();
+  await initStudioRepertoire();
+  bindStudioRepertoireSync();
   if (!openSharedFromHash()) {
     addBoardTab('Analysis 1');
   }

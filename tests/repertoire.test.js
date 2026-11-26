@@ -10,6 +10,11 @@ import {
   MIN,
 } from '../src/repertoire/model.js';
 import { encodeMoveLine, decodeShareHash } from '../src/chess/shareUrl.js';
+import {
+  buildRepertoireFenIndex,
+  lookupRepertoirePosition,
+  summarizeRepertoire,
+} from '../src/repertoire/studioPanel.js';
 
 // A tiny synthetic repertoire (1.e4 e5 2.Nf3 for White). No real prep here:
 // actual repertoires are private import files and never live in this repo.
@@ -141,5 +146,37 @@ describe('open repertoire line in analysis', () => {
     expect(d.flipped).toBe(true);
     expect(d.current.san).toBe('Nf3');
     expect(d.root.children[0].san).toBe('e4');
+  });
+});
+
+describe('main studio repertoire lookup', () => {
+  it('indexes repertoire FENs, looks up prepared moves with status/notes, and summarizes counts', () => {
+    const rep = sampleRepertoire();
+    const now = 1_700_000_000_000;
+    const progress = {
+      c1: { b: 4, d: now + DAY, r: 5, l: 0, t: now - DAY, s: 1 },
+      c2: { b: 1, d: now - MIN, r: 2, l: 0, t: now - DAY, s: 1 },
+    };
+    const idx = buildRepertoireFenIndex(rep);
+
+    const startHit = lookupRepertoirePosition(
+      idx,
+      rep,
+      progress,
+      'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      now
+    );
+    expect(startHit.moves).toHaveLength(1);
+    expect(startHit.moves[0]).toMatchObject({
+      uci: 'e2e4',
+      san: 'e4',
+      mine: true,
+      note: 'why',
+      status: 'mastered',
+    });
+
+    const summary = summarizeRepertoire(rep, progress, now);
+    expect(summary.total).toMatchObject({ total: 2, mastered: 1, due: 1, newCount: 0 });
+    expect(summary.sections[0].name).toBe('Test');
   });
 });

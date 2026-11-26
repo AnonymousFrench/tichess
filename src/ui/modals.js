@@ -23,40 +23,61 @@ const MODALS_HTML = `
     </div>
   </div>
 
-  <!-- Player Scout Modal (Chess.com Sync + Local PGN Import) -->
+  <!-- Player Scout Modal (Lichess + Chess.com Sync + Local PGN Import) -->
   <div id="scoutModal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-    <div class="bg-panel border border-borderBright rounded-lg w-full max-w-md p-4 shadow-2xl flex flex-col gap-3">
+    <div class="bg-panel border border-borderBright rounded-lg w-full max-w-md max-h-[90vh] overflow-y-auto p-4 shadow-2xl flex flex-col gap-3">
       <div class="flex items-center justify-between">
-        <h2 class="font-bold text-sm">Player Scout — Chess.com Sync &amp; Local PGN</h2>
+        <h2 class="font-bold text-sm">Player Scout — Lichess, Chess.com &amp; Local PGN</h2>
         <button class="modal-close text-txtMuted hover:text-txt px-1.5" aria-label="Close modal">✕</button>
+      </div>
+
+      <div class="p-3 rounded bg-surface/60 border border-borderSubtle flex flex-col gap-2">
+        <div class="text-xs font-semibold text-cy">Sync Lichess Username (No Token Needed)</div>
+        <div class="flex gap-1.5">
+          <input id="scLichessUser" type="text" placeholder="e.g. DrNykterstein, Alireza2003" class="flex-1 min-w-0 px-2.5 py-1.5 rounded bg-panel border border-borderSubtle text-xs focus:outline-none focus:border-cy" />
+          <select id="scLichessMax" class="px-2 py-1.5 rounded bg-panel border border-borderSubtle text-xs" aria-label="Max Lichess games">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+            <option value="300">300</option>
+          </select>
+        </div>
+        <select id="scLichessPerf" class="w-full px-2.5 py-1.5 rounded bg-panel border border-borderSubtle text-xs" aria-label="Lichess time control">
+          <option value="">All standard speeds</option>
+          <option value="blitz,rapid,classical" selected>Blitz, Rapid &amp; Classical</option>
+          <option value="rapid,classical">Rapid &amp; Classical only</option>
+          <option value="bullet,blitz">Bullet &amp; Blitz only</option>
+        </select>
+        <button id="btnRunLichessSync" class="w-full py-1.5 rounded bg-cy hover:bg-cyan-400 text-[#041f15] font-semibold text-xs">Sync Lichess Games</button>
       </div>
 
       <div class="p-3 rounded bg-surface/60 border border-borderSubtle flex flex-col gap-2">
         <div class="text-xs font-semibold text-em">Sync Chess.com Username (No Token Needed)</div>
         <div class="flex gap-1.5">
           <input id="scChesscomUser" type="text" placeholder="e.g. Hikaru, MagnusCarlsen" class="flex-1 px-2.5 py-1.5 rounded bg-panel border border-borderSubtle text-xs focus:outline-none focus:border-em" />
-          <select id="scChesscomMonths" class="px-2 py-1.5 rounded bg-panel border border-borderSubtle text-xs">
+          <select id="scChesscomMonths" class="px-2 py-1.5 rounded bg-panel border border-borderSubtle text-xs" aria-label="Chess.com archive months">
             <option value="2">2 mo</option>
             <option value="4" selected>4 mo</option>
             <option value="8">8 mo</option>
           </select>
         </div>
-        <div id="scProgressWrap" class="hidden flex flex-col gap-1">
-          <div class="flex justify-between text-[10px] font-mono text-txtMuted">
-            <span id="scProgressText">Syncing...</span>
-            <span id="scProgressPct">0%</span>
-          </div>
-          <div class="w-full h-1.5 rounded-full bg-panel overflow-hidden">
-            <div id="scProgressBar" class="h-full bg-em transition-all" style="width:0%"></div>
-          </div>
-        </div>
         <button id="btnRunChesscomSync" class="w-full py-1.5 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-semibold text-xs">Sync Chess.com Games</button>
       </div>
 
+      <div id="scProgressWrap" class="hidden p-2.5 rounded bg-surface/60 border border-borderSubtle flex flex-col gap-1">
+        <div class="flex justify-between text-[10px] font-mono text-txtMuted">
+          <span id="scProgressText">Syncing...</span>
+          <span id="scProgressPct">0%</span>
+        </div>
+        <div class="w-full h-1.5 rounded-full bg-panel overflow-hidden">
+          <div id="scProgressBar" class="h-full bg-em transition-all" style="width:0%"></div>
+        </div>
+      </div>
+
       <div class="p-3 rounded bg-surface/60 border border-borderSubtle flex flex-col gap-2">
-        <div class="text-xs font-semibold text-cy">Import Local .PGN Database</div>
-        <input id="scPgnPlayerFilter" type="text" placeholder="Optional player name for W/D/L perspective..." class="w-full px-2.5 py-1.5 rounded bg-panel border border-borderSubtle text-xs focus:outline-none focus:border-cy" />
-        <label class="w-full py-2 rounded border border-dashed border-borderBright hover:border-cy bg-panel text-center text-xs font-medium cursor-pointer">
+        <div class="text-xs font-semibold text-vi">Import Local .PGN Database</div>
+        <input id="scPgnPlayerFilter" type="text" placeholder="Optional player name for W/D/L perspective..." class="w-full px-2.5 py-1.5 rounded bg-panel border border-borderSubtle text-xs focus:outline-none focus:border-vi" />
+        <label class="w-full py-2 rounded border border-dashed border-borderBright hover:border-vi bg-panel text-center text-xs font-medium cursor-pointer">
           Choose .PGN File
           <input id="scPgnFileInput" type="file" accept=".pgn,.txt" class="hidden" />
         </label>

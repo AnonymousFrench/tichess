@@ -204,3 +204,129 @@ test('opening a shareable #a=... link restores variation tree, comments, and cur
   await expect(page.locator('#variationTreeContainer .tree-move.active')).toContainText('d4!');
   expect(pageErrors).toEqual([]);
 });
+
+const SAMPLE_REPERTOIRE = {
+  secs: [{ id: 'A', name: 'Italian Prep', group: 'White · 1.e4', color: 'w', start: 0, startPly: 0, lines: [0] }],
+  lines: [
+    {
+      id: 'A1',
+      name: 'Main Line',
+      sec: 'A',
+      color: 'w',
+      ev: '+0.3',
+      note: 'Control the center',
+      san: ['e4', 'e5', 'Nf3'],
+      uci: ['e2e4', 'e7e5', 'g1f3'],
+      pos: [0, 1, 2, 3],
+      alt: false,
+    },
+  ],
+  pos: [
+    { f: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', t: 0, e: [['e2e4', 'e4', 1, 1, [0], 'c1']] },
+    { f: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1', t: 0, e: [['e7e5', 'e5', 2, 0, [0]]] },
+    { f: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2', t: 0, e: [['g1f3', 'Nf3', 3, 1, [0], 'c2']] },
+    { f: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2', t: 0, e: [] },
+  ],
+  cards: {
+    c1: { p: 0, u: 'e2e4', s: 'e4', n: 'Best by test' },
+    c2: { p: 2, u: 'g1f3', s: 'Nf3', n: 'Attack e5' },
+  },
+  warn: {},
+  theory: [{ ev: 0.3, name: 'King Pawn Game', alts: [] }],
+  roots: { w: 0 },
+};
+
+async function seedRepertoireInIdb(page) {
+  await page.evaluate(async (rep) => {
+    const db = await new Promise((res, rej) => {
+      const req = indexedDB.open('tichess-repertoire', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('kv');
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    });
+    await new Promise((res, rej) => {
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put({ repertoire: rep, name: 'My Prep' }, 'repertoire');
+      tx.oncomplete = res;
+      tx.onerror = () => rej(tx.error);
+    });
+    db.close();
+  }, SAMPLE_REPERTOIRE);
+}
+
+test('repertoire.html Play vs Stockfish boots engine and plays a legal reply', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await page.goto('/repertoire.html');
+  await seedRepertoireInIdb(page);
+  await page.reload();
+
+  await page.click('.tabs-top [data-tab="study"]');
+  await page.click('#s-fwd'); // 1.e4 — now Black to move
+  await page.click('#s-vs'); // User plays White, Stockfish plays Black immediately
+
+  await expect(page.locator('#x-head')).toContainText('Playing Stockfish', { timeout: 15_000 });
+  await expect(page.locator('#x-sheet .mv')).toHaveCount(1, { timeout: 15_000 });
+  expect(pageErrors).toEqual([]);
+});
+
+test('main site Repertoire hub shows prepared moves for current position and plays them', async ({
+  page,
+}) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await page.route('https://lichess.org/**', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+
+  await page.goto('/');
+  await seedRepertoireInIdb(page);
+  await page.reload();
+
+  await page.click('[data-hub="repertoire"]');
+  await expect(page.locator('#hub-repertoire')).toContainText('My Prep');
+  await expect(page.locator('#hub-repertoire')).toContainText('Best by test');
+
+  // Click prepared move e4 -> plays 1.e4 on main board and shows opponent reply e5
+  await page.locator('#hub-repertoire .rep-pos-move').first().click();
+  await expect(page.locator('#variationTreeContainer')).toContainText('1.e4');
+  await expect(page.locator('#hub-repertoire')).toContainText('e5');
+  expect(pageErrors).toEqual([]);
+});
+
+test('Player Scout syncs Lichess username games and indexes opening moves', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  const mockNdjson = JSON.stringify({
+    id: 'liGame01',
+    variant: 'standard',
+    perf: 'blitz',
+    createdAt: Date.UTC(2026, 10, 24),
+    winner: 'white',
+    players: {
+      white: { user: { name: 'LichessTestUser' }, rating: 2400 },
+      black: { user: { name: 'OpponentA' }, rating: 2380 },
+    },
+    pgn: '[Event "rated blitz game"]\n[White "LichessTestUser"]\n[Black "OpponentA"]\n[Result "1-0"]\n\n1. d4 d5 2. c4 e6 1-0',
+  });
+
+  await page.route('https://lichess.org/api/games/user/LichessTestUser*', (r) =>
+    r.fulfill({ contentType: 'application/x-ndjson', body: mockNdjson + '\n' })
+  );
+  await page.route('https://lichess.org/api/broadcast/**', (r) => r.abort());
+  await page.route('https://lichess.org/api/cloud-eval*', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+
+  await page.goto('/');
+  await page.click('#btnOpenScoutModal');
+  await page.fill('#scLichessUser', 'LichessTestUser');
+  await page.click('#btnRunLichessSync');
+
+  await expect(page.locator('#scoutCollectionSelect')).toContainText('LichessTestUser (Lichess)', {
+    timeout: 10_000,
+  });
+  await expect(page.locator('#scoutTableBody')).toContainText('d4');
+  expect(pageErrors).toEqual([]);
+});

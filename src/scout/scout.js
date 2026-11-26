@@ -12,6 +12,7 @@ import {
   indexGamesCollection,
 } from '../db/indexedDb.js';
 import { fetchChessComArchives, fetchChessComMonthGames } from '../api/chesscom.js';
+import { fetchLichessUserGames } from '../api/lichess.js';
 import { playMoveOnTree, renderArrows } from '../board/board.js';
 import { addBoardTab } from '../board/tabs.js';
 
@@ -37,7 +38,7 @@ export async function refreshPlayerScout() {
 
   const col = state.collections.find((c) => c.id === state.activeScoutId);
   if (!col) {
-    tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">Click <b>+ Scout</b> to sync Chess.com or import PGN.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">Click <b>+ Scout</b> to sync Lichess, Chess.com, or import PGN.</td></tr>`;
     return;
   }
 
@@ -95,7 +96,7 @@ export async function renderScoutedGamesTable() {
   if (!tbody) return;
 
   if (!state.activeScoutId) {
-    tbody.innerHTML = `<tr><td colspan="8" class="py-5 text-center text-txtMuted">No scouted database selected. Click <b>+ Scout</b> to sync Chess.com or import PGN.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="py-5 text-center text-txtMuted">No scouted database selected. Click <b>+ Scout</b> to sync Lichess, Chess.com, or import PGN.</td></tr>`;
     return;
   }
 
@@ -161,6 +162,50 @@ export async function reloadCollections(selectId = null) {
   const tot = state.collections.reduce((s, c) => s + (c.gameCount || 0), 0);
   const infoEl = document.getElementById('settingsDbInfo');
   if (infoEl) infoEl.textContent = `${state.collections.length} DB(s) · ${tot} games indexed.`;
+}
+
+export async function runLichessSync() {
+  const user = document.getElementById('scLichessUser').value.trim();
+  const max = parseInt(document.getElementById('scLichessMax').value, 10) || 100;
+  const perfType = document.getElementById('scLichessPerf').value || '';
+  if (!user) {
+    showToast('Enter a Lichess username', true);
+    return;
+  }
+
+  const wrap = document.getElementById('scProgressWrap');
+  const setP = (pct, txt) => {
+    wrap.classList.remove('hidden');
+    document.getElementById('scProgressBar').style.width = `${pct}%`;
+    document.getElementById('scProgressPct').textContent = `${Math.round(pct)}%`;
+    document.getElementById('scProgressText').textContent = txt;
+  };
+
+  setP(15, `Fetching ${user} from Lichess...`);
+  try {
+    const raw = await fetchLichessUserGames(user, { max, perfType });
+    if (!raw.length) throw new Error('No standard chess games found for that Lichess player');
+    setP(50, `Indexing ${raw.length} games...`);
+    const cid = `li:${user.toLowerCase()}`;
+    await indexGamesCollection(
+      {
+        id: cid,
+        name: `${user} (Lichess)`,
+        type: 'lichess',
+        username: user.toLowerCase(),
+        gameCount: 0,
+      },
+      raw,
+      setP
+    );
+    wrap.classList.add('hidden');
+    document.getElementById('scoutModal').classList.add('hidden');
+    await reloadCollections(cid);
+    showToast(`Synced ${raw.length} Lichess games for ${user}`);
+  } catch (err) {
+    wrap.classList.add('hidden');
+    showToast(err.message || 'Lichess sync failed', true);
+  }
 }
 
 export async function runChessComSync() {

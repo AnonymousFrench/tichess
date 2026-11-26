@@ -10,10 +10,30 @@ import {
 } from './uci.js';
 import { createUciSession } from './uciSession.js';
 
-const STOCKFISH_WORKER_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite-single.js`;
+const STOCKFISH_MT_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite.js`;
+const STOCKFISH_ST_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite-single.js`;
 
 let wasmSession = null;
 let wsSession = null;
+
+function canUseMultiThreadedWasm() {
+  return (
+    typeof crossOriginIsolated !== 'undefined' &&
+    crossOriginIsolated === true &&
+    typeof SharedArrayBuffer !== 'undefined'
+  );
+}
+
+function getDesiredThreads() {
+  const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2;
+  return Math.min(4, Math.max(1, cores - 1));
+}
+
+function getWasmBadgeLabel() {
+  return state.sf.multiThreaded && state.sf.threads > 1
+    ? `SF 19 MT (${state.sf.threads}T)`
+    : 'SF 19 WASM';
+}
 
 function handleSfInfoLine(line, infoFen, expectedMode) {
   if (state.sf.mode !== expectedMode) return;
@@ -31,7 +51,7 @@ function handleSfInfoLine(line, infoFen, expectedMode) {
   renderSfUI();
 }
 
-export function initStockfish() {
+export function initStockfish({ forceSingleThread = false } = {}) {
   if (wasmSession) {
     wasmSession.reset();
     wasmSession = null;
@@ -43,13 +63,20 @@ export function initStockfish() {
     state.sf.worker = null;
   }
 
+  const useMt = !forceSingleThread && canUseMultiThreadedWasm();
+  const threads = useMt ? getDesiredThreads() : 1;
+  const workerUrl = useMt ? STOCKFISH_MT_URL : STOCKFISH_ST_URL;
+
   state.sf.ready = false;
   state.sf.mode = 'init';
+  state.sf.multiThreaded = useMt && threads > 1;
+  state.sf.threads = threads;
+
   const badge = document.getElementById('sfModeBadge');
-  if (badge) badge.textContent = 'Loading SF 19 WASM...';
+  if (badge) badge.textContent = useMt ? 'Loading SF 19 MT...' : 'Loading SF 19 WASM...';
 
   try {
-    const w = new Worker(STOCKFISH_WORKER_URL);
+    const w = new Worker(workerUrl);
     state.sf.worker = w;
 
     const session = createUciSession((cmd) => {
@@ -60,6 +87,11 @@ export function initStockfish() {
 
     w.onerror = (err) => {
       if (state.sf.mode === 'ws') return;
+      if (useMt && !state.sf.ready) {
+        // Multi-threaded worker failed to initialize; fall back cleanly to single-threaded build
+        initStockfish({ forceSingleThread: true });
+        return;
+      }
       state.sf.mode = 'error';
       state.sf.ready = false;
       renderSfError(`Stockfish WASM failed to load${err?.message ? ': ' + err.message : ''}.`);
@@ -74,6 +106,10 @@ export function initStockfish() {
           state.sf.mode = 'wasm';
           state.sf.ready = true;
         }
+        if (useMt && threads > 1) {
+          w.postMessage(`setoption name Threads value ${threads}`);
+          w.postMessage('setoption name Hash value 32');
+        }
         w.postMessage('setoption name MultiPV value 3');
         w.postMessage('isready');
         triggerSfAnalysis();
@@ -85,6 +121,10 @@ export function initStockfish() {
 
     w.postMessage('uci');
   } catch (err) {
+    if (useMt) {
+      initStockfish({ forceSingleThread: true });
+      return;
+    }
     state.sf.mode = 'error';
     state.sf.ready = false;
     renderSfError(`Stockfish WASM unavailable: ${err?.message || 'Web Worker error'}.`);
@@ -206,7 +246,7 @@ export async function triggerSfAnalysis() {
   // 3. Real Stockfish 19 WASM in Web Worker
   if (state.sf.ready && state.sf.worker && state.sf.mode === 'wasm' && wasmSession) {
     const badge = document.getElementById('sfModeBadge');
-    if (badge) badge.textContent = 'SF 19 WASM';
+    if (badge) badge.textContent = getWasmBadgeLabel();
     wasmSession.analyze(fen, 'go depth 18');
     return;
   }

@@ -4,11 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ChessMonitor Studio — Live FIDE Events, Database Scouting &amp; Dual Engines</title>
-
-  <!-- Fonts: Inter & IBM Plex Mono -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
 <body class="bg-bg text-txt flex flex-col">
 
@@ -36,6 +31,7 @@
           <button class="menu-item" id="actImportPgnMenu"><span>Import Local .pgn Database</span></button>
           <div class="menu-sep"></div>
           <button class="menu-item" id="actExportPgn"><span>Export Current Tab PGN</span></button>
+          <button class="menu-item" id="actShareLink"><span>Copy Shareable Analysis Link</span></button>
         </div>
       </div>
 
@@ -201,6 +197,7 @@
               <button id="btnFlip" class="px-2 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11px]" title="Flip Board (f)">⇅ Flip</button>
               <button id="btnCopyFen" class="px-2 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10.5px]" title="Copy FEN">FEN</button>
               <button id="btnCopyPgn" class="px-2 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10.5px]" title="Copy PGN">PGN</button>
+              <button id="btnShareLink" class="px-2 py-1 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10.5px]" title="Copy Shareable Analysis Link">Share</button>
             </div>
           </div>
         </div>

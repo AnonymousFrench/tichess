@@ -1,15 +1,16 @@
 # ChessMonitor Studio (`tichess`)
 
-A lightweight, vanilla-JS + Vite chess analysis studio with real Stockfish 19 WASM, an optional local UCI WebSocket bridge for GPU Lc0 / native Stockfish, live Lichess tournament broadcasts, Lichess Opening Explorer, and local IndexedDB player scouting.
+A lightweight, vanilla-JS + Vite chess analysis studio with multi-threaded Stockfish 19 WASM, an optional local UCI WebSocket bridge for GPU Lc0 / native Stockfish, live Lichess tournament broadcasts, Lichess Opening Explorer, zero-backend shareable analysis links, and local IndexedDB player scouting.
 
 ## Honesty Policy
 
 Every metric shown in the UI comes from a real engine or API response:
 
-- **No synthetic evaluations:** Stockfish runs real **Stockfish 19 Lite WASM** in a Web Worker (or Lichess Cloud Eval / your local UCI bridge). If WASM cannot load, the UI reports the error honestly instead of falling back to a fake evaluator.
+- **No synthetic evaluations:** Stockfish runs real **Stockfish 19 Lite WASM** (multi-threaded via `SharedArrayBuffer` when `crossOriginIsolated`, with automatic single-threaded fallback) or Lichess Cloud Eval / your local UCI bridge. If WASM cannot load, the UI reports the error honestly instead of falling back to a fake evaluator.
 - **Real Lc0 only:** The Lc0 panel only displays evaluations and WDL bars when connected to a real local Lc0 instance over the UCI WebSocket bridge.
 - **No invented depths or speeds:** Cloud Eval shows the real depth and total node count (`nodes`, never mislabelled as `kn/s`). Unknown fields render `—`.
 - **Live broadcast status from Lichess:** Tournament rounds, start times, and `LIVE` badges come directly from the Lichess Broadcast API (`round.ongoing === true`), refresh periodically, and auto-advance when a new round starts.
+- **Zero-backend shareable links:** Click **Share** below the board (or **File → Copy Shareable Analysis Link**) to encode the active tab's variation tree, comments, NAGs, board orientation, and exact move pointer into a `#a=...` URL hash.
 
 ## Development & Build
 
@@ -17,9 +18,9 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm run dev       # Start Vite dev server (copies Stockfish WASM via predev)
+npm run dev       # Start Vite dev server (COOP/COEP enabled, copies Stockfish WASM via predev)
 npm run build     # Build production bundle to dist/ (copies Stockfish WASM via prebuild)
-npm run preview   # Serve dist/ locally
+npm run preview   # Serve dist/ locally (COOP/COEP enabled)
 npm run lint      # ESLint check
 npm test          # Vitest unit test suite
 npm run e2e       # Playwright browser smoke test (requires Chromium: npx playwright install chromium)
@@ -27,7 +28,7 @@ npm run e2e       # Playwright browser smoke test (requires Chromium: npx playwr
 
 ### Vercel Deployment
 
-Vercel builds this Vite project with zero extra configuration (`npm run build` runs `prebuild` to copy Stockfish 19 WASM and its GPLv3 license into `public/stockfish/`). [`vercel.json`](vercel.json) configures a strict `Content-Security-Policy` header and static asset caching.
+Vercel builds this Vite project with zero extra configuration (`npm run build` runs `prebuild` to copy both multi-threaded and single-threaded Stockfish 19 Lite WASM builds plus its GPLv3 license into `public/stockfish/`). Fonts (`Inter` and `IBM Plex Mono`) are self-hosted via Fontsource, and [`vercel.json`](vercel.json) configures `COOP`/`COEP` headers (unlocking multi-threaded WASM), a strict `Content-Security-Policy` header, and static asset caching.
 
 ## Optional Lichess Personal Access Token
 

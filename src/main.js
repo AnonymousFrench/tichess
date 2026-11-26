@@ -1,3 +1,11 @@
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import '@fontsource/ibm-plex-mono/600.css';
+import '@fontsource/ibm-plex-mono/700.css';
 import './styles.css';
 import {
   state,
@@ -11,11 +19,13 @@ import {
   emitPositionChanged,
 } from './state.js';
 import { createNode, exportTreeToPgn } from './chess/tree.js';
+import { encodeShareHash, decodeShareHash } from './chess/shareUrl.js';
 import { dbWipeAll } from './db/indexedDb.js';
 import { renderBoard, renderArrows, initBoardInteractions } from './board/board.js';
 import {
   renderBoardTabs,
   addBoardTab,
+  addPrebuiltBoardTab,
   renderVariationTree,
   promoteVar,
   deleteVar,
@@ -129,11 +139,21 @@ function bindEvents() {
     document.querySelectorAll('.menu-dropdown').forEach((d) => d.classList.add('hidden'))
   );
 
+  const copyShareLink = () => {
+    const tab = getActiveTab();
+    if (!tab) return;
+    const hash = encodeShareHash(tab, { flipped: state.flipped });
+    if (!hash) return;
+    const url = `${window.location.origin}${window.location.pathname}${hash}`;
+    copyText(url, 'Shareable link copied');
+  };
+
   // Menu Actions
   document.getElementById('actNewTab').onclick = () => addBoardTab(`Analysis ${state.tabs.length + 1}`);
   document.getElementById('actLoadModal').onclick = () => openModal('loadModal');
   document.getElementById('actImportPgnMenu').onclick = () => document.getElementById('globalPgnInput').click();
   document.getElementById('actExportPgn').onclick = () => copyText(exportTreeToPgn(getActiveTab()), 'Exported PGN');
+  document.getElementById('actShareLink').onclick = copyShareLink;
   document.getElementById('actResetTab').onclick = () => {
     const t = getActiveTab();
     t.root = createNode({ fen: START_FEN });
@@ -224,6 +244,7 @@ function bindEvents() {
   document.getElementById('btnFlip').onclick = flipBoard;
   document.getElementById('btnCopyFen').onclick = () => copyText(getCurrentFen(), 'FEN copied');
   document.getElementById('btnCopyPgn').onclick = () => copyText(exportTreeToPgn(getActiveTab()), 'PGN copied');
+  document.getElementById('btnShareLink').onclick = copyShareLink;
   document.getElementById('btnLiveFollow').onclick = () => {
     const t = getActiveTab();
     if (!t.liveMeta) return;
@@ -474,7 +495,18 @@ async function bootstrap() {
   renderTournamentRoundsTable();
 
   await reloadCollections();
-  addBoardTab('Analysis 1');
+  const shared = decodeShareHash(window.location.hash);
+  if (shared) {
+    state.flipped = shared.flipped;
+    addPrebuiltBoardTab({
+      title: shared.title,
+      root: shared.root,
+      current: shared.current,
+    });
+    showToast(`Loaded shared analysis: ${shared.title}`);
+  } else {
+    addBoardTab('Analysis 1');
+  }
 
   initLc0();
   initStockfish();

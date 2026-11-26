@@ -8,6 +8,8 @@ const srcDir = resolve(root, 'node_modules/stockfish/bin');
 const outDir = resolve(root, 'public/stockfish');
 
 const files = [
+  'stockfish-19-lite.js',
+  'stockfish-19-lite.wasm',
   'stockfish-19-lite-single.js',
   'stockfish-19-lite-single.wasm',
 ];
@@ -29,4 +31,4 @@ if (existsSync(licenseFrom)) {
   copyFileSync(licenseFrom, resolve(outDir, 'LICENSE.txt'));
 }
 
-console.log('[copy-stockfish] Copied Stockfish 19 lite-single WASM and LICENSE.txt to public/stockfish/');
+console.log('[copy-stockfish] Copied Stockfish 19 lite (MT + single) WASM and LICENSE.txt to public/stockfish/');

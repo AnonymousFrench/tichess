@@ -106,6 +106,25 @@ export function addBoardTab(title, pgnOrFen = '', metaOverride = null, opts = {}
   return tab;
 }
 
+export function addPrebuiltBoardTab({ title, root, current, meta = null }) {
+  const id = 'tab_' + Date.now() + '_' + Math.floor(Math.random() * 999);
+  const tab = {
+    id,
+    title: title || `Analysis ${state.tabs.length + 1}`,
+    root,
+    current: current || root,
+    meta,
+    liveMeta: null,
+    autoFollow: false,
+  };
+  state.tabs.push(tab);
+  state.activeTabId = id;
+  state.selectedSq = null;
+  state.legalTargets = [];
+  emitPositionChanged();
+  return tab;
+}
+
 export function closeBoardTab(tid) {
   if (state.tabs.length <= 1) return;
   const idx = state.tabs.findIndex((t) => t.id === tid);

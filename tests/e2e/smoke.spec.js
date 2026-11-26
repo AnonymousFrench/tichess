@@ -124,7 +124,12 @@ test('falls back cleanly to real Stockfish 19 WASM when Lichess is blocked', asy
 
   await page.goto('/');
 
-  await expect(page.locator('#sfModeBadge')).toHaveText('SF 19 WASM', { timeout: 20_000 });
+  const isolated = await page.evaluate(() => window.crossOriginIsolated);
+  expect(isolated).toBe(true);
+
+  await expect(page.locator('#sfModeBadge')).toHaveText(/^SF 19 (MT \(\d+T\)|WASM)$/, {
+    timeout: 20_000,
+  });
   await expect(page.locator('#sfDepth')).toHaveText(/^Depth: \d+$/, { timeout: 20_000 });
   await expect(page.locator('#lc0ModeBadge')).toHaveText('Not Connected');
   expect(pageErrors).toEqual([]);
@@ -167,4 +172,35 @@ test('clicking a cloud PV line with king-to-rook castling (e1h1) plays O-O on th
   await firstPv.click();
 
   await expect(page.locator('#variationTreeContainer')).toContainText('5.O-O');
+});
+
+test('opening a shareable #a=... link restores variation tree, comments, and current move', async ({
+  page,
+}) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await page.route('https://lichess.org/**', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+
+  // Payload: 1. e4 e5 (2. Nf3) (2. d4 {Center Game}!), current at 2. d4, title "Shared Prep"
+  const payload = [
+    null,
+    [['e2e4', [['e7e5', [['g1f3'], ['d2d4', [], 'Center Game', ['!']]]]]]],
+    [0, 0, 1],
+    0,
+    'Shared Prep',
+  ];
+  const encoded = Buffer.from(JSON.stringify(payload))
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  await page.goto(`/#a=${encoded}`);
+
+  await expect(page.locator('#boardTabsBar')).toContainText('Shared Prep');
+  await expect(page.locator('#variationTreeContainer')).toContainText('Center Game');
+  await expect(page.locator('#variationTreeContainer .tree-move.active')).toContainText('d4!');
+  expect(pageErrors).toEqual([]);
 });

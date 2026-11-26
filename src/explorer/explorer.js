@@ -46,6 +46,26 @@ function getFallbackOpeningForCurrentPosition(fen) {
   return { eco: '—', name: '—' };
 }
 
+export function classifyPlayerMovePerformance(move, playerColor = 'white') {
+  const w = Number(move?.white) || 0;
+  const d = Number(move?.draws) || 0;
+  const b = Number(move?.black) || 0;
+  const total = w + d + b;
+  const wins = playerColor === 'black' ? b : w;
+  const losses = playerColor === 'black' ? w : b;
+  const scorePct = total ? Math.round(((wins + 0.5 * d) / total) * 100) : 0;
+  const badge = total >= 3 ? (scorePct < 40 ? 'flaw' : scorePct >= 65 ? 'strong' : null) : null;
+  return { total, wins, draws: d, losses, scorePct, badge };
+}
+
+const SINCE_LABELS = {
+  '': 'all time',
+  '1m': 'last 1m',
+  '3m': 'last 3m',
+  '6m': 'last 6m',
+  '12m': 'last 12m',
+};
+
 let explorerAbortCtrl = null;
 
 export async function refreshReferenceExplorer() {
@@ -53,6 +73,7 @@ export async function refreshReferenceExplorer() {
   const fen = getCurrentFen();
   const authNote = document.getElementById('refAuthNote');
   if (authNote) authNote.classList.add('hidden');
+  const summaryEl = document.getElementById('refPlayerSummary');
 
   if (explorerAbortCtrl) {
     explorerAbortCtrl.abort();
@@ -67,6 +88,7 @@ export async function refreshReferenceExplorer() {
   const sync = getCloudSyncState();
   const tbodyEl = document.getElementById('refTableBody');
   if (state.refSource === 'player' && tbodyEl) {
+    if (summaryEl) summaryEl.textContent = 'Loading…';
     tbodyEl.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">Loading ${escapeHtml(sync.user?.username || 'your')} ${state.refPlayerColor === 'black' ? 'Black' : 'White'} games…</td></tr>`;
   }
 
@@ -75,6 +97,8 @@ export async function refreshReferenceExplorer() {
       signal: ctrl.signal,
       player: sync.user?.username || '',
       color: state.refPlayerColor || 'white',
+      sinceKey: state.refPlayerSince || '',
+      maxGames: state.refPlayerMax || '200',
       authenticated: sync.authenticated,
     });
     if (reqId !== state.refReqId) return;
@@ -90,6 +114,13 @@ export async function refreshReferenceExplorer() {
       fallbackLocal: Boolean(data.fallbackLocal),
       reauthNeeded: Boolean(data.reauthNeeded),
       sampledGames: data.sampledGames || 0,
+      sinceKey: data.sinceKey ?? state.refPlayerSince ?? '',
+      maxGames: data.maxGames ?? state.refPlayerMax ?? '200',
+      posTotals: {
+        white: Number(data.white) || 0,
+        draws: Number(data.draws) || 0,
+        black: Number(data.black) || 0,
+      },
     });
     const games = [...(data.topGames || []), ...(data.recentGames || [])];
     state.mastersGamesCache = Array.from(new Map(games.map((g) => [g.id, g])).values());
@@ -103,6 +134,7 @@ export async function refreshReferenceExplorer() {
     }
     state.mastersGamesCache = [];
     document.getElementById('refTotalGames').textContent = '—';
+    if (summaryEl) summaryEl.textContent = '';
 
     const tbody = document.getElementById('refTableBody');
     if (err.reauthNeeded && tbody) {
@@ -132,9 +164,35 @@ export function renderRefTable(moves, meta = {}) {
   const total = moves.reduce((s, m) => s + m.white + m.draws + m.black, 0);
   document.getElementById('refTotalGames').textContent = `${total.toLocaleString()} games`;
 
+  const summaryEl = document.getElementById('refPlayerSummary');
+  if (summaryEl) {
+    if (state.refSource === 'player') {
+      const posW = meta.posTotals?.white ?? moves.reduce((s, m) => s + m.white, 0);
+      const posD = meta.posTotals?.draws ?? moves.reduce((s, m) => s + m.draws, 0);
+      const posB = meta.posTotals?.black ?? moves.reduce((s, m) => s + m.black, 0);
+      const perf = classifyPlayerMovePerformance(
+        { white: posW, draws: posD, black: posB },
+        state.refPlayerColor || 'white'
+      );
+      if (perf.total > 0) {
+        const wp = Math.round((perf.wins / perf.total) * 100);
+        const dp = Math.round((perf.draws / perf.total) * 100);
+        const lp = Math.max(0, 100 - wp - dp);
+        const scoreTone =
+          perf.scorePct < 42 ? 'text-ro' : perf.scorePct >= 58 ? 'text-em' : 'text-txt';
+        summaryEl.innerHTML = `<span class="${scoreTone} font-bold">${perf.scorePct}%</span> <span class="text-txtMuted">(${wp}W·${dp}D·${lp}L)</span>`;
+      } else {
+        summaryEl.textContent = '0 games in filter';
+      }
+    } else {
+      summaryEl.textContent = '';
+    }
+  }
+
+  const sinceLabel = SINCE_LABELS[meta.sinceKey ?? state.refPlayerSince ?? ''] || 'all time';
   const footerRow =
     state.refSource === 'player' && meta.fallbackLocal
-      ? `<tr><td colspan="3" class="py-1.5 px-2 text-center font-sans text-[10px] text-txtMuted bg-surface/40">Last ${meta.sampledGames || 0} Lichess games${
+      ? `<tr><td colspan="3" class="py-1.5 px-2 text-center font-sans text-[10px] text-txtMuted bg-surface/40">Indexed ${meta.sampledGames || 0} games (${escapeHtml(sinceLabel)})${
           meta.reauthNeeded
             ? ` · <a href="${escapeHtml(getLoginUrl('/'))}" class="text-vi hover:underline font-semibold">Refresh sign-in for full history →</a>`
             : ''
@@ -144,17 +202,29 @@ export function renderRefTable(moves, meta = {}) {
   if (!moves.length) {
     const emptyMsg =
       state.refSource === 'player'
-        ? `No ${state.refPlayerColor === 'black' ? 'Black' : 'White'} Lichess games reached this position.`
+        ? `No ${state.refPlayerColor === 'black' ? 'Black' : 'White'} Lichess games reached this position (${sinceLabel}).`
         : 'No database games here.';
     tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">${escapeHtml(emptyMsg)}</td></tr>${footerRow}`;
     return;
   }
 
+  const isPlayerMode = state.refSource === 'player';
+  const pCol = state.refPlayerColor || 'white';
+
   tbody.innerHTML =
     moves
       .map((m) => {
         const cnt = m.white + m.draws + m.black;
-        return `<tr class="db-mv cursor-pointer" data-uci="${escapeHtml(m.uci)}" data-san="${escapeHtml(m.san)}"><td class="font-bold text-txt">${escapeHtml(m.san)}</td><td class="text-txtMuted">${formatCount(cnt)}</td><td>${renderWdbBar(m.white, m.draws, m.black)}</td></tr>`;
+        let badgeHtml = '';
+        if (isPlayerMode) {
+          const perf = classifyPlayerMovePerformance(m, pCol);
+          if (perf.badge === 'flaw') {
+            badgeHtml = `<span class="ml-1 px-1 py-[0.5px] rounded bg-ro/20 text-ro border border-ro/35 font-sans text-[8.5px] font-bold uppercase tracking-wide" title="Low score (${perf.scorePct}% across ${perf.total} games)">Flaw</span>`;
+          } else if (perf.badge === 'strong') {
+            badgeHtml = `<span class="ml-1 px-1 py-[0.5px] rounded bg-em/15 text-em border border-em/35 font-sans text-[8.5px] font-bold uppercase tracking-wide" title="Strong score (${perf.scorePct}% across ${perf.total} games)">Strong</span>`;
+          }
+        }
+        return `<tr class="db-mv cursor-pointer" data-uci="${escapeHtml(m.uci)}" data-san="${escapeHtml(m.san)}"><td class="font-bold text-txt whitespace-nowrap">${escapeHtml(m.san)}${badgeHtml}</td><td class="text-txtMuted">${formatCount(cnt)}</td><td>${renderWdbBar(m.white, m.draws, m.black)}</td></tr>`;
       })
       .join('') + footerRow;
 

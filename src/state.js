@@ -8,24 +8,48 @@ function safeGetStorage(key, fallback = '') {
   }
 }
 
+function safeGetJsonStorage(key, fallback) {
+  try {
+    if (typeof localStorage === 'undefined') return fallback;
+    const raw = localStorage.getItem(key);
+    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+export const DEFAULT_PANELS = {
+  hub: true,
+  explorer: true,
+  scout: true,
+  sf: true,
+  lc0: false,
+  tree: true,
+};
+
 export const state = {
   tabs: [],
   activeTabId: '',
   flipped: false,
   showCoords: true,
   showEngineArrows: true,
+  showRepertoireArrows: true,
   showEvalBar: true,
   evalBarSource: 'sf', // 'sf' | 'lc0'
+
+  // Configurable workspace panels
+  panels: safeGetJsonStorage('tichess_panels_v1', DEFAULT_PANELS),
 
   selectedSq: null,
   legalTargets: [],
   pendingPromotion: null,
   userHighlights: new Map(),
   userArrows: [],
+  repertoireArrows: [], // [{ uci, mine, isAlt }]
   hoverArrowUci: null,
 
   // Top-Right Hub
-  activeHub: 'live', // 'live' | 'masters' | 'scouted'
+  activeHub: 'live', // 'live' | 'masters' | 'scouted' | 'repertoire'
   liveAutoPoll: true,
   liveCountdown: 15,
   featuredTour: null, // Full Lichess broadcast tournament object { tour, rounds }
@@ -40,6 +64,8 @@ export const state = {
   // Middle-Left Reference Explorer
   refSource: 'masters',
   refPlayerColor: 'white',
+  refPlayerSince: '3m', // '' | '1m' | '3m' | '6m' | '12m'
+  refPlayerMax: '200', // '50' | '100' | '200' | '500' | 'all'
   refReqId: 0,
 
   // Middle-Right Player Scout

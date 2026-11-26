@@ -99,6 +99,8 @@ export default async function handler(req, res) {
   const source = String(req.query?.source || 'player');
   const fen = String(req.query?.fen || '').trim();
   const color = req.query?.color === 'black' ? 'black' : 'white';
+  const rawSince = String(req.query?.since || '').trim();
+  const since = /^\d{4}-\d{2}$/.test(rawSince) ? rawSince : '';
 
   if (!fen || fen.length > 140) {
     return res.status(400).json({ error: 'Missing or invalid FEN' });
@@ -128,7 +130,8 @@ export default async function handler(req, res) {
       targetUrl = `https://explorer.lichess.org/lichess?fen=${encodeURIComponent(fen)}&ratings=2000,2200,2500&speeds=blitz,rapid,classical&topGames=4&recentGames=6`;
     } else {
       // Lichess /player explorer caps recentGames at 4
-      targetUrl = `https://explorer.lichess.org/player?player=${encodeURIComponent(user.username)}&color=${color}&fen=${encodeURIComponent(fen)}&recentGames=4`;
+      const sinceParam = since ? `&since=${encodeURIComponent(since)}` : '';
+      targetUrl = `https://explorer.lichess.org/player?player=${encodeURIComponent(user.username)}&color=${color}&fen=${encodeURIComponent(fen)}&recentGames=4${sinceParam}`;
     }
 
     const upstream = await fetch(targetUrl, {

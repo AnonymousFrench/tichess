@@ -133,16 +133,33 @@ export function renderArrows() {
   if (!svg) return;
 
   const arrows = [];
+  if (state.showRepertoireArrows && state.repertoireArrows?.length) {
+    let mineSeen = 0;
+    state.repertoireArrows.forEach((ra, i) => {
+      let color;
+      let w;
+      if (ra.mine) {
+        const isPrimary = !ra.isAlt && mineSeen === 0;
+        color = isPrimary ? 'rgba(16, 185, 129, 0.80)' : 'rgba(245, 158, 11, 0.76)';
+        w = isPrimary ? 14 : 12;
+        mineSeen++;
+      } else {
+        color = 'rgba(148, 163, 184, 0.56)';
+        w = 11;
+      }
+      arrows.push({ uci: ra.uci, color, id: 'rep' + i, w });
+    });
+  }
   if (state.showEngineArrows) {
     if (state.lc0.mode === 'ws' && state.lc0.running && state.lc0.topArrowUci) {
-      arrows.push({ uci: state.lc0.topArrowUci, color: 'rgba(139, 92, 246, 0.82)', id: 'lc0', w: 13 });
+      arrows.push({ uci: state.lc0.topArrowUci, color: 'rgba(167, 139, 250, 0.80)', id: 'lc0', w: 12 });
     }
     if (state.sf.running && state.sf.topArrowUci) {
-      arrows.push({ uci: state.sf.topArrowUci, color: 'rgba(6, 182, 212, 0.82)', id: 'sf', w: 13 });
+      arrows.push({ uci: state.sf.topArrowUci, color: 'rgba(56, 189, 248, 0.78)', id: 'sf', w: 12 });
     }
   }
   if (state.hoverArrowUci) {
-    arrows.push({ uci: state.hoverArrowUci, color: 'rgba(16, 185, 129, 0.90)', id: 'hov', w: 15 });
+    arrows.push({ uci: state.hoverArrowUci, color: 'rgba(16, 185, 129, 0.92)', id: 'hov', w: 15 });
   }
   state.userArrows.forEach((ua, i) =>
     arrows.push({ uci: ua.from + ua.to, color: 'rgba(245, 158, 11, 0.85)', id: 'u' + i, w: 14 })

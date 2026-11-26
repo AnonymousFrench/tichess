@@ -44,6 +44,16 @@ let fenIndex = new Map();
 let activeDrawer = null; // null | 'pgn' | 'addLine' | 'prep'
 let addLineDraft = null; // optional { color, sectionName, lineName }
 let collapsedSections = new Set(); // section ids explicitly collapsed by user
+let treeViewMode = (() => {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem('tichess_rep_view') === 'merged'
+      ? 'merged'
+      : 'grouped';
+  } catch (_) {
+    return 'grouped';
+  }
+})();
+let mergedColorFilter = 'both'; // 'both' | 'w' | 'b'
 let prepState = {
   colId: '',
   userColor: 'both',
@@ -774,6 +784,106 @@ export function buildSectionMoveTree(repertoire, sec, progress = {}, now = Date.
   return root;
 }
 
+/**
+ * Merge ALL openings/lines in the repertoire into a single unified chess tree
+ * (optionally filtered by user repertoire color `'w' | 'b' | 'both'`).
+ */
+export function buildMergedRepertoireTree(
+  repertoire,
+  { colorFilter = 'both', progress = {}, now = Date.now() } = {}
+) {
+  const secNameById = new Map((repertoire?.secs || []).map((s) => [s.id, s.name]));
+  const root = {
+    fen: START_FEN,
+    normFen: normalizeFen(START_FEN),
+    pathUci: [],
+    children: [],
+  };
+
+  for (const ln of repertoire?.lines || []) {
+    if (!ln?.uci?.length) continue;
+    if (colorFilter !== 'both' && ln.color !== colorFilter) continue;
+    const startFen = repertoire.pos?.[ln.pos[0]]?.f || START_FEN;
+    if (normalizeFen(startFen) !== root.normFen) continue;
+
+    const secName = secNameById.get(ln.sec) || ln.name || '';
+    let cur = root;
+    const pathUci = [];
+    for (let p = 0; p < ln.uci.length; p++) {
+      const uci = ln.uci[p];
+      const san = ln.san[p];
+      pathUci.push(uci);
+      let child = cur.children.find((c) => c.uci === uci);
+      const fromPi = ln.pos[p];
+      const toPi = ln.pos[p + 1];
+      const edge = repertoire.pos?.[fromPi]?.e?.find((e) => e[0] === uci);
+      const flags = edge ? edge[3] : 0;
+      const mine = Boolean(flags & 1);
+      const isAlt = Boolean(flags & 2);
+      const cardId = edge?.[5] || null;
+      const card = cardId ? repertoire.cards?.[cardId] : null;
+      if (!child) {
+        const toFen = repertoire.pos?.[toPi]?.f || '';
+        const fromFen = repertoire.pos?.[fromPi]?.f || '';
+        const parts = fromFen.split(' ');
+        const moveNum = parseInt(parts[5] || '1', 10) || Math.floor(p / 2) + 1;
+        const turn = parts[1] === 'b' ? 'b' : 'w';
+        child = {
+          uci,
+          san,
+          moveNum,
+          color: turn,
+          fen: toFen,
+          normFen: toFen ? normalizeFen(toFen) : '',
+          mine,
+          isAlt,
+          status: cardId ? cardStatus(progress?.[cardId], now) : null,
+          note: card?.n || '',
+          warning: repertoire.warn?.[`${fromPi}|${uci}`] || '',
+          pathUci: [...pathUci],
+          secNames: secName ? [secName] : [],
+          children: [],
+        };
+        cur.children.push(child);
+      } else {
+        if (mine && !child.mine) {
+          child.mine = true;
+          child.isAlt = isAlt;
+          if (cardId) child.status = cardStatus(progress?.[cardId], now);
+          if (card?.n && !child.note) child.note = card.n;
+        }
+        if (secName && !child.secNames.includes(secName)) {
+          child.secNames.push(secName);
+        }
+      }
+      cur = child;
+    }
+  }
+
+  return root;
+}
+
+/**
+ * Sync ALL prepared repertoire move arrows onto the main board when Repertoire tab is active.
+ */
+export function syncRepertoireBoardArrows() {
+  if (state.activeHub !== 'repertoire' || !loadedRep?.repertoire) {
+    if (state.repertoireArrows.length) {
+      state.repertoireArrows = [];
+      renderArrows();
+    }
+    return;
+  }
+  const hit = lookupRepertoirePosition(fenIndex, loadedRep.repertoire, loadedProg, getCurrentFen());
+  const next = (hit?.moves || []).map((m) => ({
+    uci: m.uci,
+    mine: m.mine,
+    isAlt: m.isAlt,
+  }));
+  state.repertoireArrows = next;
+  renderArrows();
+}
+
 function navigateBoardToRepertoirePath(startFen, pathUcis) {
   const tab = getActiveTab();
   if (!tab) return;
@@ -975,6 +1085,7 @@ export function renderStudioRepertoirePanel() {
   const { total, sections } = summarizeRepertoire(rep, loadedProg);
   const hit = lookupRepertoirePosition(fenIndex, rep, loadedProg, fen);
   const activeNormFen = normalizeFen(fen);
+  syncRepertoireBoardArrows();
 
   const drawerHtml =
     activeDrawer === 'pgn'
@@ -989,7 +1100,7 @@ export function renderStudioRepertoirePanel() {
   const firstNoteMove = hit?.moves?.find((m) => m.note || m.warning);
   const movesHtml = hit?.moves?.length
     ? `
-      <div class="px-2 py-1 rounded bg-[#0c121e] border border-borderSubtle flex flex-col gap-1">
+      <div class="px-2 py-1 rounded-md bg-bg/70 border border-borderSubtle flex flex-col gap-1">
         <div class="flex items-center gap-1.5 flex-wrap text-[10.5px]">
           <span class="text-[10px] font-semibold uppercase tracking-wider text-txtMuted shrink-0">Next:</span>
           ${hit.moves
@@ -1022,46 +1133,78 @@ export function renderStudioRepertoirePanel() {
     : '';
 
   const secById = new Map((rep.secs || []).map((s) => [s.id, s]));
-  const treeSectionsHtml = sections
-    .map((s) => {
-      const secObj = secById.get(s.id);
-      const isCollapsed = collapsedSections.has(s.id);
-      const treeRoot = secObj ? buildSectionMoveTree(rep, secObj, loadedProg) : null;
-      const treeBody = !isCollapsed && treeRoot
-        ? `<div class="px-2 py-1 border-t border-borderSubtle/50 bg-[#0a0f19]">${renderSectionTreeHtml(treeRoot, activeNormFen)}</div>`
-        : '';
+  let treeBodyHtml;
+  if (treeViewMode === 'merged') {
+    const mergedRoot = buildMergedRepertoireTree(rep, {
+      colorFilter: mergedColorFilter,
+      progress: loadedProg,
+    });
+    const colBtn = (val, label) =>
+      `<button class="rep-merged-col px-1.5 py-[1px] rounded font-mono text-[9.5px] ${
+        mergedColorFilter === val
+          ? 'bg-em/20 text-em font-bold'
+          : 'text-txtMuted hover:text-txt'
+      }" data-mcol="${val}">${label}</button>`;
 
-      return `
-        <div class="rounded border border-borderSubtle/80 bg-surface/35 overflow-hidden">
-          <div class="flex items-center justify-between gap-1.5 px-2 py-1 hover:bg-surface/70 text-[11px]">
-            <button class="rep-sec-toggle flex items-center gap-1.5 min-w-0 flex-1 text-left" data-secid="${escapeHtml(s.id)}">
-              <span class="font-mono text-[10px] text-txtMuted w-3 shrink-0">${isCollapsed ? '▸' : '▾'}</span>
-              <span class="text-[11px] shrink-0">${s.color === 'w' ? '♙' : '♟'}</span>
-              <span class="font-semibold text-txt truncate">${escapeHtml(s.name)}</span>
-              <span class="font-mono text-[9.5px] text-txtMuted shrink-0">${s.counts.mastered}/${s.counts.total}</span>
-              ${s.counts.due > 0 ? `<span class="px-1 rounded bg-ro/20 text-ro font-mono text-[9px] font-bold shrink-0">${s.counts.due} due</span>` : ''}
-            </button>
-            ${
-              s.firstLineIdx !== null
-                ? `<button class="rep-sec-load px-1.5 py-[1px] rounded bg-cy/10 hover:bg-cy/20 text-cy font-mono text-[9.5px] shrink-0" data-lidx="${s.firstLineIdx}" title="Open main line in a new tab">Tab ↗</button>`
-                : ''
-            }
+    treeBodyHtml = `
+      <div class="rounded-md border border-borderSubtle/80 bg-bg/60 overflow-hidden">
+        <div class="flex items-center justify-between gap-2 px-2 py-1 border-b border-borderSubtle/60 bg-surface/40 text-[10px]">
+          <span class="font-semibold text-txtMuted uppercase tracking-wider">Unified Prep Tree (${sections.length} openings merged)</span>
+          <div class="flex items-center gap-0.5 bg-panel rounded border border-borderSubtle p-0.5">
+            ${colBtn('both', 'All')}
+            ${colBtn('w', '♙ White')}
+            ${colBtn('b', '♟ Black')}
           </div>
-          ${treeBody}
         </div>
-      `;
-    })
-    .join('');
+        <div class="px-2 py-1.5">${renderSectionTreeHtml(mergedRoot, activeNormFen)}</div>
+      </div>
+    `;
+  } else {
+    treeBodyHtml = `<div class="flex flex-col gap-1">${sections
+      .map((s) => {
+        const secObj = secById.get(s.id);
+        const isCollapsed = collapsedSections.has(s.id);
+        const treeRoot = secObj ? buildSectionMoveTree(rep, secObj, loadedProg) : null;
+        const treeBody = !isCollapsed && treeRoot
+          ? `<div class="px-2 py-1 border-t border-borderSubtle/50 bg-bg/60">${renderSectionTreeHtml(treeRoot, activeNormFen)}</div>`
+          : '';
+
+        return `
+          <div class="rounded-md border border-borderSubtle/80 bg-surface/35 overflow-hidden">
+            <div class="flex items-center justify-between gap-1.5 px-2 py-1 hover:bg-surface/70 text-[11px]">
+              <button class="rep-sec-toggle flex items-center gap-1.5 min-w-0 flex-1 text-left" data-secid="${escapeHtml(s.id)}">
+                <span class="font-mono text-[10px] text-txtMuted w-3 shrink-0">${isCollapsed ? '▸' : '▾'}</span>
+                <span class="text-[11px] shrink-0">${s.color === 'w' ? '♙' : '♟'}</span>
+                <span class="font-semibold text-txt truncate">${escapeHtml(s.name)}</span>
+                <span class="font-mono text-[9.5px] text-txtMuted shrink-0">${s.counts.mastered}/${s.counts.total}</span>
+                ${s.counts.due > 0 ? `<span class="px-1 rounded bg-ro/20 text-ro font-mono text-[9px] font-bold shrink-0">${s.counts.due} due</span>` : ''}
+              </button>
+              ${
+                s.firstLineIdx !== null
+                  ? `<button class="rep-sec-load px-1.5 py-[1px] rounded bg-cy/10 hover:bg-cy/20 text-cy font-mono text-[9.5px] shrink-0" data-lidx="${s.firstLineIdx}" title="Open main line in a new tab">Tab ↗</button>`
+                  : ''
+              }
+            </div>
+            ${treeBody}
+          </div>
+        `;
+      })
+      .join('')}</div>`;
+  }
 
   host.innerHTML = `
     <div class="flex flex-col gap-1.5">
-      <div class="flex flex-wrap items-center justify-between gap-1.5 px-2 py-1 rounded bg-[#0e1522] border border-borderSubtle text-[11px]">
+      <div class="flex flex-wrap items-center justify-between gap-1.5 px-2 py-1 rounded-md bg-surface/50 border border-borderSubtle text-[11px]">
         <div class="flex items-center gap-2 flex-wrap min-w-0">
           <span class="font-bold text-txt truncate">${escapeHtml(loadedRep.name || 'My Repertoire')}</span>
           <span class="font-mono text-[10px] text-txtMuted">
             <span class="${total.due > 0 ? 'text-ro font-bold' : ''}">${total.due} due</span> ·
             <span class="text-em">${total.mastered}/${total.total}</span>
           </span>
+          <div class="inline-flex items-center bg-panel rounded border border-borderSubtle p-0.5 text-[9.5px]">
+            <button id="btnRepViewGrouped" class="px-1.5 py-[1px] rounded ${treeViewMode === 'grouped' ? 'bg-surfaceHover text-txt font-semibold' : 'text-txtMuted hover:text-txt'}">By Opening</button>
+            <button id="btnRepViewMerged" class="px-1.5 py-[1px] rounded ${treeViewMode === 'merged' ? 'bg-em/20 text-em font-semibold' : 'text-txtMuted hover:text-txt'}">Merged</button>
+          </div>
         </div>
         <div class="flex items-center gap-1 flex-wrap shrink-0">
           <a href="repertoire.html" class="px-2 py-0.5 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-bold text-[10px]">Train ↗</a>
@@ -1080,9 +1223,36 @@ export function renderStudioRepertoirePanel() {
 
       ${movesHtml}
 
-      <div class="flex flex-col gap-1">${treeSectionsHtml}</div>
+      ${treeBodyHtml}
     </div>
   `;
+
+  const viewGroupedBtn = host.querySelector('#btnRepViewGrouped');
+  if (viewGroupedBtn) {
+    viewGroupedBtn.onclick = () => {
+      treeViewMode = 'grouped';
+      try {
+        localStorage.setItem('tichess_rep_view', 'grouped');
+      } catch (_) {}
+      renderStudioRepertoirePanel();
+    };
+  }
+  const viewMergedBtn = host.querySelector('#btnRepViewMerged');
+  if (viewMergedBtn) {
+    viewMergedBtn.onclick = () => {
+      treeViewMode = 'merged';
+      try {
+        localStorage.setItem('tichess_rep_view', 'merged');
+      } catch (_) {}
+      renderStudioRepertoirePanel();
+    };
+  }
+  host.querySelectorAll('.rep-merged-col').forEach((btn) => {
+    btn.onclick = () => {
+      mergedColorFilter = btn.dataset.mcol || 'both';
+      renderStudioRepertoirePanel();
+    };
+  });
 
   const inp = host.querySelector('#studioRepFileInput');
   if (inp) {

@@ -14,6 +14,7 @@ import {
   buildRepertoireFenIndex,
   lookupRepertoirePosition,
   summarizeRepertoire,
+  buildMergedRepertoireTree,
 } from '../src/repertoire/studioPanel.js';
 
 // A tiny synthetic repertoire (1.e4 e5 2.Nf3 for White). No real prep here:
@@ -178,5 +179,48 @@ describe('main studio repertoire lookup', () => {
     const summary = summarizeRepertoire(rep, progress, now);
     expect(summary.total).toMatchObject({ total: 2, mastered: 1, due: 1, newCount: 0 });
     expect(summary.sections[0].name).toBe('Test');
+  });
+
+  it('merges multiple opening sections into one unified chess tree and filters by color', () => {
+    const start = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    const afterE4 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+    const afterE5 = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
+    const afterE6 = 'rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2';
+    const rep = {
+      secs: [
+        { id: 'S1', name: 'Open Game', color: 'b', start: 0, startPly: 0, lines: [0] },
+        { id: 'S2', name: 'French Defense', color: 'b', start: 0, startPly: 0, lines: [1] },
+        { id: 'S3', name: 'White Main', color: 'w', start: 0, startPly: 0, lines: [2] },
+      ],
+      lines: [
+        { id: 'S1-1', name: 'e5', sec: 'S1', color: 'b', san: ['e4', 'e5'], uci: ['e2e4', 'e7e5'], pos: [0, 1, 2] },
+        { id: 'S2-1', name: 'e6', sec: 'S2', color: 'b', san: ['e4', 'e6'], uci: ['e2e4', 'e7e6'], pos: [0, 1, 3] },
+        { id: 'S3-1', name: 'd4', sec: 'S3', color: 'w', san: ['d4'], uci: ['d2d4'], pos: [0, 4] },
+      ],
+      pos: [
+        { f: start, t: 0, e: [['e2e4', 'e4', 1, 0, [0, 1]], ['d2d4', 'd4', 4, 1, [2], 'cw1']] },
+        { f: afterE4, t: 0, e: [['e7e5', 'e5', 2, 1, [0], 'cb1'], ['e7e6', 'e6', 3, 1, [1], 'cb2']] },
+        { f: afterE5, t: 0, e: [] },
+        { f: afterE6, t: 0, e: [] },
+        { f: 'rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1', t: 0, e: [] },
+      ],
+      cards: {
+        cw1: { p: 0, u: 'd2d4', s: 'd4', n: '' },
+        cb1: { p: 1, u: 'e7e5', s: 'e5', n: '' },
+        cb2: { p: 1, u: 'e7e6', s: 'e6', n: '' },
+      },
+      warn: {},
+      theory: [{ ev: 0.2, name: null, alts: [] }],
+      roots: { w: 0, b: 0 },
+    };
+
+    const mergedAll = buildMergedRepertoireTree(rep, { colorFilter: 'both' });
+    expect(mergedAll.children.map((c) => c.san).sort()).toEqual(['d4', 'e4']);
+    const e4Node = mergedAll.children.find((c) => c.san === 'e4');
+    expect(e4Node.children.map((c) => c.san).sort()).toEqual(['e5', 'e6']);
+
+    const mergedBlack = buildMergedRepertoireTree(rep, { colorFilter: 'b' });
+    expect(mergedBlack.children.map((c) => c.san)).toEqual(['e4']);
+    expect(mergedBlack.children[0].children.map((c) => c.san).sort()).toEqual(['e5', 'e6']);
   });
 });

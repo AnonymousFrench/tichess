@@ -147,11 +147,38 @@ export function buildLocalPlayerExplorerIndex(games, username) {
   return byColor;
 }
 
-async function fetchPlayerExplorerViaRecentGames(username, color, fen, { signal, reauthNeeded = false } = {}) {
-  const key = username.toLowerCase();
+const WINDOW_MONTHS = { '1m': 1, '3m': 3, '6m': 6, '12m': 12 };
+
+/**
+ * Convert a relative time-window key ('1m' | '3m' | '6m' | '12m' | '') into
+ * both an epoch-ms cutoff (for /api/games/user?since=...) and a YYYY-MM string
+ * (for explorer.lichess.org/player?since=...).
+ */
+export function computeSinceFilter(windowKey, now = Date.now()) {
+  const months = WINDOW_MONTHS[String(windowKey || '')];
+  if (!months) return { sinceMs: null, sinceYm: '' };
+  const d = new Date(now);
+  d.setUTCMonth(d.getUTCMonth() - months);
+  const ym = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  return { sinceMs: d.getTime(), sinceYm: ym };
+}
+
+async function fetchPlayerExplorerViaRecentGames(
+  username,
+  color,
+  fen,
+  { max = 200, sinceKey = '', signal, reauthNeeded = false } = {}
+) {
+  const maxNum = Math.min(500, Math.max(10, Number(max) || 200));
+  const { sinceMs } = computeSinceFilter(sinceKey);
+  const key = `${username.toLowerCase()}|${maxNum}|${sinceKey || 'all'}`;
   let cached = playerFallbackCache.get(key);
   if (!cached || Date.now() - cached.fetchedAt > FALLBACK_CACHE_TTL_MS) {
-    const games = await fetchLichessUserGames(username, { max: 200, signal });
+    const games = await fetchLichessUserGames(username, {
+      max: maxNum,
+      since: sinceMs,
+      signal,
+    });
     cached = {
       fetchedAt: Date.now(),
       sampledGames: games.length,
@@ -172,6 +199,8 @@ async function fetchPlayerExplorerViaRecentGames(username, color, fen, { signal,
       fallbackLocal: true,
       reauthNeeded,
       sampledGames: cached.sampledGames,
+      sinceKey,
+      maxGames: String(maxNum),
     };
   }
 
@@ -187,12 +216,17 @@ async function fetchPlayerExplorerViaRecentGames(username, color, fen, { signal,
     fallbackLocal: true,
     reauthNeeded,
     sampledGames: cached.sampledGames,
+    sinceKey,
+    maxGames: String(maxNum),
   };
 }
 
-async function fetchExplorerViaSessionProxy(source, fen, { color = 'white', signal } = {}) {
+async function fetchExplorerViaSessionProxy(source, fen, { color = 'white', sinceYm = '', signal } = {}) {
   const params = new URLSearchParams({ source, fen });
-  if (source === 'player') params.set('color', color === 'black' ? 'black' : 'white');
+  if (source === 'player') {
+    params.set('color', color === 'black' ? 'black' : 'white');
+    if (sinceYm) params.set('since', sinceYm);
+  }
   const res = await fetch(`/api/lichess/explorer?${params.toString()}`, {
     credentials: 'same-origin',
     signal,
@@ -214,18 +248,44 @@ async function fetchExplorerViaSessionProxy(source, fen, { color = 'white', sign
 export async function fetchExplorer(
   source,
   fen,
-  { signal, player = '', color = 'white', authenticated = false } = {}
+  {
+    signal,
+    player = '',
+    color = 'white',
+    sinceKey = '',
+    maxGames = '200',
+    authenticated = false,
+  } = {}
 ) {
   // Signed-in Lichess player games explorer
   if (source === 'player') {
+    const { sinceYm } = computeSinceFilter(sinceKey);
+    const wantsBoundedCap = maxGames && maxGames !== 'all';
+
+    // When the user selects a specific game-count cap (Last 50/100/200/500),
+    // index their exact recent games (with optional since time window) directly.
+    if (player && wantsBoundedCap) {
+      try {
+        return await fetchPlayerExplorerViaRecentGames(player, color, fen, {
+          max: Number(maxGames) || 200,
+          sinceKey,
+          signal,
+        });
+      } catch (err) {
+        if (err.name === 'AbortError' || err.name === 'RateLimitError') throw err;
+        if (!authenticated && !state.lichessToken) throw err;
+        // Fall through to authenticated explorer proxy if public games fetch failed
+      }
+    }
+
     let reauthNeeded = false;
 
     // 1. Try server-side OAuth proxy (full Lichess history via explorer.lichess.org/player)
     if (authenticated) {
       try {
-        const res = await fetchExplorerViaSessionProxy('player', fen, { color, signal });
+        const res = await fetchExplorerViaSessionProxy('player', fen, { color, sinceYm, signal });
         if (res && (!res.indexing || (res.moves && res.moves.length))) {
-          return res;
+          return { ...res, sinceKey, maxGames: 'all' };
         }
         // If Lichess is still building the on-demand index with 0 moves yet, fall through to instant recent-games cache
       } catch (err) {
@@ -236,7 +296,8 @@ export async function fetchExplorer(
 
     // 2. Try direct explorer.lichess.org/player if user has a manual token saved
     if (player && state.lichessToken) {
-      const url = `https://explorer.lichess.org/player?player=${encodeURIComponent(player)}&color=${color === 'black' ? 'black' : 'white'}&fen=${encodeURIComponent(fen)}&recentGames=4`;
+      const sinceParam = sinceYm ? `&since=${encodeURIComponent(sinceYm)}` : '';
+      const url = `https://explorer.lichess.org/player?player=${encodeURIComponent(player)}&color=${color === 'black' ? 'black' : 'white'}&fen=${encodeURIComponent(fen)}&recentGames=4${sinceParam}`;
       try {
         const text = await fetchText(url, {
           signal,
@@ -247,16 +308,21 @@ export async function fetchExplorer(
         });
         const parsed = parseExplorerPlayerNdjson(text);
         if (parsed && (parsed.moves?.length || !parsed.queuePosition)) {
-          return parsed;
+          return { ...parsed, sinceKey, maxGames: 'all' };
         }
       } catch (err) {
         if (err.name === 'AbortError' || err.name === 'RateLimitError') throw err;
       }
     }
 
-    // 3. Seamless zero-token fallback: index the user's last 200 public Lichess games directly
+    // 3. Seamless zero-token fallback: index up to 500 recent public Lichess games directly
     if (player) {
-      return fetchPlayerExplorerViaRecentGames(player, color, fen, { signal, reauthNeeded });
+      return fetchPlayerExplorerViaRecentGames(player, color, fen, {
+        max: 500,
+        sinceKey,
+        signal,
+        reauthNeeded,
+      });
     }
 
     const authErr = new Error('Sign in with Lichess to browse your own games');
@@ -335,7 +401,10 @@ export function parseLichessNdjsonGames(ndjsonText) {
   return games;
 }
 
-export async function fetchLichessUserGames(username, { max = 100, perfType = '', signal } = {}) {
+export async function fetchLichessUserGames(
+  username,
+  { max = 100, perfType = '', since = null, signal } = {}
+) {
   const params = new URLSearchParams({
     max: String(max),
     pgnInJson: 'true',
@@ -344,6 +413,9 @@ export async function fetchLichessUserGames(username, { max = 100, perfType = ''
     evals: 'false',
   });
   if (perfType) params.set('perfType', perfType);
+  if (Number.isFinite(since) && since > 0) {
+    params.set('since', String(Math.floor(since)));
+  }
 
   const headers = { Accept: 'application/x-ndjson' };
   if (state.lichessToken) {

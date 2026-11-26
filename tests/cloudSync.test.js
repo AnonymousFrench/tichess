@@ -14,7 +14,12 @@ import {
 } from '../api/_lib/session.js';
 import { mergeScoutTargets } from '../api/sync/index.js';
 import { parseLastNdjsonObject } from '../api/lichess/explorer.js';
-import { parseExplorerPlayerNdjson, buildLocalPlayerExplorerIndex } from '../src/api/lichess.js';
+import {
+  parseExplorerPlayerNdjson,
+  buildLocalPlayerExplorerIndex,
+  computeSinceFilter,
+} from '../src/api/lichess.js';
+import { classifyPlayerMovePerformance } from '../src/explorer/explorer.js';
 import { decideRepertoireSyncAction } from '../src/sync/cloudSync.js';
 
 describe('Cloud Sync auth session & PKCE helpers', () => {
@@ -154,5 +159,31 @@ describe('Two-way repertoire and scout target sync resolution', () => {
     const startKey = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -';
     expect(byColor.white.get(startKey).moves.get('d2d4').white).toBe(1);
     expect(byColor.black.get(startKey).moves.get('e2e4').black).toBe(1);
+  });
+
+  it('computes relative since cutoffs and classifies My Games move flaws/strengths', () => {
+    const fixedNow = Date.UTC(2026, 10, 26, 12, 0, 0); // 2026-11-26
+    expect(computeSinceFilter('', fixedNow)).toEqual({ sinceMs: null, sinceYm: '' });
+    const threeMonths = computeSinceFilter('3m', fixedNow);
+    expect(threeMonths.sinceYm).toBe('2026-08');
+    expect(threeMonths.sinceMs).toBeLessThan(fixedNow);
+
+    expect(classifyPlayerMovePerformance({ white: 1, draws: 0, black: 4 }, 'white')).toMatchObject({
+      total: 5,
+      scorePct: 20,
+      badge: 'flaw',
+    });
+    expect(classifyPlayerMovePerformance({ white: 4, draws: 1, black: 0 }, 'white')).toMatchObject({
+      total: 5,
+      scorePct: 90,
+      badge: 'strong',
+    });
+    expect(classifyPlayerMovePerformance({ white: 1, draws: 0, black: 4 }, 'black')).toMatchObject({
+      total: 5,
+      scorePct: 80,
+      badge: 'strong',
+    });
+    // Small sample (< 3 games) should not trigger Flaw/Strong noise
+    expect(classifyPlayerMovePerformance({ white: 0, draws: 0, black: 2 }, 'white').badge).toBeNull();
   });
 });

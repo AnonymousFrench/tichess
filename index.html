@@ -88,6 +88,25 @@
         <span id="liveQuickJumpLabel" class="truncate">Broadcasts</span>
       </button>
 
+      <!-- Panels Layout Configurator -->
+      <div class="relative shrink-0">
+        <button id="btnPanelsMenu" data-menu="panels" class="menu-trigger flex items-center gap-1 px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] text-txtMuted hover:text-txt transition-colors" title="Show or hide workspace panels">
+          <span class="text-[11px] leading-none">⊞</span>
+          <span class="hidden sm:inline">Panels</span>
+        </button>
+        <div id="menu-panels" class="menu-dropdown menu-dropdown-right hidden">
+          <div class="px-2.5 py-1 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">Workspace Panels</div>
+          <button class="menu-item panel-toggle-item" data-panel="hub"><span>Live &amp; Games Hub</span><span data-panel-chk="hub" class="text-em font-mono">✓</span></button>
+          <button class="menu-item panel-toggle-item" data-panel="explorer"><span>Opening Explorer</span><span data-panel-chk="explorer" class="text-em font-mono">✓</span></button>
+          <button class="menu-item panel-toggle-item" data-panel="scout"><span>Player Scout</span><span data-panel-chk="scout" class="text-em font-mono">✓</span></button>
+          <button class="menu-item panel-toggle-item" data-panel="sf"><span>Stockfish Engine</span><span data-panel-chk="sf" class="text-em font-mono">✓</span></button>
+          <button class="menu-item panel-toggle-item" data-panel="lc0"><span>Lc0 Bridge</span><span data-panel-chk="lc0" class="text-em font-mono"></span></button>
+          <button class="menu-item panel-toggle-item" data-panel="tree"><span>Variation Tree</span><span data-panel-chk="tree" class="text-em font-mono">✓</span></button>
+          <div class="menu-sep"></div>
+          <button class="menu-item" id="actResetPanels"><span>Reset Default Layout</span></button>
+        </div>
+      </div>
+
       <button id="btnCloudSyncPill" class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] text-txtMuted" title="Cloud Sync across phone and computer">
         <span id="cloudSyncDot" class="w-2 h-2 rounded-full bg-txtMuted/60"></span>
         <span id="cloudSyncLabel">Sync</span>
@@ -148,15 +167,15 @@
       <section class="lg:w-[42%] xl:w-[41%] flex flex-col gap-1.5 min-h-0 shrink-0">
 
         <!-- Multi-Tab Board Panel -->
-        <div class="bg-panel border border-borderSubtle rounded-lg flex flex-col min-h-0 shrink-0">
+        <div class="bg-panel border border-borderSubtle rounded-xl flex flex-col min-h-0 shrink-0 overflow-hidden">
           <!-- Board Tabs Bar -->
-          <div class="flex items-center border-b border-borderSubtle bg-[#0d131f] px-1 pt-1 gap-0.5 overflow-x-auto">
+          <div class="flex items-center border-b border-borderSubtle bg-bg/55 px-1.5 pt-1 gap-0.5 overflow-x-auto">
             <div id="boardTabsBar" role="tablist" aria-label="Analysis tabs" class="flex items-center gap-0.5 min-w-0"></div>
             <button id="btnAddBoardTab" class="px-2 py-1 text-txtMuted hover:text-em hover:bg-surface rounded-t text-xs font-bold shrink-0" title="New Analysis Tab (Alt+N)" aria-label="New Analysis Tab">+</button>
           </div>
 
           <!-- Top Player Clock Bar -->
-          <div id="topPlayerBar" class="hidden px-2.5 py-1 bg-[#0e1522] border-b border-borderSubtle flex items-center justify-between text-[11px]">
+          <div id="topPlayerBar" class="hidden px-2.5 py-1 bg-bg/40 border-b border-borderSubtle flex items-center justify-between text-[11px]">
             <div class="flex items-center gap-1.5 min-w-0">
               <span id="topPlayerDot" class="w-2.5 h-2.5 rounded-sm bg-slate-800 border border-slate-500 shrink-0"></span>
               <span id="topPlayerName" class="font-semibold truncate">Black</span>
@@ -168,10 +187,10 @@
           <!-- Eval Bar + Interactive Chessboard -->
           <div class="p-2 flex items-stretch justify-center gap-1.5">
             <!-- Clickable Vertical Eval Bar -->
-            <div id="evalBarContainer" class="w-5 sm:w-6 rounded bg-[#1e293b] border border-borderSubtle overflow-hidden relative flex flex-col justify-end shrink-0 select-none cursor-pointer group" title="Click to toggle Stockfish / Lc0 Eval Bar (requires Local Lc0 Bridge)">
-              <div id="evalFillWhite" class="w-full bg-[#e2e8f0]" style="height: 50%;"></div>
-              <span id="evalLabelTop" class="absolute top-1 left-0 right-0 text-center font-mono text-[8.5px] font-bold text-[#e2e8f0] pointer-events-none"></span>
-              <span id="evalLabelBottom" class="absolute bottom-1 left-0 right-0 text-center font-mono text-[8.5px] font-bold text-[#0f172a] pointer-events-none">0.0</span>
+            <div id="evalBarContainer" class="w-5 sm:w-6 rounded bg-[#1c202a] border border-borderSubtle overflow-hidden relative flex flex-col justify-end shrink-0 select-none cursor-pointer group" title="Click to toggle Stockfish / Lc0 Eval Bar (requires Local Lc0 Bridge)">
+              <div id="evalFillWhite" class="w-full bg-[#e4e7ee]" style="height: 50%;"></div>
+              <span id="evalLabelTop" class="absolute top-1 left-0 right-0 text-center font-mono text-[8.5px] font-bold text-[#e4e7ee] pointer-events-none"></span>
+              <span id="evalLabelBottom" class="absolute bottom-1 left-0 right-0 text-center font-mono text-[8.5px] font-bold text-[#101319] pointer-events-none">0.0</span>
               <span id="evalSourceBadge" class="absolute top-1/2 left-0 right-0 -translate-y-1/2 text-center font-mono text-[7.5px] font-bold py-0.5 bg-bg/80 text-cy pointer-events-none">SF</span>
             </div>
 
@@ -183,7 +202,7 @@
           </div>
 
           <!-- Bottom Player Clock Bar -->
-          <div id="botPlayerBar" class="hidden px-2.5 py-1 bg-[#0e1522] border-t border-borderSubtle flex items-center justify-between text-[11px]">
+          <div id="botPlayerBar" class="hidden px-2.5 py-1 bg-bg/40 border-t border-borderSubtle flex items-center justify-between text-[11px]">
             <div class="flex items-center gap-1.5 min-w-0">
               <span id="botPlayerDot" class="w-2.5 h-2.5 rounded-sm bg-slate-200 border border-slate-400 shrink-0"></span>
               <span id="botPlayerName" class="font-semibold truncate">White</span>
@@ -193,7 +212,7 @@
           </div>
 
           <!-- Instant Navigation Bar directly below board -->
-          <div class="px-2 py-1.5 border-t border-borderSubtle bg-[#0d131f] flex flex-wrap items-center justify-between gap-1">
+          <div class="px-2 py-1.5 border-t border-borderSubtle bg-bg/55 flex flex-wrap items-center justify-between gap-1">
             <div class="flex items-center gap-1">
               <button id="btnFirst" class="px-2 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[11px]" title="First Move (Home)" aria-label="First move">⏮</button>
               <button id="btnPrev" class="px-2.5 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[11px]" title="Previous Move (←)" aria-label="Previous move">◀</button>
@@ -215,8 +234,8 @@
         </div>
 
         <!-- Branching Variation Tree & Annotations Panel -->
-        <div class="flex-1 bg-panel border border-borderSubtle rounded-lg flex flex-col min-h-[155px] overflow-hidden">
-          <div class="px-2 py-1 border-b border-borderSubtle bg-[#0d131f] flex flex-wrap items-center justify-between gap-1">
+        <div id="panel-tree" class="flex-1 bg-panel border border-borderSubtle rounded-xl flex flex-col min-h-[155px] overflow-hidden">
+          <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex flex-wrap items-center justify-between gap-1">
             <div class="flex items-center gap-1.5">
               <span class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted">Variation Tree</span>
               <button id="btnGameReview" class="px-2 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10px]" title="Run local Stockfish full-game review &amp; eval graph">⚡ Review</button>
@@ -237,12 +256,13 @@
               <button id="btnToggleComment" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px]" title="Add/Edit Move Comment" aria-label="Edit move comment">💬</button>
               <button id="btnPromoteVar" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px]" title="Promote Variation" aria-label="Promote variation">↑</button>
               <button id="btnDeleteVar" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] text-ro" title="Delete Variation" aria-label="Delete variation">🗑</button>
+              <button class="panel-close-btn ml-0.5" data-panel-close="tree" title="Hide Variation Tree" aria-label="Hide Variation Tree">✕</button>
             </div>
           </div>
 
-          <div id="gameReviewPanel" class="hidden px-2 py-1.5 bg-[#0c1220] border-b border-borderSubtle"></div>
+          <div id="gameReviewPanel" class="hidden px-2 py-1.5 bg-bg/40 border-b border-borderSubtle"></div>
 
-          <div id="commentEditorWrap" class="hidden px-2 py-1.5 bg-[#0e1522] border-b border-borderSubtle flex items-center gap-1.5">
+          <div id="commentEditorWrap" class="hidden px-2 py-1.5 bg-bg/40 border-b border-borderSubtle flex items-center gap-1.5">
             <input id="commentInput" type="text" placeholder="Add annotation note for current move..." class="flex-1 px-2 py-1 rounded bg-surface border border-borderSubtle text-[11px] focus:outline-none focus:border-em" />
             <button id="btnSaveComment" class="px-2.5 py-1 rounded bg-em text-[#041f15] font-semibold text-[11px]">Save</button>
           </div>
@@ -254,14 +274,23 @@
       <!-- =================================================================== -->
       <!-- RIGHT COLUMN (~58%): 3-TIER PRO WORKSPACE                           -->
       <!-- =================================================================== -->
-      <section class="flex-1 flex flex-col gap-1.5 min-h-0 min-w-0">
+      <section id="rightWorkspaceCol" class="flex-1 flex flex-col gap-1.5 min-h-0 min-w-0">
+
+        <!-- Empty-state fallback if user closes all right-column panels -->
+        <div id="panelsEmptyNotice" class="hidden flex-1 bg-panel border border-borderSubtle rounded-xl flex items-center justify-center p-6 text-center">
+          <div class="flex flex-col items-center gap-2 max-w-xs">
+            <div class="text-xs font-semibold text-txt">All right-side panels are hidden</div>
+            <p class="text-[11px] text-txtMuted">Use <span class="font-mono text-txt">⊞ Panels</span> in the top bar to re-enable any panel.</p>
+            <button id="btnEmptyResetPanels" class="mt-1 px-3 py-1 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 text-[11px] font-semibold">Restore Default Layout</button>
+          </div>
+        </div>
 
         <!-- ================================================================= -->
         <!-- TIER 1 (TOP-RIGHT): LIVE EVENTS & GAMES HUB (~39% height)         -->
         <!-- ================================================================= -->
-        <div class="lg:h-[39%] min-h-[250px] bg-panel border border-borderSubtle rounded-lg flex flex-col overflow-hidden">
+        <div id="panel-hub" class="lg:h-[39%] min-h-[250px] bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden">
           <!-- Hub Tabs Bar -->
-          <div class="flex items-center justify-between border-b border-borderSubtle bg-[#0d131f] px-1.5 pt-1 gap-2">
+          <div class="flex items-center justify-between border-b border-borderSubtle bg-bg/55 px-1.5 pt-1 gap-2">
             <div role="tablist" aria-label="Broadcast and game hub" class="flex items-center gap-1 overflow-x-auto">
               <button role="tab" aria-selected="true" data-hub="live" class="hub-tab flex items-center gap-1.5 px-2.5 py-1 rounded-t text-[11.5px] font-semibold bg-panel text-txt border-t border-x border-borderSubtle whitespace-nowrap">
                 <span id="liveHubDot" class="w-2 h-2 rounded-full bg-txtMuted/50"></span>
@@ -279,16 +308,19 @@
               </button>
             </div>
 
-            <!-- Live Poll Controls -->
-            <div id="livePollBar" class="flex items-center gap-1.5 pb-0.5 shrink-0 text-[10.5px]">
-              <label class="inline-flex items-center gap-1 text-txtMuted cursor-pointer select-none" title="Poll live broadcast PGN every 15 seconds">
-                <input type="checkbox" id="chkLiveAutoPoll" class="accent-em" checked />
-                <span class="hidden sm:inline">Auto-Refresh</span>
-              </label>
-              <span id="liveCountdownBadge" class="font-mono text-[10px] px-1.5 py-[1px] rounded bg-surface border border-borderSubtle text-cy">15s</span>
-              <button id="btnSyncLiveNow" class="px-2 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10.5px] transition-colors">
-                ↻ Sync Live
-              </button>
+            <!-- Live Poll Controls + Close Button -->
+            <div class="flex items-center gap-1.5 pb-0.5 shrink-0">
+              <div id="livePollBar" class="flex items-center gap-1.5 text-[10.5px]">
+                <label class="inline-flex items-center gap-1 text-txtMuted cursor-pointer select-none" title="Poll live broadcast PGN every 15 seconds">
+                  <input type="checkbox" id="chkLiveAutoPoll" class="accent-em" checked />
+                  <span class="hidden sm:inline">Auto-Refresh</span>
+                </label>
+                <span id="liveCountdownBadge" class="font-mono text-[10px] px-1.5 py-[1px] rounded bg-surface border border-borderSubtle text-cy">15s</span>
+                <button id="btnSyncLiveNow" class="px-2 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10.5px] transition-colors">
+                  ↻ Sync Live
+                </button>
+              </div>
+              <button class="panel-close-btn" data-panel-close="hub" title="Hide Live & Games Hub" aria-label="Hide Live and Games Hub">✕</button>
             </div>
           </div>
 
@@ -296,7 +328,7 @@
           <div id="hub-live" class="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
 
             <!-- Dynamic Spotlight Banner -->
-            <div class="rounded-lg bg-gradient-to-r from-[#131d31] via-[#142333] to-[#1a1833] border border-em/35 p-2.5 flex flex-col gap-2">
+            <div class="rounded-lg bg-gradient-to-r from-surface/90 via-panel to-surface/60 border border-borderBright p-2.5 flex flex-col gap-2">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div class="min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
@@ -410,13 +442,13 @@
         </div>
 
         <!-- ================================================================= -->
-        <!-- TIER 2 (MIDDLE-RIGHT): 50/50 DUAL OPENING EXPLORERS (~30% height) -->
+        <!-- TIER 2 (MIDDLE-RIGHT): OPENING EXPLORER + PLAYER SCOUT            -->
         <!-- ================================================================= -->
-        <div class="lg:h-[30%] min-h-[195px] grid grid-cols-1 md:grid-cols-2 gap-1.5 min-h-0">
+        <div id="panel-tier2" class="lg:h-[30%] min-h-[195px] grid grid-cols-1 md:grid-cols-2 gap-1.5 min-h-0">
 
-          <!-- LEFT: MASTERS OTB / LICHESS DB EXPLORER -->
-          <div class="bg-panel border border-borderSubtle rounded-lg flex flex-col overflow-hidden min-h-0">
-            <div class="px-2 py-1 border-b border-borderSubtle bg-[#0d131f] flex items-center justify-between gap-1">
+          <!-- LEFT: MASTERS OTB / LICHESS DB / MY GAMES EXPLORER -->
+          <div id="panel-explorer" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
               <div class="flex items-center gap-1 min-w-0">
                 <button id="refSrcMasters" class="px-2 py-0.5 rounded text-[11px] font-semibold bg-em/20 text-em border border-em/35 whitespace-nowrap">Masters OTB</button>
                 <button id="refSrcLichess" class="px-2 py-0.5 rounded text-[11px] font-semibold text-txtMuted hover:text-txt whitespace-nowrap">Lichess DB</button>
@@ -429,8 +461,31 @@
               <div class="flex items-center gap-1.5 text-[10px] shrink-0">
                 <span id="refAuthNote" class="hidden text-am cursor-pointer underline" title="Add free Lichess Token in Settings">Token</span>
                 <span id="refTotalGames" class="font-mono text-txtMuted">0 games</span>
+                <button class="panel-close-btn" data-panel-close="explorer" title="Hide Opening Explorer" aria-label="Hide Opening Explorer">✕</button>
               </div>
             </div>
+
+            <!-- My Games Filter & Summary Strip (shown when My Games tab is active) -->
+            <div id="refPlayerFilterBar" class="hidden px-2 py-1 border-b border-borderSubtle bg-bg/40 flex flex-wrap items-center justify-between gap-1.5 text-[10px]">
+              <div class="flex items-center gap-1">
+                <select id="refPlayerSince" aria-label="Time range filter" class="px-1.5 py-0.5 rounded bg-surface border border-borderSubtle text-txt font-mono text-[10px] focus:outline-none focus:border-vi" title="Filter games by time window">
+                  <option value="">All time</option>
+                  <option value="1m">Last 1m</option>
+                  <option value="3m" selected>Last 3m</option>
+                  <option value="6m">Last 6m</option>
+                  <option value="12m">Last 12m</option>
+                </select>
+                <select id="refPlayerMax" aria-label="Max games filter" class="px-1.5 py-0.5 rounded bg-surface border border-borderSubtle text-txt font-mono text-[10px] focus:outline-none focus:border-vi" title="Limit sample to last N games">
+                  <option value="50">Last 50</option>
+                  <option value="100">Last 100</option>
+                  <option value="200" selected>Last 200</option>
+                  <option value="500">Last 500</option>
+                  <option value="all">All history</option>
+                </select>
+              </div>
+              <span id="refPlayerSummary" class="font-mono text-[10px] text-txtMuted truncate"></span>
+            </div>
+
             <div class="flex-1 overflow-auto">
               <table class="pro-table w-full text-left border-collapse font-mono text-[11px]">
                 <thead>
@@ -446,8 +501,8 @@
           </div>
 
           <!-- RIGHT: PLAYER SCOUT (CHESS.COM + LOCAL PGN + INDEXEDDB) -->
-          <div class="bg-panel border border-borderSubtle rounded-lg flex flex-col overflow-hidden min-h-0">
-            <div class="px-2 py-1 border-b border-borderSubtle bg-[#0d131f] flex items-center justify-between gap-1">
+          <div id="panel-scout" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
               <div class="flex items-center gap-1 min-w-0 flex-1">
                 <select id="scoutCollectionSelect" class="max-w-[160px] px-1.5 py-0.5 rounded bg-surface border border-borderSubtle text-[11px] font-semibold text-em focus:outline-none truncate"></select>
                 <div class="flex items-center bg-surface rounded border border-borderSubtle p-0.5 font-mono text-[9.5px]">
@@ -456,7 +511,10 @@
                   <button class="scout-col-btn px-1.5 rounded text-txtMuted hover:text-txt" data-col="black">B</button>
                 </div>
               </div>
-              <button id="btnOpenScoutModal" class="px-2 py-0.5 rounded bg-cy/15 hover:bg-cy/25 text-cy border border-cy/35 text-[10.5px] font-semibold shrink-0">+ Scout</button>
+              <div class="flex items-center gap-1 shrink-0">
+                <button id="btnOpenScoutModal" class="px-2 py-0.5 rounded bg-cy/15 hover:bg-cy/25 text-cy border border-cy/35 text-[10.5px] font-semibold">+ Scout</button>
+                <button class="panel-close-btn" data-panel-close="scout" title="Hide Player Scout" aria-label="Hide Player Scout">✕</button>
+              </div>
             </div>
             <div class="flex-1 overflow-auto">
               <table class="pro-table w-full text-left border-collapse font-mono text-[11px]">
@@ -474,13 +532,13 @@
         </div>
 
         <!-- ================================================================= -->
-        <!-- TIER 3 (BOTTOM-RIGHT): 50/50 DUAL ENGINES (Lc0 Bridge + Stockfish) -->
+        <!-- TIER 3 (BOTTOM-RIGHT): ENGINES (Stockfish + Optional Lc0 Bridge)  -->
         <!-- ================================================================= -->
-        <div class="lg:flex-1 min-h-[195px] grid grid-cols-1 md:grid-cols-2 gap-1.5 min-h-0">
+        <div id="panel-tier3" class="lg:flex-1 min-h-[195px] grid grid-cols-1 md:grid-cols-2 gap-1.5 min-h-0">
 
-          <!-- LEFT: Lc0 (LOCAL UCI BRIDGE ONLY) -->
-          <div class="bg-panel border border-borderSubtle rounded-lg flex flex-col overflow-hidden min-h-0">
-            <div class="px-2 py-1 border-b border-borderSubtle bg-[#0d131f] flex items-center justify-between gap-1">
+          <!-- LEFT: Lc0 (LOCAL UCI BRIDGE ONLY — hidden by default; enable via ⊞ Panels) -->
+          <div id="panel-lc0" class="hidden bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
               <div class="flex items-center gap-1.5 min-w-0">
                 <button id="btnLc0Toggle" class="w-5 h-5 rounded bg-vi/20 hover:bg-vi/30 text-vi border border-vi/40 flex items-center justify-center text-[10px]" title="Start / Stop Lc0" aria-label="Start or stop Lc0">⏸</button>
                 <span class="font-bold text-[11.5px] text-vi">Lc0</span>
@@ -494,10 +552,11 @@
                   <button id="btnLc0ContemptInc" class="px-1 hover:text-vi font-bold" aria-label="Increase Lc0 contempt">+</button>
                 </div>
                 <button id="btnLc0Bridge" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-vi" title="Configure Local UCI Bridge" aria-label="Configure Local UCI Bridge">🔌</button>
+                <button class="panel-close-btn" data-panel-close="lc0" title="Hide Lc0 Bridge" aria-label="Hide Lc0 Bridge">✕</button>
               </div>
             </div>
 
-            <div class="px-2 py-1 border-b border-borderSubtle bg-[#0e1522] flex items-center justify-between gap-2 font-mono text-[10.5px]">
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
               <div class="flex items-center gap-1.5">
                 <span id="lc0MainEval" class="px-1.5 py-[1px] rounded bg-vi/20 text-vi font-bold min-w-[46px] text-center">—</span>
                 <span id="lc0Depth" class="text-txtMuted">D:—</span>
@@ -511,8 +570,8 @@
           </div>
 
           <!-- RIGHT: STOCKFISH 19 WASM / CLOUD / LOCAL UCI -->
-          <div class="bg-panel border border-borderSubtle rounded-lg flex flex-col overflow-hidden min-h-0">
-            <div class="px-2 py-1 border-b border-borderSubtle bg-[#0d131f] flex items-center justify-between gap-1">
+          <div id="panel-sf" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
               <div class="flex items-center gap-1.5 min-w-0">
                 <button id="btnSfToggle" class="w-5 h-5 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/40 flex items-center justify-center text-[10px]" title="Start / Stop Stockfish" aria-label="Start or stop Stockfish">⏸</button>
                 <span class="font-bold text-[11.5px] text-cy">Stockfish</span>
@@ -520,10 +579,11 @@
               </div>
               <div class="flex items-center gap-1 shrink-0">
                 <button id="btnSfCloud" class="px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 text-[10px] font-medium" title="Toggle Free Lichess Cloud Eval">☁ Cloud</button>
+                <button class="panel-close-btn" data-panel-close="sf" title="Hide Stockfish" aria-label="Hide Stockfish">✕</button>
               </div>
             </div>
 
-            <div class="px-2 py-1 border-b border-borderSubtle bg-[#0e1522] flex items-center justify-between gap-2 font-mono text-[10.5px]">
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
               <div class="flex items-center gap-2">
                 <span id="sfMainEval" class="px-1.5 py-[1px] rounded bg-cy/20 text-cy font-bold min-w-[46px] text-center">—</span>
                 <span id="sfDepth" class="text-txtMuted">Depth: —</span>

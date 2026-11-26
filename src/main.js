@@ -10,6 +10,7 @@ import './styles.css';
 import {
   state,
   START_FEN,
+  DEFAULT_PANELS,
   getActiveTab,
   getCurrentFen,
   showToast,
@@ -73,6 +74,7 @@ import {
   initStudioRepertoire,
   bindStudioRepertoireSync,
   renderStudioRepertoirePanel,
+  syncRepertoireBoardArrows,
 } from './repertoire/studioPanel.js';
 import {
   initCloudSync,
@@ -85,7 +87,68 @@ import {
 } from './sync/cloudSync.js';
 import { mountModals } from './ui/modals.js';
 
+function persistPanels() {
+  try {
+    localStorage.setItem('tichess_panels_v1', JSON.stringify(state.panels));
+  } catch (_) {}
+}
+
+function applyPanelLayout() {
+  const p = state.panels;
+  const setHidden = (id, hidden) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', hidden);
+  };
+
+  setHidden('panel-hub', !p.hub);
+  setHidden('panel-explorer', !p.explorer);
+  setHidden('panel-scout', !p.scout);
+  setHidden('panel-lc0', !p.lc0);
+  setHidden('panel-sf', !p.sf);
+  setHidden('panel-tree', !p.tree);
+
+  const tier2Count = (p.explorer ? 1 : 0) + (p.scout ? 1 : 0);
+  const tier3Count = (p.lc0 ? 1 : 0) + (p.sf ? 1 : 0);
+
+  const tier2 = document.getElementById('panel-tier2');
+  if (tier2) {
+    tier2.classList.toggle('hidden', tier2Count === 0);
+    tier2.classList.toggle('md:grid-cols-2', tier2Count === 2);
+    tier2.classList.toggle('md:grid-cols-1', tier2Count === 1);
+    tier2.classList.toggle('lg:flex-1', tier2Count > 0 && tier3Count === 0);
+    tier2.classList.toggle('lg:h-[30%]', tier2Count > 0 && tier3Count > 0);
+  }
+
+  const tier3 = document.getElementById('panel-tier3');
+  if (tier3) {
+    tier3.classList.toggle('hidden', tier3Count === 0);
+    tier3.classList.toggle('md:grid-cols-2', tier3Count === 2);
+    tier3.classList.toggle('md:grid-cols-1', tier3Count === 1);
+  }
+
+  const hubEl = document.getElementById('panel-hub');
+  if (hubEl && p.hub) {
+    const soloHub = tier2Count === 0 && tier3Count === 0;
+    hubEl.classList.toggle('lg:flex-1', soloHub);
+    hubEl.classList.toggle('lg:h-[39%]', !soloHub);
+  }
+
+  const anyRight = p.hub || tier2Count > 0 || tier3Count > 0;
+  setHidden('panelsEmptyNotice', anyRight);
+
+  document.querySelectorAll('[data-panel-chk]').forEach((el) => {
+    const key = el.dataset.panelChk;
+    el.textContent = p[key] ? '✓' : '';
+  });
+
+  persistPanels();
+}
+
 function switchHub(hubName) {
+  if (!state.panels.hub) {
+    state.panels.hub = true;
+    applyPanelLayout();
+  }
   state.activeHub = hubName;
   document.querySelectorAll('.hub-tab').forEach((b) => {
     const act = b.dataset.hub === hubName;
@@ -101,6 +164,7 @@ function switchHub(hubName) {
   if (hubName === 'masters') renderMasterGamesTable();
   if (hubName === 'scouted') renderScoutedGamesTable();
   if (hubName === 'repertoire') renderStudioRepertoirePanel();
+  syncRepertoireBoardArrows();
 }
 
 function openModal(id) {
@@ -444,6 +508,36 @@ function bindEvents() {
   document.getElementById('broadcastSearchInput').oninput = renderAllBroadcastsList;
   document.getElementById('btnLoadCustomBroadcast').onclick = loadCustomBroadcastFromInput;
 
+  // Workspace Panels Configurator (close X buttons & Panels menu)
+  const resetPanels = () => {
+    state.panels = { ...DEFAULT_PANELS };
+    applyPanelLayout();
+    showToast('Workspace layout reset');
+  };
+  document.querySelectorAll('.panel-close-btn').forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const key = btn.dataset.panelClose;
+      if (!key || !(key in state.panels)) return;
+      state.panels[key] = false;
+      applyPanelLayout();
+      showToast('Panel hidden — restore anytime via ⊞ Panels');
+    };
+  });
+  document.querySelectorAll('.panel-toggle-item').forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const key = btn.dataset.panel;
+      if (!key || !(key in state.panels)) return;
+      state.panels[key] = !state.panels[key];
+      applyPanelLayout();
+    };
+  });
+  const actResetPanels = document.getElementById('actResetPanels');
+  if (actResetPanels) actResetPanels.onclick = resetPanels;
+  const btnEmptyResetPanels = document.getElementById('btnEmptyResetPanels');
+  if (btnEmptyResetPanels) btnEmptyResetPanels.onclick = resetPanels;
+
   // Explorers
   const setRefSource = (src) => {
     state.refSource = src;
@@ -453,6 +547,7 @@ function bindEvents() {
     const lBtn = document.getElementById('refSrcLichess');
     const pBtn = document.getElementById('refSrcPlayer');
     const pColWrap = document.getElementById('refPlayerColorWrap');
+    const pFilterBar = document.getElementById('refPlayerFilterBar');
     if (mBtn) mBtn.className = src === 'masters' ? `${base} bg-em/20 text-em border border-em/35` : inactive;
     if (lBtn) lBtn.className = src === 'lichess' ? `${base} bg-cy/20 text-cy border border-cy/35` : inactive;
     if (pBtn) {
@@ -462,6 +557,10 @@ function bindEvents() {
     if (pColWrap) {
       pColWrap.classList.toggle('hidden', src !== 'player');
       pColWrap.classList.toggle('flex', src === 'player');
+    }
+    if (pFilterBar) {
+      pFilterBar.classList.toggle('hidden', src !== 'player');
+      pFilterBar.classList.toggle('flex', src === 'player');
     }
     refreshReferenceExplorer();
   };
@@ -481,6 +580,22 @@ function bindEvents() {
       if (state.refSource === 'player') refreshReferenceExplorer();
     };
   });
+  const refSinceSel = document.getElementById('refPlayerSince');
+  if (refSinceSel) {
+    refSinceSel.value = state.refPlayerSince || '3m';
+    refSinceSel.onchange = (e) => {
+      state.refPlayerSince = e.target.value;
+      if (state.refSource === 'player') refreshReferenceExplorer();
+    };
+  }
+  const refMaxSel = document.getElementById('refPlayerMax');
+  if (refMaxSel) {
+    refMaxSel.value = state.refPlayerMax || '200';
+    refMaxSel.onchange = (e) => {
+      state.refPlayerMax = e.target.value;
+      if (state.refSource === 'player') refreshReferenceExplorer();
+    };
+  }
   document.getElementById('refAuthNote').onclick = () => openModal('settingsModal');
   document.getElementById('scoutCollectionSelect').onchange = (e) => {
     state.activeScoutId = e.target.value;
@@ -566,8 +681,13 @@ function bindEvents() {
     showToast('Token cleared');
     refreshReferenceExplorer();
   };
-  document.getElementById('btnConnectLc0Ws').onclick = () =>
+  document.getElementById('btnConnectLc0Ws').onclick = () => {
+    if (!state.panels.lc0) {
+      state.panels.lc0 = true;
+      applyPanelLayout();
+    }
     connectLc0Ws(document.getElementById('inputLc0WsUrl').value.trim());
+  };
   document.getElementById('btnDisconnectLc0Ws').onclick = disconnectLc0Ws;
   document.getElementById('btnConnectSfWs').onclick = () =>
     connectSfWs(document.getElementById('inputSfWsUrl').value.trim());
@@ -639,6 +759,7 @@ onPositionChange(() => {
   renderVariationTree();
   renderGameReviewPanel();
   if (state.activeHub === 'repertoire') renderStudioRepertoirePanel();
+  syncRepertoireBoardArrows();
   stopLocalSf();
   debouncedPositionLookups();
 });
@@ -668,6 +789,7 @@ async function bootstrap() {
   updateTokenDot();
   initBoardInteractions();
   bindEvents();
+  applyPanelLayout();
   renderTournamentRoundsTable();
 
   await reloadCollections();

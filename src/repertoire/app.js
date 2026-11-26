@@ -562,7 +562,18 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     stb.clearMarks(); const ck=checkSq(fen); if(ck) stb.mark(ck,"check");
     stb.dests=chessDests(fen); stb.movable=ownPiece(fen,stb);
     stb.onMove=(from,to)=>{ const r=tryMove(fen,from,to); if(!r) return; const u=r.uci.slice(0,4); const e=node.e.find(x=>x[0].slice(0,4)===u); if(e){ study.path.push(e[0]); saveStudy(); study.instant=true; renderStudyTree(); } else { exploreFrom(fen,[{san:r.m.san,from,to,uci:r.uci,fen:r.fen}],"Your move from "+sec.name); setTab("explore"); } };
-    stb.clearArrows(); const me=mainEdge(pi); if(me) stb.arrow(me[0].slice(0,2),me[0].slice(2,4),(me[3]&1)?"#15781b":"#888");
+    stb.clearArrows();
+    const me=mainEdge(pi);
+    const drawn=new Set();
+    for(const e of node.e){
+      const key=e[0].slice(0,4);
+      if(drawn.has(key)) continue;
+      drawn.add(key);
+      const isMain=me && e===me;
+      const isMine=Boolean(e[3]&1);
+      const col=isMain?(isMine?"#15781b":"#777"):(isMine?"#d97706":"#888");
+      stb.arrow(e[0].slice(0,2),e[0].slice(2,4),col);
+    }
     // header
     const ply=plyOfFen(fen);
     $("s-open").textContent=(sec.color==="w"?"White":"Black")+" · "+sec.group.split(" · ")[1];

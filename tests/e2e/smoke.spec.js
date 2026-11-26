@@ -682,6 +682,128 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
   expect(pageErrors).toEqual([]);
 });
 
+test('configurable panels close/persist/restore, repertoire shows multi-move arrows & Merged tree, and My Games filters + flags flaws', async ({
+  page,
+}) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  const seenGamesUrls = [];
+  const makeGame = (id, moves, winner) =>
+    JSON.stringify({
+      id,
+      variant: 'standard',
+      perf: 'blitz',
+      createdAt: Date.UTC(2026, 10, 25),
+      winner,
+      players: {
+        white: { user: { name: 'FlawUser' }, rating: 2050 },
+        black: { user: { name: 'Rival' }, rating: 2040 },
+      },
+      pgn: `${moves} ${winner === 'white' ? '1-0' : winner === 'black' ? '0-1' : '1/2-1/2'}`,
+    });
+
+  // 4 losses with 1. f4 (0% -> Flaw) and 4 wins with 1. e4 (100% -> Strong)
+  const mockGamesNdjson = [
+    makeGame('f1', '1. f4 d5', 'black'),
+    makeGame('f2', '1. f4 e5', 'black'),
+    makeGame('f3', '1. f4 Nf6', 'black'),
+    makeGame('f4', '1. f4 c5', 'black'),
+    makeGame('e1', '1. e4 e5', 'white'),
+    makeGame('e2', '1. e4 c5', 'white'),
+    makeGame('e3', '1. e4 e6', 'white'),
+    makeGame('e4', '1. e4 d5', 'white'),
+  ].join('\n');
+
+  await page.route('https://lichess.org/api/broadcast/**', (r) => r.abort());
+  await page.route('https://lichess.org/api/cloud-eval*', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+  await page.route('**/api/auth/me', (r) =>
+    r.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        configured: true,
+        authenticated: true,
+        user: { id: 'flawuser', username: 'FlawUser' },
+      }),
+    })
+  );
+  await page.route('**/api/sync', (r) =>
+    r.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        user: { id: 'flawuser', username: 'FlawUser' },
+        repertoire: null,
+        repertoireName: null,
+        repertoireUpdatedAt: 0,
+        progress: {},
+        progressUpdatedAt: 0,
+        scoutTargets: [],
+        scoutTargetsUpdatedAt: 0,
+      }),
+    })
+  );
+  await page.route('https://lichess.org/api/games/user/FlawUser*', (r) => {
+    seenGamesUrls.push(r.request().url());
+    return r.fulfill({ contentType: 'application/x-ndjson', body: mockGamesNdjson + '\n' });
+  });
+
+  await page.goto('/');
+
+  // 1. Lc0 panel starts hidden by default (clean single Stockfish panel); Scout can be closed with X and persists across reload
+  await expect(page.locator('#panel-lc0')).toBeHidden();
+  await expect(page.locator('#panel-sf')).toBeVisible();
+  await expect(page.locator('#panel-scout')).toBeVisible();
+
+  await page.click('#panel-scout .panel-close-btn');
+  await expect(page.locator('#panel-scout')).toBeHidden();
+
+  await page.reload();
+  await expect(page.locator('#panel-scout')).toBeHidden();
+
+  // Restore Scout via ⊞ Panels menu
+  await page.click('#btnPanelsMenu');
+  await page.click('.panel-toggle-item[data-panel="scout"]');
+  await expect(page.locator('#panel-scout')).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  // 2. My Games Explorer shows time/count filters, position W/D/L summary, and Flaw / Strong badges
+  await expect(page.locator('#refSrcPlayer')).toBeVisible({ timeout: 10_000 });
+  await page.click('#refSrcPlayer');
+  await expect(page.locator('#refPlayerFilterBar')).toBeVisible();
+  await expect(page.locator('#refTableBody')).toContainText('Flaw', { timeout: 10_000 });
+  await expect(page.locator('#refTableBody')).toContainText('Strong');
+  await expect(page.locator('#refPlayerSummary')).toContainText('50%');
+
+  // Change filters to Last 1m & Last 50 games and verify request carries max=50 & since=<ms>
+  await page.selectOption('#refPlayerMax', '50');
+  await page.selectOption('#refPlayerSince', '1m');
+  await expect
+    .poll(() => seenGamesUrls.some((u) => u.includes('max=50') && u.includes('since=')))
+    .toBe(true);
+
+  // 3. Repertoire multi-move arrows (1. e4 -> both 1...e5 and 1...e6 arrows simultaneously) + Merged tree toggle
+  await page.click('[data-hub="repertoire"]');
+  await page.click('#btnStudioRepPgnToggle');
+  await page.selectOption('#repPgnColor', 'b');
+  await page.fill('#repPgnTextarea', '1. e4 e5 (1... e6 2. d4 d5) 2. Nf3 Nc6 *');
+  await page.click('#btnConfirmRepPgn');
+
+  // Step into 1. e4 and verify arrowOverlay renders at least 2 repertoire arrows (e5 & e6)
+  await page.click('#chessboard .sq[data-sq="e2"]');
+  await page.click('#chessboard .sq[data-sq="e4"]');
+  await expect
+    .poll(() => page.locator('#arrowOverlay line').count(), { timeout: 5_000 })
+    .toBeGreaterThanOrEqual(2);
+
+  // Toggle Merged tree view and verify both e5 and e6 appear in the unified tree
+  await page.click('#btnRepViewMerged');
+  await expect(page.locator('#hub-repertoire')).toContainText('e5');
+  await expect(page.locator('#hub-repertoire')).toContainText('e6');
+  expect(pageErrors).toEqual([]);
+});
+
+
 
 
 

@@ -5,3 +5,6 @@ public/stockfish/
 *.local
 playwright-report/
 test-results/
+
+# Private repertoire exports never belong in this public repo
+*repertoire*.json

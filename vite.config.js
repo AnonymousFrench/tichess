@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -16,6 +17,12 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
+    rollupOptions: {
+      input: {
+        main: resolve(import.meta.dirname, 'index.html'),
+        repertoire: resolve(import.meta.dirname, 'repertoire.html'),
+      },
+    },
   },
   test: {
     include: ['tests/**/*.test.js'],

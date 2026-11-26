@@ -117,6 +117,23 @@ function rebuildSubtree(parentNode, serializedChildren, budget, depth = 0) {
 }
 
 /**
+ * Encode a single line of moves (UCI) from `startFen` as a share hash, with
+ * the last move as the current position. Used by the repertoire trainer to
+ * open a position in the analysis studio.
+ */
+export function encodeMoveLine(startFen, ucis, { flipped = false, title = '' } = {}) {
+  const rootFen = startFen && startFen !== START_FEN ? startFen : null;
+  let tree = [];
+  for (let i = ucis.length - 1; i >= 0; i--) {
+    tree = [tree.length ? [ucis[i], tree] : [ucis[i]]];
+  }
+  const path = ucis.map(() => 0);
+  const payload = [rootFen, tree, path, flipped ? 1 : 0];
+  if (title) payload.push(String(title).slice(0, 80));
+  return HASH_PREFIX + toBase64Url(JSON.stringify(payload));
+}
+
+/**
  * Decode a `#a=...` URL hash into `{ root, current, flipped, title }`, or
  * return `null` if the hash is absent or malformed.
  */

@@ -9,6 +9,7 @@ import {
   showToast,
 } from '../state.js';
 import { fetchExplorer, fetchExplorerGamePgn } from '../api/lichess.js';
+import { getCloudSyncState, getLoginUrl } from '../sync/cloudSync.js';
 import { playMoveOnTree, renderArrows } from '../board/board.js';
 import { addBoardTab } from '../board/tabs.js';
 
@@ -63,8 +64,15 @@ export async function refreshReferenceExplorer() {
     setOpeningPill('—', 'Starting Position');
   }
 
+  const sync = getCloudSyncState();
+
   try {
-    const data = await fetchExplorer(state.refSource, fen, { signal: ctrl.signal });
+    const data = await fetchExplorer(state.refSource, fen, {
+      signal: ctrl.signal,
+      player: sync.user?.username || '',
+      color: state.refPlayerColor || 'white',
+      authenticated: sync.authenticated,
+    });
     if (reqId !== state.refReqId) return;
 
     if (data.opening && (data.opening.eco || data.opening.name)) {
@@ -82,18 +90,29 @@ export async function refreshReferenceExplorer() {
     if (err.name === 'AbortError' || reqId !== state.refReqId) return;
     const fb = getFallbackOpeningForCurrentPosition(fen);
     setOpeningPill(fb.eco, fb.name);
-    if (err.authRequired || (!state.lichessToken && err.name !== 'RateLimitError')) {
+    if (err.authRequired && !err.reauthNeeded && !state.lichessToken && err.name !== 'RateLimitError') {
       if (authNote) authNote.classList.remove('hidden');
     }
     state.mastersGamesCache = [];
     document.getElementById('refTotalGames').textContent = '—';
-    const msg =
-      err.name === 'RateLimitError'
-        ? 'Rate limited — retrying in 60s'
-        : err.authRequired
-          ? 'Lichess Explorer requires a free personal token (add in Settings).'
-          : 'Unable to reach Lichess Explorer API.';
-    document.getElementById('refTableBody').innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">${escapeHtml(msg)}</td></tr>`;
+
+    const tbody = document.getElementById('refTableBody');
+    if (err.reauthNeeded && tbody) {
+      tbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center font-sans text-txtMuted">
+        <div class="mb-1.5">Sign in with Lichess once more to load your personal game explorer.</div>
+        <a href="${escapeHtml(getLoginUrl('/'))}" class="inline-block px-2.5 py-1 rounded bg-vi/20 hover:bg-vi/30 text-vi border border-vi/40 font-semibold text-[11px]">Refresh Lichess Sign-in →</a>
+      </td></tr>`;
+    } else if (tbody) {
+      const msg =
+        err.name === 'RateLimitError'
+          ? 'Rate limited — retrying in 60s'
+          : err.authRequired
+            ? state.refSource === 'player'
+              ? 'Sign in with Lichess to browse your own games.'
+              : 'Lichess Explorer requires signing in with Lichess or adding a free token in Settings.'
+            : 'Unable to reach Lichess Explorer API.';
+      tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">${escapeHtml(msg)}</td></tr>`;
+    }
     renderMasterGamesTable();
   }
 }
@@ -106,7 +125,11 @@ export function renderRefTable(moves) {
   document.getElementById('refTotalGames').textContent = `${total.toLocaleString()} games`;
 
   if (!moves.length) {
-    tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">No database games here.</td></tr>`;
+    const emptyMsg =
+      state.refSource === 'player'
+        ? `No ${state.refPlayerColor === 'black' ? 'Black' : 'White'} Lichess games reached this position.`
+        : 'No database games here.';
+    tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">${escapeHtml(emptyMsg)}</td></tr>`;
     return;
   }
 
@@ -139,6 +162,7 @@ export function renderMasterGamesTable() {
     return;
   }
 
+  const sync = getCloudSyncState();
   const list = state.mastersGamesCache.map((g) => ({
     id: g.id,
     white: g.white?.name || 'White',
@@ -146,7 +170,12 @@ export function renderMasterGamesTable() {
     black: g.black?.name || 'Black',
     blackElo: g.black?.rating || '',
     result: g.winner === 'white' ? '1-0' : g.winner === 'black' ? '0-1' : '1/2-1/2',
-    event: state.refSource === 'masters' ? 'Masters OTB' : 'Lichess',
+    event:
+      state.refSource === 'masters'
+        ? 'Masters OTB'
+        : state.refSource === 'player'
+          ? `${sync.user?.username || 'My'} Lichess`
+          : 'Lichess',
     date: g.year || g.month || '',
     snippet: 'Click to load PGN',
   }));

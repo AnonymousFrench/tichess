@@ -526,9 +526,42 @@ test('Cloud Sync pulls repertoire & scout targets on fresh device and pushes edi
     return r.continue();
   });
 
+  await page.route('**/api/lichess/explorer*', (r) => {
+    const url = new URL(r.request().url());
+    const source = url.searchParams.get('source');
+    const color = url.searchParams.get('color');
+    if (source === 'player') {
+      const moves =
+        color === 'black'
+          ? [{ uci: 'c7c5', san: 'c5', white: 1, draws: 1, black: 5 }]
+          : [{ uci: 'd2d4', san: 'd4', white: 8, draws: 2, black: 1 }];
+      return r.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ white: 8, draws: 2, black: 1, moves, recentGames: [] }),
+      });
+    }
+    return r.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        white: 100,
+        draws: 50,
+        black: 50,
+        moves: [{ uci: 'e2e4', san: 'e4', white: 100, draws: 50, black: 50 }],
+        topGames: [],
+      }),
+    });
+  });
+
   // 1. Fresh browser on main studio automatically pulls repertoire and displays signed-in username
   await page.goto('/');
   await expect(page.locator('#cloudSyncLabel')).toContainText('PhoneSyncUser', { timeout: 10_000 });
+
+  // My Games tab appears next to Masters OTB & Lichess DB and switches W/B
+  await expect(page.locator('#refSrcPlayer')).toBeVisible();
+  await page.click('#refSrcPlayer');
+  await expect(page.locator('#refTableBody')).toContainText('d4');
+  await page.click('.ref-pcol-btn[data-pcol="black"]');
+  await expect(page.locator('#refTableBody')).toContainText('c5');
 
   await page.click('[data-hub="repertoire"]');
   await expect(page.locator('#hub-repertoire')).toContainText('Cloud Italian');

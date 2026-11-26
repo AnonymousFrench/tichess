@@ -445,22 +445,42 @@ function bindEvents() {
   document.getElementById('btnLoadCustomBroadcast').onclick = loadCustomBroadcastFromInput;
 
   // Explorers
-  document.getElementById('refSrcMasters').onclick = () => {
-    state.refSource = 'masters';
-    document.getElementById('refSrcMasters').className =
-      'px-2 py-0.5 rounded text-[11px] font-semibold bg-em/20 text-em border border-em/35';
-    document.getElementById('refSrcLichess').className =
-      'px-2 py-0.5 rounded text-[11px] font-semibold text-txtMuted hover:text-txt';
+  const setRefSource = (src) => {
+    state.refSource = src;
+    const base = 'px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap';
+    const inactive = `${base} text-txtMuted hover:text-txt`;
+    const mBtn = document.getElementById('refSrcMasters');
+    const lBtn = document.getElementById('refSrcLichess');
+    const pBtn = document.getElementById('refSrcPlayer');
+    const pColWrap = document.getElementById('refPlayerColorWrap');
+    if (mBtn) mBtn.className = src === 'masters' ? `${base} bg-em/20 text-em border border-em/35` : inactive;
+    if (lBtn) lBtn.className = src === 'lichess' ? `${base} bg-cy/20 text-cy border border-cy/35` : inactive;
+    if (pBtn) {
+      const hidden = pBtn.classList.contains('hidden');
+      pBtn.className = `${hidden ? 'hidden ' : ''}${src === 'player' ? `${base} bg-vi/20 text-vi border border-vi/35` : inactive}`;
+    }
+    if (pColWrap) {
+      pColWrap.classList.toggle('hidden', src !== 'player');
+      pColWrap.classList.toggle('flex', src === 'player');
+    }
     refreshReferenceExplorer();
   };
-  document.getElementById('refSrcLichess').onclick = () => {
-    state.refSource = 'lichess';
-    document.getElementById('refSrcLichess').className =
-      'px-2 py-0.5 rounded text-[11px] font-semibold bg-cy/20 text-cy border border-cy/35';
-    document.getElementById('refSrcMasters').className =
-      'px-2 py-0.5 rounded text-[11px] font-semibold text-txtMuted hover:text-txt';
-    refreshReferenceExplorer();
-  };
+  document.getElementById('refSrcMasters').onclick = () => setRefSource('masters');
+  document.getElementById('refSrcLichess').onclick = () => setRefSource('lichess');
+  document.getElementById('refSrcPlayer').onclick = () => setRefSource('player');
+  document.querySelectorAll('.ref-pcol-btn').forEach((b) => {
+    b.onclick = () => {
+      state.refPlayerColor = b.dataset.pcol === 'black' ? 'black' : 'white';
+      document.querySelectorAll('.ref-pcol-btn').forEach(
+        (x) =>
+          (x.className =
+            x === b
+              ? 'ref-pcol-btn px-1.5 rounded bg-vi/25 text-vi font-bold'
+              : 'ref-pcol-btn px-1.5 rounded text-txtMuted hover:text-txt')
+      );
+      if (state.refSource === 'player') refreshReferenceExplorer();
+    };
+  });
   document.getElementById('refAuthNote').onclick = () => openModal('settingsModal');
   document.getElementById('scoutCollectionSelect').onchange = (e) => {
     state.activeScoutId = e.target.value;
@@ -654,9 +674,26 @@ async function bootstrap() {
   await initStudioRepertoire();
   bindStudioRepertoireSync();
 
+  let wasAuthenticated = false;
   onCloudSyncState((snap) => {
     renderCloudSyncUI(snap);
     renderSyncedScoutTargets();
+    const pBtn = document.getElementById('refSrcPlayer');
+    if (pBtn) {
+      const signedIn = Boolean(snap.authenticated && snap.user);
+      pBtn.classList.toggle('hidden', !signedIn);
+      if (signedIn) {
+        pBtn.title = `Your Lichess games (${snap.user.username})`;
+      } else if (state.refSource === 'player') {
+        document.getElementById('refSrcMasters')?.click();
+      }
+    }
+    if (snap.authenticated && !wasAuthenticated) {
+      wasAuthenticated = true;
+      refreshReferenceExplorer();
+    } else if (!snap.authenticated) {
+      wasAuthenticated = false;
+    }
   });
   onCloudDataPulled(async (changes) => {
     if (changes.repertoireUpdated || changes.progressUpdated) {

@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import { describe, it, expect } from 'vitest';
 import {
   getSigningSecret,
+  encryptSecretValue,
+  decryptSecretValue,
   signToken,
   verifyToken,
   generatePkceBundle,
@@ -11,6 +13,8 @@ import {
   isSameOriginRequest,
 } from '../api/_lib/session.js';
 import { mergeScoutTargets } from '../api/sync/index.js';
+import { parseLastNdjsonObject } from '../api/lichess/explorer.js';
+import { parseExplorerPlayerNdjson } from '../src/api/lichess.js';
 import { decideRepertoireSyncAction } from '../src/sync/cloudSync.js';
 
 describe('Cloud Sync auth session & PKCE helpers', () => {
@@ -96,5 +100,32 @@ describe('Two-way repertoire and scout target sync resolution', () => {
     expect(merged).toHaveLength(2);
     expect(merged[0]).toMatchObject({ source: 'lichess', username: 'alireza', max: 200 });
     expect(merged[1]).toMatchObject({ source: 'chesscom', username: 'Hikaru' });
+  });
+
+  it('encrypts and decrypts Lichess OAuth tokens with AES-256-GCM and rejects wrong keys', () => {
+    const key1 = getSigningSecret({ DATABASE_URL: 'postgres://u:secret1@ep.neon.tech/db' });
+    const key2 = getSigningSecret({ DATABASE_URL: 'postgres://u:secret2@ep.neon.tech/db' });
+    const cipher = encryptSecretValue('lip_test_token_12345', key1);
+    expect(cipher).toBeTruthy();
+    expect(cipher).not.toContain('lip_test_token_12345');
+    expect(decryptSecretValue(cipher, key1)).toBe('lip_test_token_12345');
+    expect(decryptSecretValue(cipher, key2)).toBeNull();
+  });
+
+  it('parses the final JSON frame from Lichess player explorer NDJSON stream', () => {
+    const stream = [
+      JSON.stringify({ queuePosition: 1, moves: [] }),
+      JSON.stringify({
+        white: 10,
+        draws: 2,
+        black: 4,
+        moves: [{ uci: 'e2e4', san: 'e4', white: 10, draws: 2, black: 4 }],
+        recentGames: [],
+      }),
+      '',
+    ].join('\n');
+
+    expect(parseLastNdjsonObject(stream).moves[0].san).toBe('e4');
+    expect(parseExplorerPlayerNdjson(stream).moves[0].san).toBe('e4');
   });
 });

@@ -39,6 +39,7 @@ export const state = {
 
   // Middle-Left Reference Explorer
   refSource: 'masters',
+  refPlayerColor: 'white',
   refReqId: 0,
 
   // Middle-Right Player Scout

@@ -22,9 +22,13 @@ export async function getDb() {
         CREATE TABLE IF NOT EXISTS users (
           lichess_id TEXT PRIMARY KEY,
           username TEXT NOT NULL,
+          lichess_token_enc TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+      `;
+      await sql`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS lichess_token_enc TEXT
       `;
       await sql`
         CREATE TABLE IF NOT EXISTS user_repertoires (

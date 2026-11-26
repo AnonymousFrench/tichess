@@ -417,11 +417,16 @@
           <!-- LEFT: MASTERS OTB / LICHESS DB EXPLORER -->
           <div class="bg-panel border border-borderSubtle rounded-lg flex flex-col overflow-hidden min-h-0">
             <div class="px-2 py-1 border-b border-borderSubtle bg-[#0d131f] flex items-center justify-between gap-1">
-              <div class="flex items-center gap-1">
-                <button id="refSrcMasters" class="px-2 py-0.5 rounded text-[11px] font-semibold bg-em/20 text-em border border-em/35">Masters OTB</button>
-                <button id="refSrcLichess" class="px-2 py-0.5 rounded text-[11px] font-semibold text-txtMuted hover:text-txt">Lichess DB</button>
+              <div class="flex items-center gap-1 min-w-0">
+                <button id="refSrcMasters" class="px-2 py-0.5 rounded text-[11px] font-semibold bg-em/20 text-em border border-em/35 whitespace-nowrap">Masters OTB</button>
+                <button id="refSrcLichess" class="px-2 py-0.5 rounded text-[11px] font-semibold text-txtMuted hover:text-txt whitespace-nowrap">Lichess DB</button>
+                <button id="refSrcPlayer" class="hidden px-2 py-0.5 rounded text-[11px] font-semibold text-txtMuted hover:text-txt whitespace-nowrap" title="Your Lichess games">My Games</button>
+                <div id="refPlayerColorWrap" class="hidden items-center bg-surface rounded border border-borderSubtle p-0.5 font-mono text-[9.5px]">
+                  <button class="ref-pcol-btn px-1.5 rounded bg-vi/25 text-vi font-bold" data-pcol="white" title="Games as White">W</button>
+                  <button class="ref-pcol-btn px-1.5 rounded text-txtMuted hover:text-txt" data-pcol="black" title="Games as Black">B</button>
+                </div>
               </div>
-              <div class="flex items-center gap-1.5 text-[10px]">
+              <div class="flex items-center gap-1.5 text-[10px] shrink-0">
                 <span id="refAuthNote" class="hidden text-am cursor-pointer underline" title="Add free Lichess Token in Settings">Token</span>
                 <span id="refTotalGames" class="font-mono text-txtMuted">0 games</span>
               </div>

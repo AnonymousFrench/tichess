@@ -42,7 +42,100 @@ export async function fetchBroadcastRoundPgn(roundId, { signal } = {}) {
   );
 }
 
-export async function fetchExplorer(source, fen, { signal } = {}) {
+export function parseExplorerPlayerNdjson(ndjsonText) {
+  if (!ndjsonText || typeof ndjsonText !== 'string') {
+    return { white: 0, draws: 0, black: 0, moves: [], recentGames: [] };
+  }
+  const lines = ndjsonText.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch (_) {
+      // Keep scanning backwards for last complete JSON object
+    }
+  }
+  return { white: 0, draws: 0, black: 0, moves: [], recentGames: [] };
+}
+
+async function fetchExplorerViaSessionProxy(source, fen, { color = 'white', signal } = {}) {
+  const params = new URLSearchParams({ source, fen });
+  if (source === 'player') params.set('color', color === 'black' ? 'black' : 'white');
+  const res = await fetch(`/api/lichess/explorer?${params.toString()}`, {
+    credentials: 'same-origin',
+    signal,
+    headers: { Accept: 'application/json' },
+  });
+  let body = null;
+  try {
+    body = await res.json();
+  } catch (_) {}
+  if (res.ok && body) return body;
+  const err = new Error(body?.error || `Explorer proxy HTTP ${res.status}`);
+  err.status = res.status;
+  if (res.status === 429) err.name = 'RateLimitError';
+  if (body?.code === 'reauth_needed') err.reauthNeeded = true;
+  if (res.status === 401 || res.status === 403) err.authRequired = true;
+  throw err;
+}
+
+export async function fetchExplorer(
+  source,
+  fen,
+  { signal, player = '', color = 'white', authenticated = false } = {}
+) {
+  // Signed-in Lichess player games explorer
+  if (source === 'player') {
+    if (authenticated) {
+      try {
+        return await fetchExplorerViaSessionProxy('player', fen, { color, signal });
+      } catch (err) {
+        if (err.name === 'AbortError' || err.name === 'RateLimitError') throw err;
+        // If user signed in before token storage was added, fall back to manual token if present
+        if (!(err.reauthNeeded && state.lichessToken && player)) {
+          throw err;
+        }
+      }
+    }
+
+    if (!player || !state.lichessToken) {
+      const authErr = new Error('Sign in with Lichess to browse your own games');
+      authErr.authRequired = true;
+      throw authErr;
+    }
+
+    const url = `https://explorer.lichess.org/player?player=${encodeURIComponent(player)}&color=${color === 'black' ? 'black' : 'white'}&fen=${encodeURIComponent(fen)}&recentGames=8`;
+    try {
+      const text = await fetchText(url, {
+        signal,
+        headers: {
+          Accept: 'application/x-ndjson, application/json',
+          Authorization: `Bearer ${state.lichessToken}`,
+        },
+      });
+      return parseExplorerPlayerNdjson(text);
+    } catch (err) {
+      if (err.status === 401 || err.status === 403) {
+        const authErr = new Error('Lichess token required');
+        authErr.authRequired = true;
+        throw authErr;
+      }
+      throw err;
+    }
+  }
+
+  // When signed in via Lichess OAuth without a manual token, route Masters/Lichess through session proxy
+  if (!state.lichessToken && authenticated) {
+    try {
+      return await fetchExplorerViaSessionProxy(source, fen, { signal });
+    } catch (err) {
+      if (err.name === 'AbortError' || err.name === 'RateLimitError') throw err;
+      // Fall through to direct fetch attempt
+    }
+  }
+
   const url =
     source === 'masters'
       ? `https://explorer.lichess.org/masters?fen=${encodeURIComponent(fen)}&topGames=8&recentGames=4`

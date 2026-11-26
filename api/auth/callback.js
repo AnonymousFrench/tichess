@@ -5,6 +5,7 @@ import {
   SESSION_COOKIE,
   SESSION_MAX_AGE_SEC,
   getSigningSecret,
+  encryptSecretValue,
   signToken,
   verifyToken,
   parseCookies,
@@ -112,13 +113,17 @@ export default async function handler(req, res) {
       return redirectWithError(res, returnTo, 'account_invalid');
     }
 
-    // 3. Upsert user in Neon Postgres
+    // 3. Upsert user + encrypted unscoped Lichess token in Neon Postgres
+    const tokenEnc = encryptSecretValue(accessToken, secret);
     const sql = await getDb();
     await sql`
-      INSERT INTO users (lichess_id, username, last_seen_at)
-      VALUES (${lichessId}, ${username}, NOW())
+      INSERT INTO users (lichess_id, username, lichess_token_enc, last_seen_at)
+      VALUES (${lichessId}, ${username}, ${tokenEnc}, NOW())
       ON CONFLICT (lichess_id)
-      DO UPDATE SET username = EXCLUDED.username, last_seen_at = NOW()
+      DO UPDATE SET
+        username = EXCLUDED.username,
+        lichess_token_enc = EXCLUDED.lichess_token_enc,
+        last_seen_at = NOW()
     `;
 
     // 4. Issue signed HttpOnly session cookie (we do NOT need to persist the raw Lichess token)

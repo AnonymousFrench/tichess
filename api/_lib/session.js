@@ -35,6 +35,37 @@ export function getSigningSecret(env = process.env) {
 }
 
 /**
+ * Encrypt a short secret (e.g., Lichess OAuth access token) with AES-256-GCM.
+ */
+export function encryptSecretValue(plaintext, keyBuf) {
+  if (!plaintext || !keyBuf) return null;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', keyBuf, iv);
+  const enc = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${toBase64Url(iv)}.${toBase64Url(tag)}.${toBase64Url(enc)}`;
+}
+
+/**
+ * Decrypt a value produced by `encryptSecretValue`. Returns null on invalid input or wrong key.
+ */
+export function decryptSecretValue(encoded, keyBuf) {
+  if (!encoded || typeof encoded !== 'string' || !keyBuf) return null;
+  const parts = encoded.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const iv = fromBase64Url(parts[0]);
+    const tag = fromBase64Url(parts[1]);
+    const enc = fromBase64Url(parts[2]);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', keyBuf, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
  * Create a compact HMAC-SHA256 signed token with an expiration timestamp.
  */
 export function signToken(payload, secret, ttlSec = SESSION_MAX_AGE_SEC, nowSec = Math.floor(Date.now() / 1000)) {

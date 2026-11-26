@@ -49,8 +49,8 @@ export function updateLiveIndicators() {
   if (pill) {
     pill.title = pick ? `Live now: ${pick.tourName}` : 'Open live events';
     pill.className = pick
-      ? 'flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-ro/15 hover:bg-ro/25 border border-ro/40 text-ro text-[11px] font-semibold transition-colors shrink-0 max-w-[240px]'
-      : 'flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted text-[11px] font-semibold transition-colors shrink-0 max-w-[240px]';
+      ? 'hidden lg:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-ro/15 hover:bg-ro/25 border border-ro/40 text-ro text-[11px] font-semibold transition-colors min-w-0 max-w-[240px]'
+      : 'hidden lg:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted text-[11px] font-semibold transition-colors min-w-0 max-w-[240px]';
   }
 }
 

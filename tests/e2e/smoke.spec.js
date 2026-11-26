@@ -638,7 +638,12 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
   await page.setViewportSize({ width: 390, height: 700 });
-  await page.route('https://lichess.org/api/broadcast/**', (r) => r.abort());
+  await page.route('https://lichess.org/api/broadcast/top', (r) =>
+    r.fulfill({ contentType: 'application/json', body: JSON.stringify(MOCK_TOP) })
+  );
+  await page.route('https://lichess.org/api/broadcast/search*', (r) =>
+    r.fulfill({ contentType: 'application/json', body: JSON.stringify({ currentPageResults: [] }) })
+  );
   await page.route('https://lichess.org/api/cloud-eval*', (r) => r.abort());
   await page.route('https://explorer.lichess.org/**', (r) => r.abort());
 
@@ -696,6 +701,23 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
 
   await page.goto('/');
   await expect(page.locator('#chessboard .sq[data-sq="e2"]')).toBeVisible();
+  await expect(page.locator('#liveEventsList')).toContainText('FIDE World Chess Championship 2026');
+
+  // Phone header hides the live tournament quick-jump pill and stays strictly single-row
+  await expect(page.locator('#btnLiveQuickJump')).toBeHidden();
+  const headerLayout = await page.evaluate(() => {
+    const hdr = document.querySelector('header');
+    const left = hdr.children[0].getBoundingClientRect();
+    const right = hdr.children[1].getBoundingClientRect();
+    return {
+      height: Math.round(hdr.getBoundingClientRect().height),
+      yDiff: Math.abs(Math.round(left.y) - Math.round(right.y)),
+      overflow: hdr.scrollWidth > hdr.clientWidth,
+    };
+  });
+  expect(headerLayout.height).toBeLessThanOrEqual(42);
+  expect(headerLayout.yDiff).toBeLessThanOrEqual(4);
+  expect(headerLayout.overflow).toBe(false);
 
   // Play 1. e4 e5 by clicking squares on mobile viewport and verify neither window nor <main> scrolled!
   await page.click('#chessboard .sq[data-sq="e2"]');

@@ -1,5 +1,5 @@
 /* Shared Lichess account control (plain CSS so it matches on every page) */
-.ta { position: relative; display: inline-flex; align-items: center; font-family: 'Inter', system-ui, sans-serif; }
+.ta { position: relative; display: inline-flex; align-items: center; min-width: 0; max-width: 100%; font-family: 'Inter', system-ui, sans-serif; }
 .ta[hidden] { display: none; }
 .ta-knight { font-size: 14px; line-height: 1; flex: none; }
 .ta-signin {
@@ -13,7 +13,7 @@
   display: inline-flex; align-items: center; gap: 6px;
   padding: 2px 8px 2px 2px; border-radius: 999px;
   background: #1b1e25; border: 1px solid #252934; color: #e5e7eb;
-  font: 600 12px 'Inter', system-ui, sans-serif; cursor: pointer; max-width: 170px;
+  font: 600 12px 'Inter', system-ui, sans-serif; cursor: pointer; min-width: 0; max-width: min(170px, 100%);
 }
 .ta-chip:hover { border-color: #353b4a; }
 .ta-avatar {
@@ -26,7 +26,7 @@
 .ta-dot.is-warn { background: #f59e0b; }
 .ta-dot.is-syncing { background: #38bdf8; animation: taPulse 1.2s ease-in-out infinite; }
 @keyframes taPulse { 50% { opacity: 0.4; } }
-.ta-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ta-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ta-menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; width: 270px;
   background: #13151a; border: 1px solid #353b4a; border-radius: 12px; padding: 10px;

@@ -127,7 +127,7 @@ test('falls back cleanly to real Stockfish 19 WASM when Lichess is blocked', asy
   const isolated = await page.evaluate(() => window.crossOriginIsolated);
   expect(isolated).toBe(true);
 
-  await expect(page.locator('#sfModeBadge')).toHaveText(/^SF 19 (MT \(\d+T\)|WASM)$/, {
+  await expect(page.locator('#sfModeBadge')).toHaveText(/^SF 19 Lite( MT \(\d+T\))?$/, {
     timeout: 20_000,
   });
   await expect(page.locator('#sfDepth')).toHaveText(/^Depth: \d+$/, { timeout: 20_000 });

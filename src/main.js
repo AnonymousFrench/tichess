@@ -486,6 +486,25 @@ onPositionChange(() => {
   debouncedPositionLookups();
 });
 
+/** Open the analysis encoded in the URL hash, if any, in a new tab. */
+function openSharedFromHash() {
+  const shared = decodeShareHash(window.location.hash);
+  if (!shared) {
+    if (window.location.hash.startsWith('#a=')) {
+      showToast('This share link is invalid or too large to open.', true);
+    }
+    return false;
+  }
+  state.flipped = shared.flipped;
+  addPrebuiltBoardTab({
+    title: shared.title,
+    root: shared.root,
+    current: shared.current,
+  });
+  showToast(`Loaded shared analysis: ${shared.title}`);
+  return true;
+}
+
 async function bootstrap() {
   mountModals();
   setLc0SettingsHandler(() => openModal('settingsModal'));
@@ -495,18 +514,12 @@ async function bootstrap() {
   renderTournamentRoundsTable();
 
   await reloadCollections();
-  const shared = decodeShareHash(window.location.hash);
-  if (shared) {
-    state.flipped = shared.flipped;
-    addPrebuiltBoardTab({
-      title: shared.title,
-      root: shared.root,
-      current: shared.current,
-    });
-    showToast(`Loaded shared analysis: ${shared.title}`);
-  } else {
+  if (!openSharedFromHash()) {
     addBoardTab('Analysis 1');
   }
+  window.addEventListener('hashchange', () => {
+    openSharedFromHash();
+  });
 
   initLc0();
   initStockfish();

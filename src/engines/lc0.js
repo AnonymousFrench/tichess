@@ -72,7 +72,7 @@ export function triggerLc0Analysis() {
     return;
   }
 
-  let isOver = false;
+  let isOver;
   try {
     isOver = new Chess(fen).isGameOver();
   } catch (_) {
@@ -111,7 +111,7 @@ export function renderLc0UI() {
 
     const wdlEl = document.getElementById('lc0WdlBar');
     if (top.wdl && wdlEl) {
-      const [wR, dR, lR] = side === 'w' ? top.wdl : [top.wdl[2], top.wdl[1], top.wdl[0]];
+      const [wR, dR] = side === 'w' ? top.wdl : [top.wdl[2], top.wdl[1]];
       const wp = Math.round(wR / 10);
       const dp = Math.round(dR / 10);
       const bp = Math.max(0, 100 - wp - dp);

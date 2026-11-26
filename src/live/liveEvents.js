@@ -220,8 +220,8 @@ function updateSpotlightBanner() {
   const titleEl = document.getElementById('featuredEventTitle');
   const subEl = document.getElementById('featuredEventSubtitle');
   const badgeEl = document.getElementById('featuredEventBadge');
-  const statusEl = document.getElementById('wccBroadcastStatus');
-  const watchBtn = document.getElementById('btnWatchWccLive');
+  const statusEl = document.getElementById('featuredStatus');
+  const watchBtn = document.getElementById('btnWatchFeatured');
   const quickJumpBtn = document.getElementById('btnLiveQuickJump');
   const quickJumpText = document.getElementById('liveQuickJumpLabel');
   const quickJumpDot = document.getElementById('liveQuickJumpDot');
@@ -313,7 +313,7 @@ function updateSpotlightBanner() {
 }
 
 export function renderTournamentRoundsTable() {
-  const tbody = document.getElementById('wccScheduleBody');
+  const tbody = document.getElementById('roundsTableBody');
   if (!tbody) return;
 
   const rounds = state.featuredTour?.rounds || [];
@@ -438,7 +438,7 @@ export async function selectFeaturedTournament(tourId, preferredRoundId = null, 
 }
 
 export async function discoverAndSyncLiveBroadcasts() {
-  const statusEl = document.getElementById('wccBroadcastStatus');
+  const statusEl = document.getElementById('featuredStatus');
   if (statusEl) statusEl.textContent = 'Syncing Lichess...';
 
   try {

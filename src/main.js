@@ -57,6 +57,7 @@ function switchHub(hubName) {
   state.activeHub = hubName;
   document.querySelectorAll('.hub-tab').forEach((b) => {
     const act = b.dataset.hub === hubName;
+    b.setAttribute('aria-selected', String(act));
     b.className = act
       ? 'hub-tab flex items-center gap-1.5 px-2.5 py-1 rounded-t text-[11.5px] font-semibold bg-panel text-txt border-t border-x border-borderSubtle whitespace-nowrap'
       : 'hub-tab flex items-center gap-1.5 px-2.5 py-1 rounded-t text-[11.5px] font-medium text-txtMuted hover:text-txt whitespace-nowrap';
@@ -263,7 +264,7 @@ function bindEvents() {
 
   // Top-Right Hub
   document.querySelectorAll('.hub-tab').forEach((b) => (b.onclick = () => switchHub(b.dataset.hub)));
-  document.getElementById('btnWatchWccLive').onclick = openFeaturedLiveGame;
+  document.getElementById('btnWatchFeatured').onclick = openFeaturedLiveGame;
   document.getElementById('btnSyncLiveNow').onclick = () => {
     state.liveCountdown = 15;
     discoverAndSyncLiveBroadcasts();
@@ -271,15 +272,15 @@ function bindEvents() {
   document.getElementById('chkLiveAutoPoll').onchange = (e) => {
     state.liveAutoPoll = e.target.checked;
   };
-  document.getElementById('btnLiveSubSchedule').onclick = () => {
-    document.getElementById('btnLiveSubSchedule').className = 'px-2 py-0.5 rounded bg-em/20 text-em font-semibold';
+  document.getElementById('btnLiveSubRounds').onclick = () => {
+    document.getElementById('btnLiveSubRounds').className = 'px-2 py-0.5 rounded bg-em/20 text-em font-semibold';
     document.getElementById('btnLiveSubAll').className = 'px-2 py-0.5 rounded text-txtMuted hover:text-txt font-medium';
     document.getElementById('liveScheduleWrap').classList.remove('hidden');
     document.getElementById('liveAllBroadcastsWrap').classList.add('hidden');
   };
   document.getElementById('btnLiveSubAll').onclick = () => {
     document.getElementById('btnLiveSubAll').className = 'px-2 py-0.5 rounded bg-cy/20 text-cy font-semibold';
-    document.getElementById('btnLiveSubSchedule').className = 'px-2 py-0.5 rounded text-txtMuted hover:text-txt font-medium';
+    document.getElementById('btnLiveSubRounds').className = 'px-2 py-0.5 rounded text-txtMuted hover:text-txt font-medium';
     document.getElementById('liveAllBroadcastsWrap').classList.remove('hidden');
     document.getElementById('liveScheduleWrap').classList.add('hidden');
     renderAllBroadcastsList();
@@ -404,8 +405,16 @@ function bindEvents() {
 
   // Keyboard Shortcuts
   document.addEventListener('keydown', (e) => {
-    const tag = e.target?.tagName || '';
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const target = e.target;
+    const tag = target?.tagName || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) {
+      return;
+    }
+    if (e.altKey && (e.key === 'n' || e.key === 'N')) {
+      e.preventDefault();
+      addBoardTab(`Analysis ${state.tabs.length + 1}`);
+      return;
+    }
     const t = getActiveTab();
     if (!t) return;
     if (e.key === 'ArrowLeft') {
@@ -431,6 +440,7 @@ function bindEvents() {
     } else if (e.key === 'f' || e.key === 'F') {
       flipBoard();
     } else if (e.key === ' ') {
+      if (tag === 'BUTTON' || tag === 'A') return;
       e.preventDefault();
       toggleBothEngines();
     }

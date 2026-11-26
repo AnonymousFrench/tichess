@@ -3,3 +3,5 @@ dist/
 public/stockfish/
 .DS_Store
 *.local
+playwright-report/
+test-results/

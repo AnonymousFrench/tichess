@@ -24,4 +24,9 @@ for (const file of files) {
   copyFileSync(from, to);
 }
 
-console.log('[copy-stockfish] Copied Stockfish 19 lite-single WASM to public/stockfish/');
+const licenseFrom = resolve(root, 'node_modules/stockfish/Copying.txt');
+if (existsSync(licenseFrom)) {
+  copyFileSync(licenseFrom, resolve(outDir, 'LICENSE.txt'));
+}
+
+console.log('[copy-stockfish] Copied Stockfish 19 lite-single WASM and LICENSE.txt to public/stockfish/');

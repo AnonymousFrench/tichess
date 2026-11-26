@@ -18,7 +18,7 @@ export function renderBoardTabs() {
         ? `<span class="w-1.5 h-1.5 rounded-full bg-ro live-dot shrink-0"></span>`
         : '';
       return `
-        <div data-tid="${t.id}" class="board-tab flex items-center gap-1.5 px-2.5 py-1 rounded-t text-[11px] cursor-pointer max-w-[175px] ${
+        <div role="tab" aria-selected="${active}" data-tid="${t.id}" class="board-tab flex items-center gap-1.5 px-2.5 py-1 rounded-t text-[11px] cursor-pointer max-w-[175px] ${
           active
             ? 'bg-panel text-txt font-semibold border-t border-x border-borderSubtle'
             : 'text-txtMuted hover:text-txt hover:bg-surface/60'
@@ -27,7 +27,7 @@ export function renderBoardTabs() {
           <span class="truncate">${escapeHtml(t.title)}</span>
           ${
             state.tabs.length > 1
-              ? `<button data-close="${t.id}" class="tab-close opacity-60 hover:opacity-100 hover:text-ro text-[10px]">✕</button>`
+              ? `<button data-close="${t.id}" aria-label="Close tab" class="tab-close opacity-60 hover:opacity-100 hover:text-ro text-[10px]">✕</button>`
               : ''
           }
         </div>

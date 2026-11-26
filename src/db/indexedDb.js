@@ -211,7 +211,7 @@ export async function indexGamesCollection(meta, rawGames, progressCb = null) {
     const lim = Math.min(verbose.length, 40);
     for (let p = 0; p < lim; p++) {
       const norm = normalizeFen(replay.fen());
-      let m = null;
+      let m;
       try {
         m = replay.move({
           from: verbose[p].from,

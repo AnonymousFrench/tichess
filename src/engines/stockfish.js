@@ -131,7 +131,7 @@ export async function triggerSfAnalysis() {
     return;
   }
 
-  let isOver = false;
+  let isOver;
   try {
     isOver = new Chess(fen).isGameOver();
   } catch (_) {

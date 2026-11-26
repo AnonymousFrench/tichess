@@ -9,7 +9,7 @@ export async function fetchChessComArchives(username, { signal } = {}) {
     return data?.archives || [];
   } catch (err) {
     if (err.status === 404) {
-      throw new Error(`Player "${username}" not found on Chess.com`);
+      throw new Error(`Player "${username}" not found on Chess.com`, { cause: err });
     }
     throw err;
   }

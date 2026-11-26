@@ -69,7 +69,7 @@ export function normalizePv(fen, pvUci) {
     const raw = pvUci[i];
     if (!raw || raw.length < 4) break;
     const u = normalizeCastlingWithChess(chess, raw);
-    let m = null;
+    let m;
     try {
       m = chess.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || undefined });
     } catch (_) {
@@ -118,7 +118,7 @@ export function uciPvToSan(fen, pvUci) {
     const raw = pvUci[i];
     if (!raw || raw.length < 4) break;
     const u = normalizeCastlingWithChess(c, raw);
-    let m = null;
+    let m;
     try {
       m = c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] || undefined });
     } catch (_) {

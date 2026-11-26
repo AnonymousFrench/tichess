@@ -111,7 +111,7 @@ export function createTreeFromPgn(pgnText, fallbackFen = START_FEN) {
   let cur = root;
   let moveNum = parseInt(replay.fen().split(' ')[5] || '1', 10) || 1;
   for (let i = 0; i < verbose.length; i++) {
-    let m = null;
+    let m;
     try {
       m = replay.move({
         from: verbose[i].from,

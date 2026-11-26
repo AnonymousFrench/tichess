@@ -364,3 +364,47 @@ test('Game Review evaluates a loaded game locally, renders eval graph, and jumps
   expect(pageErrors).toEqual([]);
 });
 
+test('Repertoire hub imports a Lichess Study PGN, saves a board line, and opens in repertoire.html', async ({
+  page,
+}) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await page.route('https://lichess.org/**', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+
+  await page.goto('/');
+  await page.click('[data-hub="repertoire"]');
+
+  // Open PGN/Study import drawer and import a PGN with a variation & comment
+  await page.click('#btnStudioRepPgnToggle');
+  await page.fill(
+    '#repPgnTextarea',
+    '[Event "Study: Scotch Game"]\n1. e4 { Center control } e5 2. Nf3 Nc6 3. d4 (3. Bc4 Bc5) 3... exd4 *'
+  );
+  await page.click('#btnConfirmRepPgn');
+
+  await expect(page.locator('#hub-repertoire')).toContainText('Study');
+  await expect(page.locator('#hub-repertoire')).toContainText('Center control');
+
+  // Load a new board line 1. d4 d5 2. c4 and save it into the repertoire
+  await page.click('[data-menu="file"]');
+  await page.click('#actLoadModal');
+  await page.fill('#loadPgnTextarea', '1. d4 d5 2. c4');
+  await page.click('#btnConfirmLoad');
+
+  await page.click('#btnStudioRepAddLine');
+  await page.fill('#repAddSection', 'Queen Gambit');
+  await page.fill('#repAddLineName', 'Main');
+  await page.click('#btnConfirmAddLine');
+
+  await expect(page.locator('#hub-repertoire')).toContainText('Queen Gambit');
+
+  // Verify the saved repertoire opens cleanly on repertoire.html
+  await page.goto('/repertoire.html');
+  await expect(page.locator('#v-train')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('#whoami')).toContainText('Study');
+  expect(pageErrors).toEqual([]);
+});
+
+

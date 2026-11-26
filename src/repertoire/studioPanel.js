@@ -1,5 +1,6 @@
 import {
   state,
+  getActiveTab,
   getCurrentFen,
   normalizeFen,
   escapeHtml,
@@ -12,6 +13,12 @@ import {
   cardStatus,
 } from './model.js';
 import {
+  buildRepertoireFromPgn,
+  mergeRepertoires,
+  extractPathToNode,
+  appendBoardLineToRepertoire,
+} from './pgnImport.js';
+import {
   loadRepertoire,
   saveRepertoire,
   loadProgress,
@@ -23,6 +30,15 @@ import { addBoardTab } from '../board/tabs.js';
 let loadedRep = null; // { repertoire, name }
 let loadedProg = {};
 let fenIndex = new Map();
+let activeDrawer = null; // null | 'pgn' | 'addLine'
+
+export function getLoadedRepertoireState() {
+  return {
+    loadedRep,
+    loadedProg,
+    fenIndex,
+  };
+}
 
 /**
  * Index `repertoire.pos` by normalized 4-field FEN for O(1) board lookups.
@@ -186,7 +202,18 @@ function updateRepertoireBadge() {
   }
 }
 
-export async function handleStudioRepertoireImport(file) {
+async function persistRepertoire(repertoire, name) {
+  try {
+    await saveRepertoire(repertoire, name);
+  } catch (_) {
+    showToast('Browser blocked saving repertoire to IndexedDB', true);
+    return false;
+  }
+  await initStudioRepertoire();
+  return true;
+}
+
+export async function handleStudioRepertoireImport(file, { color = 'w', merge = true } = {}) {
   if (!file) return;
   let text;
   try {
@@ -195,24 +222,81 @@ export async function handleStudioRepertoireImport(file) {
     showToast('Could not read repertoire file', true);
     return;
   }
-  const parsed = parseRepertoireFile(text);
-  if (!parsed.ok) {
-    showToast(parsed.error || 'Invalid repertoire file', true);
+
+  const trimmed = text.trim();
+  const looksJson = file.name?.toLowerCase().endsWith('.json') || trimmed.startsWith('{');
+
+  if (looksJson) {
+    const parsed = parseRepertoireFile(text);
+    if (!parsed.ok) {
+      showToast(parsed.error || 'Invalid repertoire JSON file', true);
+      return;
+    }
+    const mergedProg = mergeProgress(loadProgress(), parsed.progress);
+    if (!saveProgress(mergedProg)) {
+      showToast('Browser blocked saving repertoire progress', true);
+      return;
+    }
+    if (await persistRepertoire(parsed.repertoire, parsed.name)) {
+      activeDrawer = null;
+      showToast(`Imported repertoire${parsed.name ? `: ${parsed.name}` : ''}`);
+    }
     return;
   }
-  const merged = mergeProgress(loadProgress(), parsed.progress);
-  if (!saveProgress(merged)) {
-    showToast('Browser blocked saving repertoire progress', true);
-    return;
+
+  await importPgnTextIntoStudio(text, {
+    color,
+    merge,
+    name: file.name ? file.name.replace(/\.pgn$/i, '') : '',
+  });
+}
+
+export async function importPgnTextIntoStudio(pgnText, { color = 'w', merge = true, name = '' } = {}) {
+  const built = buildRepertoireFromPgn(pgnText, { color, name });
+  if (!built.ok) {
+    showToast(built.error || 'Could not parse PGN', true);
+    return false;
   }
-  try {
-    await saveRepertoire(parsed.repertoire, parsed.name);
-  } catch (_) {
-    showToast('Browser blocked saving repertoire to IndexedDB', true);
-    return;
+
+  const shouldMerge = Boolean(merge && loadedRep?.repertoire);
+  const nextRep = shouldMerge
+    ? mergeRepertoires(loadedRep.repertoire, built.repertoire)
+    : built.repertoire;
+  const nextName = shouldMerge ? loadedRep.name || built.name : built.name;
+
+  if (await persistRepertoire(nextRep, nextName)) {
+    activeDrawer = null;
+    showToast(
+      `${shouldMerge ? 'Merged' : 'Imported'} ${built.stats.lines} line${built.stats.lines === 1 ? '' : 's'} (${built.stats.cards} move cards)`
+    );
+    return true;
   }
-  await initStudioRepertoire();
-  showToast(`Imported repertoire${parsed.name ? `: ${parsed.name}` : ''}`);
+  return false;
+}
+
+export async function saveCurrentBoardLineToRepertoire({ color, sectionName, lineName, note }) {
+  const tab = getActiveTab();
+  if (!tab) return false;
+  const { startFen, moves } = extractPathToNode(tab.current);
+  const res = appendBoardLineToRepertoire(loadedRep?.repertoire || null, {
+    startFen,
+    moves,
+    color,
+    sectionName,
+    lineName,
+    note,
+  });
+  if (!res.ok) {
+    showToast(res.error || 'Could not save line', true);
+    return false;
+  }
+  const repName = loadedRep?.name || res.sectionName || 'My Repertoire';
+  if (await persistRepertoire(res.repertoire, repName)) {
+    activeDrawer = null;
+    showToast(`Saved "${res.lineName}" to ${res.sectionName}`);
+    return true;
+  }
+  return false;
 }
 
 function exportStudioRepertoireBackup() {
@@ -256,33 +340,176 @@ export function bindStudioRepertoireSync() {
   });
 }
 
+function renderPgnDrawer(hasExisting) {
+  return `
+    <div id="studioRepPgnDrawer" class="p-2.5 rounded-lg bg-[#0d1422] border border-cy/35 flex flex-col gap-2 text-[11px]">
+      <div class="flex items-center justify-between gap-2">
+        <span class="font-bold text-cy">Import PGN / Lichess Study</span>
+        <button id="btnCloseRepDrawer" class="text-txtMuted hover:text-txt text-xs">✕</button>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <label class="inline-flex items-center gap-1 text-[10.5px] text-txtMuted">
+          Play as:
+          <select id="repPgnColor" class="px-1.5 py-0.5 rounded bg-surface border border-borderSubtle text-txt text-[10.5px]">
+            <option value="w">White</option>
+            <option value="b">Black</option>
+          </select>
+        </label>
+        <input id="repPgnName" type="text" placeholder="Repertoire / Study name (optional)" class="flex-1 min-w-[140px] px-2 py-0.5 rounded bg-surface border border-borderSubtle text-[10.5px] focus:outline-none focus:border-cy" />
+        <label class="px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] cursor-pointer text-txt">
+          Choose .pgn
+          <input id="repPgnFileInput" type="file" accept=".pgn,text/plain" class="hidden" />
+        </label>
+      </div>
+      <textarea id="repPgnTextarea" rows="4" placeholder="Paste PGN or Lichess Study export (multi-chapter, variations &amp; comments supported)..." class="w-full p-2 rounded bg-surface border border-borderSubtle font-mono text-[10.5px] focus:outline-none focus:border-cy"></textarea>
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <label class="${hasExisting ? 'inline-flex' : 'hidden'} items-center gap-1.5 text-[10.5px] text-txtMuted cursor-pointer">
+          <input id="repPgnMerge" type="checkbox" class="accent-em" checked />
+          <span>Merge into current repertoire (keeps SRS progress)</span>
+        </label>
+        <button id="btnConfirmRepPgn" class="ml-auto px-2.5 py-1 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-bold text-[10.5px]">
+          ${hasExisting ? 'Import &amp; Merge PGN' : 'Create Repertoire from PGN'}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function renderAddLineDrawer(sections) {
+  const tab = getActiveTab();
+  const { moves } = tab ? extractPathToNode(tab.current) : { moves: [] };
+  const preview = moves.length
+    ? moves
+        .map((m, i) => (i % 2 === 0 ? `${Math.floor(i / 2) + 1}.${m.san}` : m.san))
+        .join(' ')
+    : 'Play moves on the board first';
+  const defaultColor = state.flipped ? 'b' : 'w';
+  const datalistOpts = (sections || [])
+    .map((s) => `<option value="${escapeHtml(s.name)}"></option>`)
+    .join('');
+
+  return `
+    <div id="studioRepAddLineDrawer" class="p-2.5 rounded-lg bg-[#0d1422] border border-em/40 flex flex-col gap-2 text-[11px]">
+      <div class="flex items-center justify-between gap-2">
+        <span class="font-bold text-em">Add Current Board Line to Repertoire</span>
+        <button id="btnCloseRepDrawer" class="text-txtMuted hover:text-txt text-xs">✕</button>
+      </div>
+      <div class="px-2 py-1 rounded bg-surface/70 border border-borderSubtle font-mono text-[10.5px] text-txt/90 truncate" title="${escapeHtml(preview)}">
+        ${escapeHtml(preview)}
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+        <select id="repAddColor" class="px-2 py-1 rounded bg-surface border border-borderSubtle text-[10.5px]">
+          <option value="w"${defaultColor === 'w' ? ' selected' : ''}>Play as White</option>
+          <option value="b"${defaultColor === 'b' ? ' selected' : ''}>Play as Black</option>
+        </select>
+        <input id="repAddSection" list="repExistingSections" type="text" placeholder="Opening (e.g. Sicilian)" value="${escapeHtml(sections?.[0]?.name || '')}" class="px-2 py-1 rounded bg-surface border border-borderSubtle text-[10.5px] focus:outline-none focus:border-em" />
+        <datalist id="repExistingSections">${datalistOpts}</datalist>
+        <input id="repAddLineName" type="text" placeholder="Line name (optional)" class="px-2 py-1 rounded bg-surface border border-borderSubtle text-[10.5px] focus:outline-none focus:border-em" />
+      </div>
+      <div class="flex items-center gap-1.5">
+        <input id="repAddNote" type="text" placeholder="Idea / plan note (optional; move comments are also saved)" class="flex-1 px-2 py-1 rounded bg-surface border border-borderSubtle text-[10.5px] focus:outline-none focus:border-em" />
+        <button id="btnConfirmAddLine" class="px-2.5 py-1 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-bold text-[10.5px] shrink-0" ${moves.length ? '' : 'disabled'}>Save Line</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindDrawerEvents(host) {
+  const closeBtn = host.querySelector('#btnCloseRepDrawer');
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      activeDrawer = null;
+      renderStudioRepertoirePanel();
+    };
+  }
+
+  const pgnFile = host.querySelector('#repPgnFileInput');
+  if (pgnFile) {
+    pgnFile.onchange = async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      try {
+        const txt = await f.text();
+        const ta = host.querySelector('#repPgnTextarea');
+        if (ta) ta.value = txt;
+        const nameEl = host.querySelector('#repPgnName');
+        if (nameEl && !nameEl.value.trim()) {
+          nameEl.value = f.name.replace(/\.pgn$/i, '');
+        }
+      } catch (_) {
+        showToast('Could not read PGN file', true);
+      }
+      e.target.value = '';
+    };
+  }
+
+  const confirmPgn = host.querySelector('#btnConfirmRepPgn');
+  if (confirmPgn) {
+    confirmPgn.onclick = () => {
+      const txt = host.querySelector('#repPgnTextarea')?.value || '';
+      const color = host.querySelector('#repPgnColor')?.value || 'w';
+      const name = host.querySelector('#repPgnName')?.value?.trim() || '';
+      const merge = host.querySelector('#repPgnMerge')?.checked ?? true;
+      importPgnTextIntoStudio(txt, { color, merge, name });
+    };
+  }
+
+  const confirmAdd = host.querySelector('#btnConfirmAddLine');
+  if (confirmAdd) {
+    confirmAdd.onclick = () => {
+      const color = host.querySelector('#repAddColor')?.value || 'w';
+      const sectionName = host.querySelector('#repAddSection')?.value?.trim() || 'Custom Lines';
+      const lineName = host.querySelector('#repAddLineName')?.value?.trim() || '';
+      const note = host.querySelector('#repAddNote')?.value?.trim() || '';
+      saveCurrentBoardLineToRepertoire({ color, sectionName, lineName, note });
+    };
+  }
+}
+
 export function renderStudioRepertoirePanel() {
   const host = document.getElementById('hub-repertoire');
   if (!host) return;
 
   if (!loadedRep?.repertoire) {
+    const drawerHtml =
+      activeDrawer === 'pgn'
+        ? renderPgnDrawer(false)
+        : activeDrawer === 'addLine'
+          ? renderAddLineDrawer([])
+          : '';
+
     host.innerHTML = `
-      <div class="p-3 rounded-lg bg-surface/50 border border-borderSubtle flex flex-col gap-2.5 text-[11.5px]">
-        <div class="flex items-center justify-between gap-2 flex-wrap">
-          <div>
-            <div class="font-bold text-txt text-xs">Your Opening Repertoire</div>
-            <p class="text-txtMuted text-[11px] mt-0.5">
-              Import your private <code class="font-mono text-txt/90">tichess-repertoire</code> JSON file to see prepared moves, notes, and lines live as you browse positions here — or train them with spaced repetition.
-            </p>
-          </div>
-          <div class="flex items-center gap-1.5 shrink-0">
-            <label class="px-2.5 py-1 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-semibold text-[11px] cursor-pointer">
-              Import Repertoire JSON
-              <input id="studioRepFileInput" type="file" accept=".json,application/json" class="hidden" />
-            </label>
-            <a href="repertoire.html" class="px-2.5 py-1 rounded bg-cy/15 hover:bg-cy/25 text-cy border border-cy/35 font-semibold text-[11px]">
-              Open Trainer ↗
-            </a>
+      <div class="flex flex-col gap-2">
+        <div class="p-3 rounded-lg bg-surface/50 border border-borderSubtle flex flex-col gap-2.5 text-[11.5px]">
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <div>
+              <div class="font-bold text-txt text-xs">Your Opening Repertoire</div>
+              <p class="text-txtMuted text-[11px] mt-0.5">
+                Import a <code class="font-mono text-txt/90">tichess-repertoire</code> JSON, a <b>PGN / Lichess Study</b>, or save lines directly from the board.
+              </p>
+            </div>
+            <div class="flex items-center gap-1.5 flex-wrap shrink-0">
+              <button id="btnStudioRepPgnToggle" class="px-2.5 py-1 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-semibold text-[11px]">
+                + Import PGN / Study
+              </button>
+              <button id="btnStudioRepAddLine" class="px-2.5 py-1 rounded bg-cy/15 hover:bg-cy/25 text-cy border border-cy/35 font-semibold text-[11px]">
+                + Save Board Line
+              </button>
+              <label class="px-2.5 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txt font-semibold text-[11px] cursor-pointer">
+                Import JSON
+                <input id="studioRepFileInput" type="file" accept=".json,.pgn,application/json,text/plain" class="hidden" />
+              </label>
+              <a href="repertoire.html" class="px-2 py-1 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-txt text-[11px]">
+                Trainer ↗
+              </a>
+            </div>
           </div>
         </div>
+        ${drawerHtml}
       </div>
     `;
-    const inp = document.getElementById('studioRepFileInput');
+
+    const inp = host.querySelector('#studioRepFileInput');
     if (inp) {
       inp.onchange = (e) => {
         if (e.target.files?.[0]) {
@@ -291,6 +518,21 @@ export function renderStudioRepertoirePanel() {
         }
       };
     }
+    const pgnBtn = host.querySelector('#btnStudioRepPgnToggle');
+    if (pgnBtn) {
+      pgnBtn.onclick = () => {
+        activeDrawer = activeDrawer === 'pgn' ? null : 'pgn';
+        renderStudioRepertoirePanel();
+      };
+    }
+    const addBtn = host.querySelector('#btnStudioRepAddLine');
+    if (addBtn) {
+      addBtn.onclick = () => {
+        activeDrawer = activeDrawer === 'addLine' ? null : 'addLine';
+        renderStudioRepertoirePanel();
+      };
+    }
+    bindDrawerEvents(host);
     return;
   }
 
@@ -298,6 +540,13 @@ export function renderStudioRepertoirePanel() {
   const fen = getCurrentFen();
   const { total, sections } = summarizeRepertoire(rep, loadedProg);
   const hit = lookupRepertoirePosition(fenIndex, rep, loadedProg, fen);
+
+  const drawerHtml =
+    activeDrawer === 'pgn'
+      ? renderPgnDrawer(true)
+      : activeDrawer === 'addLine'
+        ? renderAddLineDrawer(sections)
+        : '';
 
   const movesHtml = hit?.moves?.length
     ? `
@@ -343,7 +592,7 @@ export function renderStudioRepertoirePanel() {
         }
       </div>
     `
-    : `<div class="px-2.5 py-1.5 rounded bg-surface/40 border border-borderSubtle text-[11px] text-txtMuted">Current board position is outside your repertoire. Click any opening below to load a line, or navigate back to book.</div>`;
+    : `<div class="px-2.5 py-1.5 rounded bg-surface/40 border border-borderSubtle text-[11px] text-txtMuted">Current board position is outside your repertoire. Click <b>+ Add Line</b> to save this line, or load an opening below.</div>`;
 
   const sectionsHtml = sections
     .map((s) => {
@@ -383,15 +632,19 @@ export function renderStudioRepertoirePanel() {
             <span class="text-em">${total.mastered} mastered</span> / ${total.total} moves
           </span>
         </div>
-        <div class="flex items-center gap-1.5 shrink-0">
+        <div class="flex items-center gap-1 flex-wrap shrink-0">
           <a href="repertoire.html" class="px-2 py-0.5 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-bold text-[10.5px]">Train ↗</a>
+          <button id="btnStudioRepAddLine" class="px-2 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10.5px]">+ Add Line</button>
+          <button id="btnStudioRepPgnToggle" class="px-2 py-0.5 rounded bg-cy/15 hover:bg-cy/25 text-cy border border-cy/35 font-semibold text-[10.5px]">+ PGN</button>
           <label class="px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-txt text-[10.5px] cursor-pointer">
-            Import
-            <input id="studioRepFileInput" type="file" accept=".json,application/json" class="hidden" />
+            JSON
+            <input id="studioRepFileInput" type="file" accept=".json,.pgn,application/json,text/plain" class="hidden" />
           </label>
           <button id="btnStudioRepBackup" class="px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-txt text-[10.5px]">Back up</button>
         </div>
       </div>
+
+      ${drawerHtml}
 
       ${movesHtml}
 
@@ -402,7 +655,7 @@ export function renderStudioRepertoirePanel() {
     </div>
   `;
 
-  const inp = document.getElementById('studioRepFileInput');
+  const inp = host.querySelector('#studioRepFileInput');
   if (inp) {
     inp.onchange = (e) => {
       if (e.target.files?.[0]) {
@@ -411,8 +664,24 @@ export function renderStudioRepertoirePanel() {
       }
     };
   }
-  const backupBtn = document.getElementById('btnStudioRepBackup');
+  const pgnBtn = host.querySelector('#btnStudioRepPgnToggle');
+  if (pgnBtn) {
+    pgnBtn.onclick = () => {
+      activeDrawer = activeDrawer === 'pgn' ? null : 'pgn';
+      renderStudioRepertoirePanel();
+    };
+  }
+  const addBtn = host.querySelector('#btnStudioRepAddLine');
+  if (addBtn) {
+    addBtn.onclick = () => {
+      activeDrawer = activeDrawer === 'addLine' ? null : 'addLine';
+      renderStudioRepertoirePanel();
+    };
+  }
+  const backupBtn = host.querySelector('#btnStudioRepBackup');
   if (backupBtn) backupBtn.onclick = exportStudioRepertoireBackup;
+
+  bindDrawerEvents(host);
 
   host.querySelectorAll('.rep-pos-move').forEach((btn) => {
     btn.onclick = () => playMoveOnTree(btn.dataset.uci);

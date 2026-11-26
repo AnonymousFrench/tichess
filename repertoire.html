@@ -28,10 +28,17 @@
   <section class="view importer card" id="v-import" hidden>
     <div class="eyebrow">Repertoire trainer</div>
     <h2>Load your repertoire</h2>
-    <p class="muted" style="margin:0">Choose your <b>tichess-repertoire</b> JSON file. It includes your lines, notes, engine data and review progress.</p>
+    <p class="muted" style="margin:0">Choose a <b>tichess-repertoire</b> JSON file or a <b>PGN / Lichess Study</b> export (variations &amp; comments supported).</p>
+    <div class="row" style="gap:10px;align-items:center;font-size:13px">
+      <label class="muted" for="imp-pgn-color">For PGN files, play as:</label>
+      <select id="imp-pgn-color" style="padding:4px 8px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--ink)">
+        <option value="w">White</option>
+        <option value="b">Black</option>
+      </select>
+    </div>
     <label class="drop" id="imp-drop" tabindex="0">
-      <input type="file" id="imp-file" accept=".json,application/json" hidden>
-      <b>Choose file</b> or drop it here
+      <input type="file" id="imp-file" accept=".json,.pgn,application/json,text/plain" hidden>
+      <b>Choose .json or .pgn file</b> or drop it here
     </label>
     <p class="err" id="imp-err" hidden></p>
     <p class="privacy">Your repertoire stays in this browser. It is never uploaded and is not part of the public tichess site or its code. Use <b>Back up</b> to save your progress to a file, for example to move it to another device.</p>
@@ -202,7 +209,7 @@
   </div>
 </div>
 
-<input type="file" id="imp-file2" accept=".json,application/json" hidden>
+<input type="file" id="imp-file2" accept=".json,.pgn,application/json,text/plain" hidden>
 <script type="module" src="/src/repertoire/main.js"></script>
 </body>
 </html>

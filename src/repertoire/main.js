@@ -8,6 +8,7 @@ import '@fontsource/ibm-plex-mono/600.css';
 import './repertoire.css';
 
 import { parseRepertoireFile, mergeProgress, buildExportFile } from './model.js';
+import { buildRepertoireFromPgn, mergeRepertoires } from './pgnImport.js';
 import { loadRepertoire, saveRepertoire, loadProgress, saveProgress } from './storage.js';
 import { startTrainer } from './app.js';
 
@@ -32,18 +33,47 @@ async function importFile(file) {
     showImporter('Could not read that file.');
     return;
   }
-  const parsed = parseRepertoireFile(text);
-  if (!parsed.ok) {
-    showImporter(parsed.error);
+
+  const trimmed = text.trim();
+  const looksJson = file.name?.toLowerCase().endsWith('.json') || trimmed.startsWith('{');
+
+  if (looksJson) {
+    const parsed = parseRepertoireFile(text);
+    if (!parsed.ok) {
+      showImporter(parsed.error);
+      return;
+    }
+    const merged = mergeProgress(loadProgress(), parsed.progress);
+    if (!saveProgress(merged)) {
+      showImporter('This browser would not save your progress (storage is full or blocked).');
+      return;
+    }
+    try {
+      await saveRepertoire(parsed.repertoire, parsed.name);
+    } catch (_) {
+      showImporter('This browser would not save the repertoire (storage is full or blocked, or this is a private window).');
+      return;
+    }
+    location.reload();
     return;
   }
-  const merged = mergeProgress(loadProgress(), parsed.progress);
-  if (!saveProgress(merged)) {
-    showImporter('This browser would not save your progress (storage is full or blocked).');
+
+  const color = $('imp-pgn-color')?.value === 'b' ? 'b' : 'w';
+  const built = buildRepertoireFromPgn(text, {
+    color,
+    name: file.name ? file.name.replace(/\.pgn$/i, '') : '',
+  });
+  if (!built.ok) {
+    showImporter(built.error);
     return;
   }
+  const existing = await loadRepertoire();
+  const nextRep = existing?.repertoire
+    ? mergeRepertoires(existing.repertoire, built.repertoire)
+    : built.repertoire;
+  const nextName = existing?.name || built.name;
   try {
-    await saveRepertoire(parsed.repertoire, parsed.name);
+    await saveRepertoire(nextRep, nextName);
   } catch (_) {
     showImporter('This browser would not save the repertoire (storage is full or blocked, or this is a private window).');
     return;

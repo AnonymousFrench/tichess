@@ -12,7 +12,8 @@ import { PIECE_SVG } from '../chess/pieces.js';
 import { encodeMoveLine } from '../chess/shareUrl.js';
 import { MIN, HOUR, DAY, cardStatus, gradeRecord, learnRecord } from './model.js';
 
-const STOCKFISH_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite-single.js`;
+const STOCKFISH_MT_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite.js`;
+const STOCKFISH_ST_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite-single.js`;
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 /** Piece images as data URIs, keyed by FEN letter, from tichess's own set. */
@@ -197,7 +198,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   function chessDests(fen){ return sq=>{ try{ const g=new Chess(fen); return [...new Set(g.moves({square:sq,verbose:true}).map(m=>m.to))]; }catch(_){ return []; } }; }
   function sideToMove(fen){ return fen.split(" ")[1]; }
   function ownPiece(fen,board){ const w=sideToMove(fen)==="w"; return sq=>{ const p=board.pcEl[sq]&&board.pcEl[sq].dataset.p; return !!p && (w? p===p.toUpperCase() : p===p.toLowerCase()); }; }
-  function tryMove(fen,from,to){ try{ const g=new Chess(fen); const m=g.move({from,to,promotion:"q"}); if(!m) return null; return {m, fen:g.fen(), uci:from+to+(m.promotion||"")}; }catch(_){ return null; } }
+  function tryMove(fen,from,to,promo){ try{ const g=new Chess(fen); const m=g.move({from,to,promotion:promo||"q"}); if(!m) return null; return {m, fen:g.fen(), uci:from+to+(m.promotion||"")}; }catch(_){ return null; } }
   function checkSq(fen){ try{ const g=new Chess(fen); if(!g.inCheck()) return null; const b=g.board(); for(let r=0;r<8;r++) for(let f=0;f<8;f++){ const p=b[r][f]; if(p&&p.type==="k"&&p.color===g.turn()) return "abcdefgh"[f]+(8-r); } }catch(_){} return null; }
 
   /* ---------- progress store (this browser only) ---------- */
@@ -658,7 +659,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   function anFen(){ return an.idx===0?an.start:an.moves[an.idx-1].fen; }
   function exploreFrom(fen,moves,label){ an.start=fen; an.moves=moves||[]; an.idx=an.moves.length; an.label=label||"Analysis"; an.flip=sideToMove(fen)==="b"; an.vs=null; }
-  function anPlay(from,to){ const r=tryMove(anFen(),from,to); if(!r) return; an.moves=an.moves.slice(0,an.idx).concat([{san:r.m.san,from,to,uci:r.uci,fen:r.fen}]); an.idx++; an.instant=true; renderExplore(); }
+  function anPlay(from,to,promo){ const r=tryMove(anFen(),from,to,promo); if(!r) return; an.moves=an.moves.slice(0,an.idx).concat([{san:r.m.san,from,to,uci:r.uci,fen:r.fen}]); an.idx++; an.instant=true; renderExplore(); }
   function anGo(i){ an.idx=Math.max(0,Math.min(an.moves.length,i)); renderExplore(); }
   function renderExplore(){
     const fen=anFen();
@@ -677,30 +678,56 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   function vsToggle(){
     if(an.vs){ an.vs=null; engStop(); renderExplore(); return; }
-    an.vs=an.flip?"b":"w"; engInit(); renderExplore();
+    an.vs=an.flip?"b":"w"; engInit(ENG.failed); renderExplore();
   }
   $("x-vs").onclick=vsToggle;
   $("x-lvl").onchange=e=>{ try{ localStorage.setItem("rt2-vslvl",e.target.value); }catch(_){} };
   $("x-start").onclick=()=>anGo(0); $("x-prev").onclick=()=>anGo(an.idx-1); $("x-next").onclick=()=>anGo(an.idx+1);
   $("x-reset").onclick=()=>{ exploreFrom(START,[],"Starting position"); an.flip=false; renderExplore(); };
   $("x-flip").onclick=()=>{ an.flip=!an.flip; if(an.vs) an.vs=an.flip?"b":"w"; renderExplore(); };
-  const ENG={w:null,ready:false,failed:false,loading:false,on:true,searching:false,pending:null,fen:null,lines:[],depth:0,raf:0,kind:"",err:"",note:"",playing:false,playFen:null,pendingPlay:null};
+  const ENG={w:null,ready:false,failed:false,loading:false,on:true,searching:false,pending:null,fen:null,lines:[],depth:0,raf:0,kind:"",threads:1,err:"",note:"",playing:false,playFen:null,pendingPlay:null};
   function engPost(c){ try{ ENG.w.postMessage(c); }catch(_){} }
-  async function engInit(){
-    if(ENG.ready||ENG.failed||ENG.loading) return;
-    ENG.loading=true; ENG.note="Starting the engine…"; renderLive();
-    try{ await engBoot(); }catch(e){ ENG.failed=true; ENG.err=String((e&&e.message)||e).slice(0,200); }
+  async function engInit(forceRetry=false){
+    if(ENG.ready||ENG.loading) return;
+    if(ENG.failed && !forceRetry) return;
+    ENG.failed=false; ENG.err=""; ENG.loading=true; ENG.note="Starting Stockfish 19 Lite…"; renderLive();
+    const canMt=typeof crossOriginIsolated!=="undefined" && crossOriginIsolated===true && typeof SharedArrayBuffer!=="undefined";
+    const threads=canMt?Math.min(4,Math.max(1,(navigator.hardwareConcurrency||2)-1)):1;
+    try{
+      if(canMt && threads>1){
+        try{ await engBoot(STOCKFISH_MT_URL,threads,6000); }
+        catch(_){ ENG.note="Switching to single-threaded Stockfish…"; renderLive(); await engBoot(STOCKFISH_ST_URL,1,30000); }
+      } else {
+        await engBoot(STOCKFISH_ST_URL,1,30000);
+      }
+    }catch(e){ ENG.failed=true; ENG.err=String((e&&e.message)||e).slice(0,200); }
     ENG.loading=false; renderLive();
   }
-  function engBoot(){
+  function engBoot(url,threads,timeoutMs){
     return new Promise((res,rej)=>{
-      let w,to;
-      try{ w=new Worker(STOCKFISH_URL); }catch(e){ return rej(e); }
+      let w,to,gotUciOk=false;
+      try{ w=new Worker(url); }catch(e){ return rej(e); }
       const fail=m=>{ clearTimeout(to); try{ w.terminate(); }catch(_){} rej(new Error(m)); };
-      to=setTimeout(()=>fail("no answer from the engine"),30000);
-      w.onmessage=e=>{ if(String(e.data)!=="readyok") return; clearTimeout(to); ENG.w=w; ENG.ready=true; ENG.kind="wasm"; w.onmessage=ev=>engMsg(String(ev.data)); engPost("setoption name MultiPV value 3"); engPost("isready"); res(); };
+      to=setTimeout(()=>fail("no answer from the engine"),timeoutMs||30000);
+      w.onmessage=e=>{
+        const msg=String(e.data||"");
+        if(msg==="uciok" && !gotUciOk){
+          gotUciOk=true;
+          if(threads>1){ w.postMessage("setoption name Threads value "+threads); w.postMessage("setoption name Hash value 32"); }
+          w.postMessage("setoption name MultiPV value 3");
+          w.postMessage("isready");
+          return;
+        }
+        if(msg==="readyok" && gotUciOk){
+          clearTimeout(to);
+          ENG.w=w; ENG.ready=true; ENG.kind=threads>1?"wasm-mt":"wasm"; ENG.threads=threads;
+          w.onmessage=ev=>engMsg(String(ev.data||""));
+          if(tab==="explore") renderExplore();
+          res();
+        }
+      };
       w.onerror=ev=>{ ev.preventDefault&&ev.preventDefault(); fail((ev&&ev.message)||"engine worker error"); };
-      w.postMessage("uci"); w.postMessage("isready");
+      w.postMessage("uci");
     });
   }
   function engMsg(s){
@@ -711,7 +738,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
         const bm=s.split(" ")[1], f=ENG.playFen; ENG.playFen=null;
         if(ENG.pendingPlay){ const p=ENG.pendingPlay; ENG.pendingPlay=null; engPlay(p); return; }
         if(ENG.pending){ const p=ENG.pending; ENG.pending=null; engStart(p); return; }
-        if(an.vs && tab==="explore" && bm && bm!=="(none)" && f===anFen() && an.idx===an.moves.length){ anPlay(bm.slice(0,2),bm.slice(2,4)); return; }
+        if(an.vs && tab==="explore" && bm && bm!=="(none)" && f===anFen() && an.idx===an.moves.length){ anPlay(bm.slice(0,2),bm.slice(2,4),bm[4]); return; }
         renderLive(); return; }
       if(ENG.pendingPlay){ const p=ENG.pendingPlay; ENG.pendingPlay=null; ENG.pending=null; engPlay(p); return; }
       if(ENG.pending){ const f=ENG.pending; ENG.pending=null; engStart(f); } else renderLive(); return; }
@@ -742,9 +769,14 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     engPost("position fen "+fen); engPost("go movetime "+L.ms); renderLive();
   }
   function uciToSan(fen,pv,n){ const g=new Chess(fen), out=[]; for(const u of pv.slice(0,n)){ let m; try{ m=g.move({from:u.slice(0,2),to:u.slice(2,4),promotion:u[4]||"q"}); }catch(_){ break; } if(!m) break; out.push(m.san); } return out; }
+  function appendRetryEngineBtn(box){
+    const b=document.createElement("button"); b.className="btn"; b.style.marginTop="6px"; b.textContent="Retry Stockfish";
+    b.onclick=()=>engInit(true);
+    box.appendChild(b);
+  }
   function renderLive(){
     if(tab!=="explore") return;
-    const fen=anFen(), g=new Chess(fen), NAME="Stockfish 19 Lite";
+    const fen=anFen(), g=new Chess(fen), NAME=ENG.threads>1?("Stockfish 19 Lite MT ("+ENG.threads+"T)"):"Stockfish 19 Lite";
     $("x-toggle").textContent=ENG.on?"Pause":"Resume";
     const box=$("x-lines"); box.innerHTML="";
     const vsOn=!!an.vs; $("x-vs").textContent=vsOn?"Stop and analyze":"Play vs Stockfish"; $("x-vs").className="btn"+(vsOn?"":" primary");
@@ -752,7 +784,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     $("x-vsstate").textContent=vsOn?("You play "+(an.vs==="w"?"White":"Black")+". Analysis is hidden until you stop. Use ◀ to take back."):"Practice this position: play it out against Stockfish.";
     if(vsOn && !g.isGameOver()){
       $("x-eval").textContent="vs"; $("x-eval").className="evalchip";
-      if(ENG.failed){ $("x-head").textContent="Live engine unavailable"; $("x-status").textContent="The engine could not start in this view, so it can't play moves."; return; }
+      if(ENG.failed){ $("x-head").textContent="Live engine unavailable"; $("x-status").textContent="Stockfish could not start ("+(ENG.err||"worker blocked")+")."; appendRetryEngineBtn(box); return; }
       if(!ENG.ready){ $("x-head").textContent="Stockfish · starting"; $("x-status").textContent=ENG.note||"Loading the engine in your browser."; return; }
       const myTurn=sideToMove(fen)===an.vs;
       $("x-head").textContent="Playing Stockfish · "+$("x-lvl").selectedOptions[0].textContent;
@@ -760,14 +792,14 @@ export function startTrainer({ data: D, progress, saveProgress }) {
       return;
     }
     if(g.isGameOver()){ $("x-eval").textContent=g.isCheckmate()?(g.turn()==="w"?"0-1":"1-0"):"½-½"; $("x-eval").className="evalchip"; $("x-head").textContent="Game over"; $("x-status").textContent=g.isCheckmate()?"Checkmate.":"Draw."; return; }
-    if(ENG.failed){ $("x-eval").textContent="–"; $("x-head").textContent="Live engine unavailable"; $("x-status").textContent="The engine could not start in this view ("+ENG.err.slice(0,240)+"). The Study tab still has the stored engine lines."; return; }
+    if(ENG.failed){ $("x-eval").textContent="–"; $("x-head").textContent="Live engine unavailable"; $("x-status").textContent="Stockfish could not start ("+(ENG.err||"worker blocked")+"). The Study tab still has the stored engine lines."; appendRetryEngineBtn(box); return; }
     if(!ENG.ready){ $("x-eval").textContent="…"; $("x-head").textContent="Stockfish · starting"; $("x-status").textContent=ENG.note||"Loading the engine in your browser."; return; }
     if(!ENG.on){ $("x-head").textContent=NAME+" · paused"; $("x-status").textContent="Press Resume to analyze."; return; }
     const lines=ENG.lines.filter(Boolean), top=lines[0];
     $("x-eval").textContent=top?fmtEv(top.v):"…"; $("x-eval").className="evalchip"+(top&&evNeg(top.v)?" neg":"");
     $("x-head").textContent=NAME+" · depth "+(ENG.depth||"…")+(ENG.searching?"":" · done");
     $("x-status").innerHTML=top?fmtPv(uciToSan(fen,top.pv,10),plyOfFen(fen)):"Thinking…";
-    lines.forEach(l=>{ const b=document.createElement("button"); b.className="lline"; b.innerHTML='<span class="e">'+fmtEv(l.v)+'</span><span class="pv">'+fmtPv(uciToSan(fen,l.pv,8),plyOfFen(fen))+'</span>'; b.onclick=()=>anPlay(l.pv[0].slice(0,2),l.pv[0].slice(2,4)); box.appendChild(b); });
+    lines.forEach(l=>{ const b=document.createElement("button"); b.className="lline"; b.innerHTML='<span class="e">'+fmtEv(l.v)+'</span><span class="pv">'+fmtPv(uciToSan(fen,l.pv,8),plyOfFen(fen))+'</span>'; b.onclick=()=>anPlay(l.pv[0].slice(0,2),l.pv[0].slice(2,4),l.pv[0][4]); box.appendChild(b); });
   }
   $("x-toggle").onclick=()=>{ ENG.on=!ENG.on; if(ENG.on) engAnalyze(anFen(),true); else engStop(); renderLive(); };
 

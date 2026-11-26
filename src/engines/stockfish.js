@@ -100,7 +100,13 @@ function renderSfError(message) {
   }
 }
 
+let cloudAbortCtrl = null;
+
 export function stopLocalSf() {
+  if (cloudAbortCtrl) {
+    cloudAbortCtrl.abort();
+    cloudAbortCtrl = null;
+  }
   if (wsSession) {
     wsSession.stop();
   }
@@ -140,16 +146,19 @@ export async function triggerSfAnalysis() {
     return;
   }
 
-  // Stop any previous search immediately so old info lines cannot leak during cloud fetch
+  // Stop any previous search / cloud fetch immediately so old info lines cannot leak
   stopLocalSf();
 
   // 1. Try Lichess Cloud Eval first if enabled (and not overridden by local UCI bridge)
   if (state.sf.cloudEnabled && state.sf.mode !== 'ws') {
+    const ctrl = new AbortController();
+    cloudAbortCtrl = ctrl;
     try {
-      const data = await fetchCloudEval(fen, 3);
+      const data = await fetchCloudEval(fen, 3, { signal: ctrl.signal });
       if (reqId !== state.sf.cloudReqId || fen !== getCurrentFen()) return;
       if (data?.pvs?.length) {
-        stopLocalSf();
+        if (wsSession) wsSession.stop();
+        if (wasmSession) wasmSession.stop();
         const flip = fen.split(' ')[1] === 'b' ? -1 : 1;
         const nodes = typeof data.knodes === 'number' ? data.knodes * 1000 : null;
         data.pvs.slice(0, 3).forEach((pvObj, idx) => {
@@ -174,9 +183,13 @@ export async function triggerSfAnalysis() {
           return;
         }
       }
-    } catch (_) {
-      if (reqId !== state.sf.cloudReqId || fen !== getCurrentFen()) return;
-      // Fall through to local Stockfish 19 WASM
+    } catch (err) {
+      if (err?.name === 'AbortError' || reqId !== state.sf.cloudReqId || fen !== getCurrentFen()) {
+        return;
+      }
+      // Fall through to local Stockfish 19 WASM (including on RateLimitError)
+    } finally {
+      if (cloudAbortCtrl === ctrl) cloudAbortCtrl = null;
     }
   }
 

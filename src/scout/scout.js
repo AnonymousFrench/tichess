@@ -27,7 +27,11 @@ function renderWdlBar(w, d, l) {
   }</div>`;
 }
 
+let scoutMovesReqId = 0;
+let scoutGamesReqId = 0;
+
 export async function refreshPlayerScout() {
+  const reqId = ++scoutMovesReqId;
   const tbody = document.getElementById('scoutTableBody');
   if (!tbody) return;
 
@@ -38,6 +42,7 @@ export async function refreshPlayerScout() {
   }
 
   const rec = await dbLookupPos(col.id, normalizeFen(getCurrentFen()));
+  if (reqId !== scoutMovesReqId) return;
   if (!rec || !rec.entries?.length) {
     tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">No games in ${escapeHtml(col.name)} reached this position.</td></tr>`;
     return;
@@ -85,6 +90,7 @@ export async function refreshPlayerScout() {
 }
 
 export async function renderScoutedGamesTable() {
+  const reqId = ++scoutGamesReqId;
   const tbody = document.getElementById('scoutedGamesBody');
   if (!tbody) return;
 
@@ -94,6 +100,7 @@ export async function renderScoutedGamesTable() {
   }
 
   const rec = await dbLookupPos(state.activeScoutId, normalizeFen(getCurrentFen()));
+  if (reqId !== scoutGamesReqId) return;
   if (!rec || !rec.entries?.length) {
     tbody.innerHTML = `<tr><td colspan="8" class="py-5 text-center text-txtMuted">No scouted games match this exact position.</td></tr>`;
     return;
@@ -101,6 +108,7 @@ export async function renderScoutedGamesTable() {
 
   const gids = Array.from(new Set(rec.entries.map((e) => e.gid))).slice(0, 50);
   const games = await dbGetGamesByIds(gids);
+  if (reqId !== scoutGamesReqId) return;
   tbody.innerHTML = games
     .map(
       (g, i) => `

@@ -1,15 +1,26 @@
-export async function fetchChessComArchives(username) {
-  const resp = await fetch(
-    `https://api.chess.com/pub/player/${encodeURIComponent(username.toLowerCase())}/games/archives`
-  );
-  if (!resp.ok) throw new Error(`Player "${username}" not found on Chess.com`);
-  const data = await resp.json();
-  return data.archives || [];
+import { fetchJson } from './http.js';
+
+export async function fetchChessComArchives(username, { signal } = {}) {
+  try {
+    const data = await fetchJson(
+      `https://api.chess.com/pub/player/${encodeURIComponent(username.toLowerCase())}/games/archives`,
+      { signal }
+    );
+    return data?.archives || [];
+  } catch (err) {
+    if (err.status === 404) {
+      throw new Error(`Player "${username}" not found on Chess.com`);
+    }
+    throw err;
+  }
 }
 
-export async function fetchChessComMonthGames(archiveUrl) {
-  const resp = await fetch(archiveUrl);
-  if (!resp.ok) return [];
-  const data = await resp.json();
-  return data.games || [];
+export async function fetchChessComMonthGames(archiveUrl, { signal } = {}) {
+  try {
+    const data = await fetchJson(archiveUrl, { signal, allow404: true });
+    return data?.games || [];
+  } catch (err) {
+    if (err.name === 'AbortError' || err.name === 'RateLimitError') throw err;
+    return [];
+  }
 }

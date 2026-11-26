@@ -6,6 +6,7 @@ import {
   getCurrentFen,
   showToast,
   copyText,
+  debounce,
   onPositionChange,
   emitPositionChanged,
 } from './state.js';
@@ -22,6 +23,7 @@ import {
 import { updateEvalBarFromState } from './engines/uci.js';
 import {
   initStockfish,
+  stopLocalSf,
   triggerSfAnalysis,
   connectSfWs,
   disconnectSfWs,
@@ -435,16 +437,21 @@ function bindEvents() {
   });
 }
 
-// Subscribe all views to position changes
-onPositionChange(() => {
-  renderBoardTabs();
-  renderBoard();
-  renderVariationTree();
+const debouncedPositionLookups = debounce(() => {
   refreshReferenceExplorer();
   refreshPlayerScout();
   if (state.activeHub === 'scouted') renderScoutedGamesTable();
   triggerLc0Analysis();
   triggerSfAnalysis();
+}, 250);
+
+// Subscribe all views to position changes
+onPositionChange(() => {
+  renderBoardTabs();
+  renderBoard();
+  renderVariationTree();
+  stopLocalSf();
+  debouncedPositionLookups();
 });
 
 async function bootstrap() {

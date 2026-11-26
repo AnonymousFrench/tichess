@@ -320,7 +320,7 @@
             </div>
 
             <!-- Sub-view 1: Dynamic Tournament Rounds Table -->
-            <div id="liveScheduleWrap" class="overflow-x-auto border border-borderSubtle rounded">
+            <div id="liveScheduleWrap" class="min-h-[160px] shrink-0 overflow-x-auto border border-borderSubtle rounded">
               <table class="pro-table w-full text-left border-collapse text-[11px]">
                 <thead>
                   <tr>
@@ -591,7 +591,8 @@
         <div class="text-xs font-semibold text-em">1. Lichess Personal Access Token (Optional)</div>
         <p class="text-[11px] text-txtMuted">
           Unlocks full-depth Masters OTB &amp; Lichess Opening Explorer APIs (Live Broadcasts &amp; Cloud Eval work without a token).
-          <a href="https://lichess.org/account/oauth/token" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">Get free token ↗</a>
+          <span class="text-txt">Leave all scopes unchecked</span> — Explorer only needs an unscoped read token.
+          <a href="https://lichess.org/account/oauth/token/create?description=tichess" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">Get free token ↗</a>
         </p>
         <div class="flex gap-2">
           <input id="inputLichessToken" type="password" placeholder="lip_xxxxxxxxxxxxxxxxxxxx" class="flex-1 px-2.5 py-1.5 rounded bg-panel border border-borderSubtle font-mono text-xs focus:outline-none focus:border-em" />
@@ -612,7 +613,7 @@
             <div class="flex gap-1">
               <input id="inputLc0WsUrl" type="text" placeholder="ws://localhost:8080" class="flex-1 min-w-0 px-2 py-1 rounded bg-panel border border-borderSubtle font-mono text-[11px]" />
               <button id="btnConnectLc0Ws" class="px-2 py-1 rounded bg-vi/20 hover:bg-vi/30 text-vi border border-vi/40 text-[11px] font-semibold">Connect</button>
-              <button id="btnDisconnectLc0Ws" class="px-1.5 py-1 rounded bg-surface hover:bg-surfaceHover text-txtMuted border border-borderSubtle text-[11px]" title="Disconnect Lc0">✕</button>
+              <button id="btnDisconnectLc0Ws" class="px-1.5 py-1 rounded bg-surface hover:bg-surfaceHover text-txtMuted border border-borderSubtle text-[11px]" title="Disconnect Lc0" aria-label="Disconnect Lc0">✕</button>
             </div>
           </div>
           <div>
@@ -620,23 +621,28 @@
             <div class="flex gap-1">
               <input id="inputSfWsUrl" type="text" placeholder="ws://localhost:8081" class="flex-1 min-w-0 px-2 py-1 rounded bg-panel border border-borderSubtle font-mono text-[11px]" />
               <button id="btnConnectSfWs" class="px-2 py-1 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/40 text-[11px] font-semibold">Connect</button>
-              <button id="btnDisconnectSfWs" class="px-1.5 py-1 rounded bg-surface hover:bg-surfaceHover text-txtMuted border border-borderSubtle text-[11px]" title="Disconnect SF">✕</button>
+              <button id="btnDisconnectSfWs" class="px-1.5 py-1 rounded bg-surface hover:bg-surfaceHover text-txtMuted border border-borderSubtle text-[11px]" title="Disconnect SF" aria-label="Disconnect Stockfish">✕</button>
             </div>
           </div>
         </div>
+        <p class="text-[10.5px] text-txtMuted">
+          Works from HTTPS deployments in Chrome and Firefox (<code class="font-mono text-txt/90">ws://localhost</code>); Safari may block mixed-content WebSockets on HTTPS pages.
+        </p>
         <div>
           <div class="flex items-center justify-between mb-1">
-            <span class="text-[10.5px] text-txtMuted font-semibold">Node.js UCI Bridge Script (bridge.js)</span>
+            <span class="text-[10.5px] text-txtMuted font-semibold">Node.js UCI Bridge Script (bridge.mjs)</span>
             <button id="btnCopyBridgeScript" class="text-[10.5px] text-cy hover:underline font-mono">Copy Script</button>
           </div>
-          <pre id="bridgeScriptCode" class="p-2 rounded bg-[#0b0f17] border border-borderSubtle font-mono text-[10px] text-txtMuted overflow-x-auto leading-relaxed">// npm i ws &amp;&amp; ENGINE=lc0 PORT=8080 node bridge.js
-const { WebSocketServer } = require('ws');
-const { spawn } = require('child_process');
-const wss = new WebSocketServer({ port: Number(process.env.PORT || 8080) });
+          <pre id="bridgeScriptCode" class="p-2 rounded bg-[#0b0f17] border border-borderSubtle font-mono text-[10px] text-txtMuted overflow-x-auto leading-relaxed">// npm i ws &amp;&amp; ENGINE=lc0 PORT=8080 node bridge.mjs
+import { WebSocketServer } from 'ws';
+import { spawn } from 'node:child_process';
+import readline from 'node:readline';
+const wss = new WebSocketServer({ host: '127.0.0.1', port: Number(process.env.PORT || 8080) });
 wss.on('connection', (ws) =&gt; {
-  const proc = spawn(process.env.ENGINE || 'lc0', []);
-  proc.stdout.on('data', (d) =&gt; d.toString().split(/\r?\n/).forEach(l =&gt; l &amp;&amp; ws.send(l)));
-  ws.on('message', (m) =&gt; proc.stdin.write(m.toString() + '\n'));
+  const proc = spawn(process.env.ENGINE || 'lc0', (process.env.ENGINE_ARGS || '').split(' ').filter(Boolean));
+  readline.createInterface({ input: proc.stdout }).on('line', (l) =&gt; l &amp;&amp; ws.readyState === 1 &amp;&amp; ws.send(l));
+  proc.on('exit', () =&gt; ws.close());
+  ws.on('message', (m) =&gt; proc.stdin.write(m.toString().trim() + '\n'));
   ws.on('close', () =&gt; proc.kill());
 });</pre>
         </div>

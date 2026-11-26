@@ -8,6 +8,7 @@ import {
   fetchTopBroadcasts,
   searchBroadcasts,
   fetchBroadcastTournament,
+  fetchBroadcastRoundById,
   fetchBroadcastRoundPgn,
 } from '../api/lichess.js';
 import { createTreeFromPgn, mergeMainline, extractClocksFromPgn } from '../chess/tree.js';
@@ -529,8 +530,14 @@ export async function pollActiveRoundPgn() {
     if (allGamesFinished && (hadLiveGamesBefore || selectedRound?.ongoing === true)) {
       refreshFeaturedTournament({ silent: true });
     }
-  } catch (_) {
-    // Silent retry on next poll
+  } catch (err) {
+    if (err?.name === 'RateLimitError') {
+      state.liveCountdown = Math.max(60, Math.ceil((err.retryAfterMs || 60_000) / 1000));
+      const badge = document.getElementById('liveCountdownBadge');
+      if (badge) badge.textContent = `${state.liveCountdown}s`;
+      showToast('Lichess rate limit — retrying in 60s', true);
+    }
+    // Otherwise silent retry on next poll
   }
 }
 
@@ -681,34 +688,87 @@ export function renderAllBroadcastsList() {
   });
 }
 
+/**
+ * Parse a pasted Lichess broadcast URL or raw ID into `{ type: 'round'|'tour', id }`.
+ */
+export function parseBroadcastInput(raw) {
+  const s = (raw || '').trim();
+  if (!s) return null;
+
+  // Match /broadcast/<slug>/<round-slug>/<roundId> (optionally followed by /<gameId>)
+  const fullRoundMatch = s.match(/lichess\.org\/broadcast\/[^/]+\/[^/]+\/([a-zA-Z0-9]{8})(?:\/[a-zA-Z0-9]{8})?(?:\/?$|\?|#)/);
+  if (fullRoundMatch) return { type: 'round', id: fullRoundMatch[1] };
+
+  // Match /broadcast/round/<roundId>
+  const directRoundMatch = s.match(/broadcast\/round\/([a-zA-Z0-9]{8})/);
+  if (directRoundMatch) return { type: 'round', id: directRoundMatch[1] };
+
+  // Match /broadcast/<slug>/<tourId>
+  const tourOnlyMatch = s.match(/lichess\.org\/broadcast\/[^/]+\/([a-zA-Z0-9]{8})(?:\/?$|\?|#)/);
+  if (tourOnlyMatch) return { type: 'tour', id: tourOnlyMatch[1] };
+
+  // Bare 8-char ID or last path segment
+  const bareId = s.match(/^([a-zA-Z0-9]{8})$/);
+  if (bareId) return { type: 'round', id: bareId[1] };
+
+  const clean = s.split(/[?#]/)[0];
+  const parts = clean.split('/').filter(Boolean);
+  const last = parts[parts.length - 1];
+  return last ? { type: 'round', id: last } : null;
+}
+
+function isSelectedRoundFinished() {
+  const round = getSelectedRound();
+  if (!round) return false;
+  if (round.finished === true && round.ongoing !== true) {
+    return !state.liveRoundGames.some((g) => g.result === '*');
+  }
+  return false;
+}
+
 export async function loadCustomBroadcastFromInput() {
   const input = document.getElementById('customBroadcastInput');
-  const raw = (input?.value || '').trim();
-  if (!raw) return;
+  const parsed = parseBroadcastInput(input?.value || '');
+  if (!parsed) return;
 
-  // Match /broadcast/<slug>/<round-slug>/<roundId> or /broadcast/round/<roundId>
-  const fullRoundMatch = raw.match(/lichess\.org\/broadcast\/[^/]+\/[^/]+\/([a-zA-Z0-9]{8})/);
-  const directRoundMatch = raw.match(/broadcast\/round\/([a-zA-Z0-9]{8})/);
-  const tourOnlyMatch = raw.match(/lichess\.org\/broadcast\/[^/]+\/([a-zA-Z0-9]{8})(?:\/?$|\?|#)/);
-
-  if (tourOnlyMatch && !fullRoundMatch) {
-    showToast(`Loading broadcast tournament ${tourOnlyMatch[1]}...`);
-    await selectFeaturedTournament(tourOnlyMatch[1]);
+  if (parsed.type === 'tour') {
+    showToast(`Loading broadcast tournament ${parsed.id}...`);
+    await selectFeaturedTournament(parsed.id, null, { userPicked: false });
     return;
   }
 
-  let roundId = raw;
-  if (fullRoundMatch) roundId = fullRoundMatch[1];
-  else if (directRoundMatch) roundId = directRoundMatch[1];
-  else {
-    const parts = raw.split('/').filter(Boolean);
-    roundId = parts[parts.length - 1];
+  const roundId = parsed.id;
+  state.userPinnedRound = true;
+  showToast(`Connecting to broadcast round ${roundId}...`);
+
+  try {
+    const info = await fetchBroadcastRoundById(roundId);
+    if (info?.tour?.id) {
+      await selectFeaturedTournament(info.tour.id, roundId, { userPicked: true });
+      if (state.liveRoundGames.length) {
+        showToast(`Loaded ${state.liveRoundGames.length} game(s)`);
+      } else {
+        showToast(`Loaded ${info.tour.name} (${info.round?.name || roundId})`);
+      }
+      return;
+    }
+    if (info?.tour || info?.round) {
+      state.featuredTour = {
+        tour: info.tour || { id: '', name: `Custom Broadcast (${roundId})` },
+        rounds: info.round ? [info.round] : [],
+      };
+      state.lastTourRefreshAt = Date.now();
+      state.liveRoundId = roundId;
+      state.liveRoundName = `${info.tour?.name || 'Broadcast'} · ${info.round?.name || roundId}`;
+      renderTournamentRoundsTable();
+      updateSpotlightBanner();
+    }
+  } catch (_) {
+    // Fall back to direct round PGN fetch below
+    state.liveRoundId = roundId;
+    state.liveRoundName = `Custom Broadcast (${roundId})`;
   }
 
-  state.userPinnedRound = true;
-  state.liveRoundId = roundId;
-  state.liveRoundName = `Custom Broadcast (${roundId})`;
-  showToast(`Connecting to broadcast round ${roundId}...`);
   await pollActiveRoundPgn();
   if (state.liveRoundGames.length) {
     showToast(`Loaded ${state.liveRoundGames.length} game(s)`);
@@ -718,17 +778,50 @@ export async function loadCustomBroadcastFromInput() {
 }
 
 export function startLivePollTimer() {
+  const updateBadge = (text) => {
+    const badge = document.getElementById('liveCountdownBadge');
+    if (badge) badge.textContent = text;
+  };
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) return;
+      if (state.featuredTour?.tour?.id && Date.now() - state.lastTourRefreshAt >= 30_000) {
+        refreshFeaturedTournament({ silent: true });
+      }
+      if (state.liveAutoPoll && state.liveRoundId && !isSelectedRoundFinished()) {
+        state.liveCountdown = 15;
+        updateBadge(`${state.liveCountdown}s`);
+        pollActiveRoundPgn();
+      }
+    });
+  }
+
   setInterval(() => {
-    if (state.featuredTour?.tour?.id && Date.now() - state.lastTourRefreshAt >= TOUR_REFRESH_INTERVAL_MS) {
+    if (typeof document !== 'undefined' && document.hidden) return;
+
+    if (
+      state.featuredTour?.tour?.id &&
+      Date.now() - state.lastTourRefreshAt >= TOUR_REFRESH_INTERVAL_MS
+    ) {
       refreshFeaturedTournament({ silent: true });
     }
-    if (!state.liveAutoPoll) return;
+
+    if (isSelectedRoundFinished()) {
+      updateBadge('Final');
+      return;
+    }
+
+    if (!state.liveAutoPoll) {
+      updateBadge('Paused');
+      return;
+    }
+
     state.liveCountdown--;
     if (state.liveCountdown <= 0) {
       state.liveCountdown = 15;
       pollActiveRoundPgn();
     }
-    const badge = document.getElementById('liveCountdownBadge');
-    if (badge) badge.textContent = `${state.liveCountdown}s`;
+    updateBadge(`${state.liveCountdown}s`);
   }, 1000);
 }

@@ -45,18 +45,26 @@ function getFallbackOpeningForCurrentPosition(fen) {
   return { eco: '—', name: '—' };
 }
 
+let explorerAbortCtrl = null;
+
 export async function refreshReferenceExplorer() {
   const reqId = ++state.refReqId;
   const fen = getCurrentFen();
   const authNote = document.getElementById('refAuthNote');
   if (authNote) authNote.classList.add('hidden');
 
+  if (explorerAbortCtrl) {
+    explorerAbortCtrl.abort();
+  }
+  const ctrl = new AbortController();
+  explorerAbortCtrl = ctrl;
+
   if (normalizeFen(fen) === normalizeFen(START_FEN)) {
     setOpeningPill('—', 'Starting Position');
   }
 
   try {
-    const data = await fetchExplorer(state.refSource, fen);
+    const data = await fetchExplorer(state.refSource, fen, { signal: ctrl.signal });
     if (reqId !== state.refReqId) return;
 
     if (data.opening && (data.opening.eco || data.opening.name)) {
@@ -71,17 +79,20 @@ export async function refreshReferenceExplorer() {
     state.mastersGamesCache = Array.from(new Map(games.map((g) => [g.id, g])).values());
     renderMasterGamesTable();
   } catch (err) {
-    if (reqId !== state.refReqId) return;
+    if (err.name === 'AbortError' || reqId !== state.refReqId) return;
     const fb = getFallbackOpeningForCurrentPosition(fen);
     setOpeningPill(fb.eco, fb.name);
-    if (err.authRequired || !state.lichessToken) {
+    if (err.authRequired || (!state.lichessToken && err.name !== 'RateLimitError')) {
       if (authNote) authNote.classList.remove('hidden');
     }
     state.mastersGamesCache = [];
     document.getElementById('refTotalGames').textContent = '—';
-    const msg = err.authRequired
-      ? 'Lichess Explorer requires a free personal token (add in Settings).'
-      : 'Unable to reach Lichess Explorer API.';
+    const msg =
+      err.name === 'RateLimitError'
+        ? 'Rate limited — retrying in 60s'
+        : err.authRequired
+          ? 'Lichess Explorer requires a free personal token (add in Settings).'
+          : 'Unable to reach Lichess Explorer API.';
     document.getElementById('refTableBody').innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">${escapeHtml(msg)}</td></tr>`;
     renderMasterGamesTable();
   }

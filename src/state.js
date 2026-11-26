@@ -107,6 +107,22 @@ export function formatCount(n) {
   return String(n);
 }
 
+export function debounce(fn, waitMs = 250) {
+  let timer = null;
+  const debounced = (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, waitMs);
+  };
+  debounced.cancel = () => {
+    clearTimeout(timer);
+    timer = null;
+  };
+  return debounced;
+}
+
 let toastTimer = null;
 export function showToast(msg, isError = false) {
   const el = document.getElementById('toast');

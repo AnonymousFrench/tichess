@@ -1,4 +1,5 @@
 import { state } from '../state.js';
+import { fetchJson, fetchText } from './http.js';
 
 export function getLichessHeaders() {
   return state.lichessToken
@@ -6,70 +7,70 @@ export function getLichessHeaders() {
     : { Accept: 'application/json' };
 }
 
-export async function fetchTopBroadcasts() {
-  const resp = await fetch('https://lichess.org/api/broadcast/top', {
+export async function fetchTopBroadcasts({ signal } = {}) {
+  return fetchJson('https://lichess.org/api/broadcast/top', {
+    signal,
     headers: { Accept: 'application/json' },
   });
-  if (!resp.ok) throw new Error(`Broadcast top failed (${resp.status})`);
-  return resp.json();
 }
 
-export async function searchBroadcasts(query) {
-  const resp = await fetch(
+export async function searchBroadcasts(query, { signal } = {}) {
+  return fetchJson(
     `https://lichess.org/api/broadcast/search?q=${encodeURIComponent(query)}`,
-    { headers: { Accept: 'application/json' } }
+    { signal, headers: { Accept: 'application/json' } }
   );
-  if (!resp.ok) throw new Error(`Broadcast search failed (${resp.status})`);
-  return resp.json();
 }
 
-export async function fetchBroadcastTournament(tourId) {
-  const resp = await fetch(
+export async function fetchBroadcastTournament(tourId, { signal } = {}) {
+  return fetchJson(
     `https://lichess.org/api/broadcast/${encodeURIComponent(tourId)}`,
-    { headers: { Accept: 'application/json' } }
+    { signal, headers: { Accept: 'application/json' } }
   );
-  if (!resp.ok) throw new Error(`Broadcast tournament failed (${resp.status})`);
-  return resp.json();
 }
 
-export async function fetchBroadcastRoundPgn(roundId) {
-  const resp = await fetch(
-    `https://lichess.org/api/broadcast/round/${encodeURIComponent(roundId)}.pgn`
+export async function fetchBroadcastRoundById(roundId, { signal } = {}) {
+  return fetchJson(
+    `https://lichess.org/api/broadcast/-/-/${encodeURIComponent(roundId)}`,
+    { signal, headers: { Accept: 'application/json' } }
   );
-  if (!resp.ok) throw new Error(`Broadcast round PGN failed (${resp.status})`);
-  return resp.text();
 }
 
-export async function fetchExplorer(source, fen) {
+export async function fetchBroadcastRoundPgn(roundId, { signal } = {}) {
+  return fetchText(
+    `https://lichess.org/api/broadcast/round/${encodeURIComponent(roundId)}.pgn`,
+    { signal }
+  );
+}
+
+export async function fetchExplorer(source, fen, { signal } = {}) {
   const url =
     source === 'masters'
       ? `https://explorer.lichess.org/masters?fen=${encodeURIComponent(fen)}&topGames=8&recentGames=4`
       : `https://explorer.lichess.org/lichess?fen=${encodeURIComponent(fen)}&ratings=2000,2200,2500&speeds=blitz,rapid,classical&topGames=4&recentGames=6`;
 
-  const resp = await fetch(url, { headers: getLichessHeaders() });
-  if (resp.status === 401 || resp.status === 403) {
-    const err = new Error('Lichess token required');
-    err.authRequired = true;
+  try {
+    return await fetchJson(url, { signal, headers: getLichessHeaders() });
+  } catch (err) {
+    if (err.status === 401 || err.status === 403) {
+      const authErr = new Error('Lichess token required');
+      authErr.authRequired = true;
+      throw authErr;
+    }
     throw err;
   }
-  if (!resp.ok) throw new Error(`Explorer failed (${resp.status})`);
-  return resp.json();
 }
 
-export async function fetchExplorerGamePgn(source, gameId) {
+export async function fetchExplorerGamePgn(source, gameId, { signal } = {}) {
   const url =
     source === 'masters'
       ? `https://explorer.lichess.org/masters/pgn/${encodeURIComponent(gameId)}`
       : `https://lichess.org/game/export/${encodeURIComponent(gameId)}?evals=0&clocks=0`;
-  const resp = await fetch(url, { headers: getLichessHeaders() });
-  if (!resp.ok) throw new Error(`Failed to fetch game PGN (${resp.status})`);
-  return resp.text();
+  return fetchText(url, { signal, headers: getLichessHeaders() });
 }
 
-export async function fetchCloudEval(fen, multiPv = 3) {
-  const resp = await fetch(
-    `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fen)}&multiPv=${multiPv}`
+export async function fetchCloudEval(fen, multiPv = 3, { signal } = {}) {
+  return fetchJson(
+    `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fen)}&multiPv=${multiPv}`,
+    { signal, allow404: true }
   );
-  if (!resp.ok) return null;
-  return resp.json();
 }

@@ -710,6 +710,19 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
   expect(scrollPos.winY).toBe(0);
   expect(scrollPos.mainTop).toBe(0);
 
+  // Mobile board controls fit into one single row, and sub-board order is Engine -> Live/Master -> Variation Tree
+  const mobileLayout = await page.evaluate(() => {
+    const ids = ['btnFirst', 'btnPrev', 'btnNext', 'btnLast', 'btnFlip', 'btnBoardExport'];
+    const ys = ids.map((id) => Math.round(document.getElementById(id).getBoundingClientRect().y));
+    const sfY = document.getElementById('panel-sf').getBoundingClientRect().y;
+    const hubY = document.getElementById('panel-hub').getBoundingClientRect().y;
+    const treeY = document.getElementById('panel-tree').getBoundingClientRect().y;
+    return { ys, sfY, hubY, treeY };
+  });
+  expect(Math.max(...mobileLayout.ys) - Math.min(...mobileLayout.ys)).toBeLessThanOrEqual(2);
+  expect(mobileLayout.sfY).toBeLessThan(mobileLayout.hubY);
+  expect(mobileLayout.hubY).toBeLessThan(mobileLayout.treeY);
+
   // Verify My Games seamlessly falls back to recent public games and shows 1. c4
   await page.click('#btnFirst');
   await expect(page.locator('#refSrcPlayer')).toBeVisible();

@@ -7,7 +7,9 @@
  */
 import { state, DEFAULT_PANELS } from '../state.js';
 
-const LAYOUT_KEY = 'tichess_layout_v1';
+const LAYOUT_KEY = 'tichess_layout_v2';
+const LEGACY_LAYOUT_KEY = 'tichess_layout_v1';
+const LEGACY_DEFAULT_ROWS = { below: ['tree'], r1: ['hub'], r2: ['explorer', 'scout'], r3: ['lc0', 'sf'] };
 export const PANEL_KEYS = ['hub', 'explorer', 'scout', 'sf', 'lc0', 'tree'];
 const ROW_IDS = ['below', 'r1', 'r2', 'r3'];
 const RIGHT_ROWS = ['r1', 'r2', 'r3'];
@@ -25,8 +27,8 @@ export const PANEL_LABELS = {
 };
 
 export const DEFAULT_LAYOUT = {
-  rows: { below: ['tree'], r1: ['hub'], r2: ['explorer', 'scout'], r3: ['lc0', 'sf'] },
-  weights: { r1: 1.25, r2: 1, r3: 1 },
+  rows: { below: ['lc0', 'sf'], r1: ['hub'], r2: ['explorer', 'scout'], r3: ['tree'] },
+  weights: { r1: 1.25, r2: 1, r3: 0.9 },
   leftW: null, // px; null = fit the board to the screen height
   boardTheme: 'slate',
 };
@@ -34,23 +36,23 @@ export const DEFAULT_LAYOUT = {
 export const PRESETS = {
   prep: {
     label: 'Prep',
-    hint: 'Explorer, scout, engine and games',
+    hint: 'Engine below board, games, explorer & moves',
     panels: { hub: true, explorer: true, scout: true, sf: true, lc0: false, tree: true },
-    rows: { below: ['tree'], r1: ['hub'], r2: ['explorer', 'scout'], r3: ['lc0', 'sf'] },
-    weights: { r1: 1.25, r2: 1, r3: 1 },
+    rows: { below: ['lc0', 'sf'], r1: ['hub'], r2: ['explorer', 'scout'], r3: ['tree'] },
+    weights: { r1: 1.25, r2: 1, r3: 0.9 },
   },
   analysis: {
     label: 'Analysis',
     hint: 'Big engine, explorer and notation',
     panels: { hub: false, explorer: true, scout: false, sf: true, lc0: false, tree: true },
-    rows: { below: ['tree'], r1: ['sf', 'lc0'], r2: ['explorer', 'scout'], r3: ['hub'] },
-    weights: { r1: 1.3, r2: 1, r3: 1 },
+    rows: { below: ['lc0', 'sf'], r1: ['explorer', 'scout'], r2: ['tree'], r3: ['hub'] },
+    weights: { r1: 1.2, r2: 1, r3: 1 },
   },
   broadcast: {
     label: 'Broadcast',
     hint: 'Live games first, engine alongside',
     panels: { hub: true, explorer: false, scout: false, sf: true, lc0: false, tree: true },
-    rows: { below: ['tree'], r1: ['hub'], r2: ['sf', 'lc0'], r3: ['explorer', 'scout'] },
+    rows: { below: ['lc0', 'sf'], r1: ['hub'], r2: ['tree'], r3: ['explorer', 'scout'] },
     weights: { r1: 1.6, r2: 1, r3: 1 },
   },
   focus: {
@@ -58,7 +60,7 @@ export const PRESETS = {
     hint: 'Just the board and your notes',
     panels: { hub: false, explorer: false, scout: false, sf: false, lc0: false, tree: true },
     rows: { below: ['tree'], r1: ['hub'], r2: ['explorer', 'scout'], r3: ['lc0', 'sf'] },
-    weights: { r1: 1.25, r2: 1, r3: 1 },
+    weights: { r1: 1.25, r2: 1, r3: 0.9 },
   },
 };
 
@@ -132,9 +134,31 @@ export function movePanelToRow(rows, key, rowId) {
   return next;
 }
 
+/**
+ * Migrate a v1 stored layout to v2: keep boardTheme, leftW, and any manually
+ * customized row arrangement, while upgrading untouched v1 defaults to the new
+ * Engine-first order.
+ */
+export function migrateLegacyLayout(rawV1) {
+  const parsed = normalizeLayout(rawV1);
+  if (!rawV1 || typeof rawV1 !== 'object') return parsed;
+  const isLegacyDefault = ROW_IDS.every(
+    (id) => JSON.stringify(parsed.rows[id]) === JSON.stringify(LEGACY_DEFAULT_ROWS[id])
+  );
+  if (isLegacyDefault) {
+    parsed.rows = structuredClone(DEFAULT_LAYOUT.rows);
+    parsed.weights = { ...DEFAULT_LAYOUT.weights };
+  }
+  return parsed;
+}
+
 function loadLayout() {
   try {
-    return normalizeLayout(JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'));
+    const rawV2 = localStorage.getItem(LAYOUT_KEY);
+    if (rawV2) return normalizeLayout(JSON.parse(rawV2));
+    const rawV1 = localStorage.getItem(LEGACY_LAYOUT_KEY);
+    if (rawV1) return migrateLegacyLayout(JSON.parse(rawV1));
+    return structuredClone(DEFAULT_LAYOUT);
   } catch (_) {
     return structuredClone(DEFAULT_LAYOUT);
   }

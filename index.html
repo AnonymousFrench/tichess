@@ -154,7 +154,7 @@
             <span id="botPlayerClock" class="font-mono font-bold px-2 py-0.5 rounded bg-surface border border-borderSubtle text-txt text-[11px]">--:--</span>
           </div>
 
-          <!-- Controls directly below the board: large, touch-friendly targets -->
+          <!-- Controls directly below the board: single compact row -->
           <div class="board-controls border-t border-borderSubtle bg-bg/55">
             <div class="board-nav" role="group" aria-label="Move navigation">
               <button id="btnFirst" class="board-btn board-btn-nav bg-surface hover:bg-surfaceHover border border-borderSubtle" title="First move (Home)" aria-label="First move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6v12M18 6l-6 6 6 6"/></svg></button>
@@ -164,56 +164,93 @@
             </div>
 
             <div class="board-actions">
-              <button id="btnLiveFollow" class="hidden board-btn bg-ro/20 text-ro border border-ro/40" title="Jump to each new live move">
+              <button id="btnLiveFollow" class="hidden board-btn board-btn-live bg-ro/20 text-ro border border-ro/40" title="Jump to each new live move" aria-label="Follow live moves">
                 <span class="w-2 h-2 rounded-full bg-ro live-dot"></span>
-                <span>Follow</span>
+                <span class="hidden sm:inline">Live</span>
               </button>
-              <button id="btnFlip" class="board-btn bg-surface hover:bg-surfaceHover border border-borderSubtle" title="Flip board (f)"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 20V4M4 7l3-3 3 3M17 4v16M14 17l3 3 3-3"/></svg><span>Flip</span></button>
-              <button id="btnCopyFen" class="board-btn bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono" title="Copy FEN">FEN</button>
-              <button id="btnCopyPgn" class="board-btn bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono" title="Copy PGN">PGN</button>
-              <button id="btnShareLink" class="board-btn bg-em/15 hover:bg-em/25 text-em border border-em/35" title="Copy a link to this analysis">Share</button>
+              <button id="btnFlip" class="board-btn board-btn-ico bg-surface hover:bg-surfaceHover border border-borderSubtle" title="Flip board (f)" aria-label="Flip board"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 20V4M4 7l3-3 3 3M17 4v16M14 17l3 3 3-3"/></svg></button>
+              <div class="board-export-wrap">
+                <button id="btnBoardExport" data-menu="board-export" class="menu-trigger board-btn board-btn-ico bg-surface hover:bg-surfaceHover border border-borderSubtle" title="Copy FEN, PGN, or share link" aria-label="Copy FEN, PGN, or share link" aria-haspopup="menu">
+                  <svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M8 7l4-4 4 4M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6"/></svg>
+                </button>
+                <div id="menu-board-export" class="menu-dropdown board-export-menu hidden" role="menu">
+                  <button class="menu-item" id="btnCopyFen" role="menuitem"><span>Copy FEN</span><span class="menu-key">FEN</span></button>
+                  <button class="menu-item" id="btnCopyPgn" role="menuitem"><span>Copy PGN</span><span class="menu-key">PGN</span></button>
+                  <div class="menu-sep"></div>
+                  <button class="menu-item text-em" id="btnShareLink" role="menuitem"><span>Copy share link</span><span class="menu-key">URL</span></button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- Dock slot under the board (variation tree by default) -->
+        <!-- Dock slot under the board (Engine by default) -->
         <div id="row-below" class="dock-row dock-row-below" data-row="below">
-        <!-- Branching Variation Tree & Annotations Panel -->
-        <div id="panel-tree" data-dock="tree" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden">
-          <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex flex-wrap items-center justify-between gap-1">
-            <div class="flex items-center gap-1.5">
-              <span class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted">Variation Tree</span>
-              <button id="btnGameReview" class="px-2 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10px]" title="Run local Stockfish full-game review &amp; eval graph">⚡ Review</button>
-              <select id="reviewDepthSelect" aria-label="Game review depth" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-em" title="Stockfish depth per ply">
-                <option value="10">d10</option>
-                <option value="12" selected>d12</option>
-                <option value="15">d15</option>
-              </select>
+          <!-- LEFT: Lc0 (LOCAL UCI BRIDGE ONLY — hidden by default; enable via Layout) -->
+          <div id="panel-lc0" data-dock="lc0" class="hidden bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <button id="btnLc0Toggle" class="w-5 h-5 rounded bg-vi/20 hover:bg-vi/30 text-vi border border-vi/40 flex items-center justify-center text-[10px]" title="Start / Stop Lc0" aria-label="Start or stop Lc0">⏸</button>
+                <span class="font-bold text-[11.5px] text-vi">Lc0</span>
+                <span id="lc0ModeBadge" class="px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted truncate">Not Connected</span>
+              </div>
+              <div class="flex items-center gap-1 shrink-0 text-[10px] font-mono">
+                <div class="flex items-center bg-surface px-1 rounded border border-borderSubtle" title="Contempt (-100 to +100)">
+                  <span class="text-txtMuted mr-0.5">C:</span>
+                  <button id="btnLc0ContemptDec" class="px-1 hover:text-vi font-bold" aria-label="Decrease Lc0 contempt">−</button>
+                  <span id="lc0ContemptVal" class="w-6 text-center">0</span>
+                  <button id="btnLc0ContemptInc" class="px-1 hover:text-vi font-bold" aria-label="Increase Lc0 contempt">+</button>
+                </div>
+                <button id="btnLc0Bridge" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-vi" title="Configure Local UCI Bridge" aria-label="Configure Local UCI Bridge">🔌</button>
+                <button class="panel-close-btn" data-panel-close="lc0" title="Hide Lc0 Bridge" aria-label="Hide Lc0 Bridge">✕</button>
+              </div>
             </div>
-            <div class="flex items-center gap-0.5 flex-wrap">
-              <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px] text-cy" data-nag="!" title="Good move" aria-label="Annotate good move">!</button>
-              <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px] text-ro" data-nag="?" title="Mistake" aria-label="Annotate mistake">?</button>
-              <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px] text-em" data-nag="!!" title="Brilliant move" aria-label="Annotate brilliant move">!!</button>
-              <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px] text-ro" data-nag="??" title="Blunder" aria-label="Annotate blunder">??</button>
-              <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px]" data-nag="±" title="White is better" aria-label="Annotate White advantage">±</button>
-              <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px]" data-nag="=" title="Equal position" aria-label="Annotate equal position">=</button>
-              <span class="w-px h-3.5 bg-borderSubtle mx-0.5"></span>
-              <button id="btnToggleComment" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px]" title="Add/Edit Move Comment" aria-label="Edit move comment">💬</button>
-              <button id="btnPromoteVar" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px]" title="Promote Variation" aria-label="Promote variation">↑</button>
-              <button id="btnDeleteVar" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] text-ro" title="Delete Variation" aria-label="Delete variation">🗑</button>
-              <button class="panel-close-btn ml-0.5" data-panel-close="tree" title="Hide Variation Tree" aria-label="Hide Variation Tree">✕</button>
+
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
+              <div class="flex items-center gap-1.5">
+                <span id="lc0MainEval" class="px-1.5 py-[1px] rounded bg-vi/20 text-vi font-bold min-w-[46px] text-center">—</span>
+                <span id="lc0Depth" class="text-txtMuted">D:—</span>
+              </div>
+              <div id="lc0WdlBar" class="wdl-bar border border-borderSubtle" title="Lc0 Win / Draw / Loss Probability (from UCI_ShowWDL)">
+                <div class="w-full bg-surface text-txtMuted text-[8px] leading-[12px] text-center">No WDL</div>
+              </div>
             </div>
+
+            <div id="lc0LinesList" class="flex-1 overflow-y-auto divide-y divide-borderSubtle/40 font-mono text-[11px]"></div>
           </div>
 
-          <div id="gameReviewPanel" class="hidden px-2 py-1.5 bg-bg/40 border-b border-borderSubtle"></div>
+          <!-- RIGHT: STOCKFISH 19 WASM / CLOUD / LOCAL UCI -->
+          <div id="panel-sf" data-dock="sf" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <button id="btnSfToggle" class="w-5 h-5 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/40 flex items-center justify-center text-[10px]" title="Start / Stop Stockfish" aria-label="Start or stop Stockfish">⏸</button>
+                <span class="font-bold text-[11.5px] text-cy">Stockfish</span>
+                <span id="sfModeBadge" class="px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted truncate">Loading SF 19 Lite...</span>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <select id="sfLinesSelect" aria-label="Engine lines" title="Number of engine lines" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-cy">
+                  <option value="1">1 line</option><option value="2">2 lines</option><option value="3">3 lines</option><option value="4">4 lines</option><option value="5">5 lines</option>
+                </select>
+                <select id="sfDepthSelect" aria-label="Engine depth" title="How deep the in-browser engine searches" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-cy">
+                  <option value="14">d14</option><option value="18">d18</option><option value="22">d22</option><option value="26">d26</option><option value="0">∞</option>
+                </select>
+                <button id="btnSfCloud" class="px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 text-[10px] font-medium" title="Toggle Free Lichess Cloud Eval">☁ Cloud</button>
+                <button class="panel-close-btn" data-panel-close="sf" title="Hide Stockfish" aria-label="Hide Stockfish">✕</button>
+              </div>
+            </div>
 
-          <div id="commentEditorWrap" class="hidden px-2 py-1.5 bg-bg/40 border-b border-borderSubtle flex items-center gap-1.5">
-            <input id="commentInput" type="text" placeholder="Add annotation note for current move..." class="flex-1 px-2 py-1 rounded bg-surface border border-borderSubtle text-[11px] focus:outline-none focus:border-em" />
-            <button id="btnSaveComment" class="px-2.5 py-1 rounded bg-em text-[#041f15] font-semibold text-[11px]">Save</button>
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
+              <div class="flex items-center gap-2">
+                <span id="sfMainEval" class="px-1.5 py-[1px] rounded bg-cy/20 text-cy font-bold min-w-[46px] text-center">—</span>
+                <span id="sfDepth" class="text-txtMuted">Depth: —</span>
+              </div>
+              <span id="sfNps" class="text-txtMuted text-[10px]"></span>
+            </div>
+
+            <div id="sfLinesList" class="flex-1 overflow-y-auto divide-y divide-borderSubtle/40 font-mono text-[11px]">
+              <div class="p-2 text-txtMuted">Starting Stockfish 19 WASM...</div>
+            </div>
           </div>
-
-          <div id="variationTreeContainer" class="flex-1 p-2 overflow-y-auto font-mono text-[11.5px] leading-relaxed"></div>
-        </div>
         </div>
       </section>
 
@@ -425,74 +462,44 @@
         </div>
 
         <!-- ================================================================= -->
-        <!-- TIER 3 (BOTTOM-RIGHT): ENGINES (Stockfish + Optional Lc0 Bridge)  -->
+        <!-- TIER 3 (BOTTOM-RIGHT): VARIATION TREE & ANNOTATIONS               -->
         <!-- ================================================================= -->
         <div id="panel-tier3" class="dock-row" data-row="r3">
-
-          <!-- LEFT: Lc0 (LOCAL UCI BRIDGE ONLY — hidden by default; enable via ⊞ Panels) -->
-          <div id="panel-lc0" data-dock="lc0" class="hidden bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
-            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
-              <div class="flex items-center gap-1.5 min-w-0">
-                <button id="btnLc0Toggle" class="w-5 h-5 rounded bg-vi/20 hover:bg-vi/30 text-vi border border-vi/40 flex items-center justify-center text-[10px]" title="Start / Stop Lc0" aria-label="Start or stop Lc0">⏸</button>
-                <span class="font-bold text-[11.5px] text-vi">Lc0</span>
-                <span id="lc0ModeBadge" class="px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted truncate">Not Connected</span>
-              </div>
-              <div class="flex items-center gap-1 shrink-0 text-[10px] font-mono">
-                <div class="flex items-center bg-surface px-1 rounded border border-borderSubtle" title="Contempt (-100 to +100)">
-                  <span class="text-txtMuted mr-0.5">C:</span>
-                  <button id="btnLc0ContemptDec" class="px-1 hover:text-vi font-bold" aria-label="Decrease Lc0 contempt">−</button>
-                  <span id="lc0ContemptVal" class="w-6 text-center">0</span>
-                  <button id="btnLc0ContemptInc" class="px-1 hover:text-vi font-bold" aria-label="Increase Lc0 contempt">+</button>
-                </div>
-                <button id="btnLc0Bridge" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted hover:text-vi" title="Configure Local UCI Bridge" aria-label="Configure Local UCI Bridge">🔌</button>
-                <button class="panel-close-btn" data-panel-close="lc0" title="Hide Lc0 Bridge" aria-label="Hide Lc0 Bridge">✕</button>
-              </div>
-            </div>
-
-            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
+          <!-- Branching Variation Tree & Annotations Panel -->
+          <div id="panel-tree" data-dock="tree" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex flex-wrap items-center justify-between gap-1">
               <div class="flex items-center gap-1.5">
-                <span id="lc0MainEval" class="px-1.5 py-[1px] rounded bg-vi/20 text-vi font-bold min-w-[46px] text-center">—</span>
-                <span id="lc0Depth" class="text-txtMuted">D:—</span>
-              </div>
-              <div id="lc0WdlBar" class="wdl-bar border border-borderSubtle" title="Lc0 Win / Draw / Loss Probability (from UCI_ShowWDL)">
-                <div class="w-full bg-surface text-txtMuted text-[8px] leading-[12px] text-center">No WDL</div>
-              </div>
-            </div>
-
-            <div id="lc0LinesList" class="flex-1 overflow-y-auto divide-y divide-borderSubtle/40 font-mono text-[11px]"></div>
-          </div>
-
-          <!-- RIGHT: STOCKFISH 19 WASM / CLOUD / LOCAL UCI -->
-          <div id="panel-sf" data-dock="sf" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
-            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
-              <div class="flex items-center gap-1.5 min-w-0">
-                <button id="btnSfToggle" class="w-5 h-5 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/40 flex items-center justify-center text-[10px]" title="Start / Stop Stockfish" aria-label="Start or stop Stockfish">⏸</button>
-                <span class="font-bold text-[11.5px] text-cy">Stockfish</span>
-                <span id="sfModeBadge" class="px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted truncate">Loading SF 19 Lite...</span>
-              </div>
-              <div class="flex items-center gap-1 shrink-0">
-                <select id="sfLinesSelect" aria-label="Engine lines" title="Number of engine lines" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-cy">
-                  <option value="1">1 line</option><option value="2">2 lines</option><option value="3">3 lines</option><option value="4">4 lines</option><option value="5">5 lines</option>
+                <span class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted">Variation Tree</span>
+                <button id="btnGameReview" class="px-2 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10px]" title="Run local Stockfish full-game review &amp; eval graph">⚡ Review</button>
+                <select id="reviewDepthSelect" aria-label="Game review depth" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-em" title="Stockfish depth per ply">
+                  <option value="10">d10</option>
+                  <option value="12" selected>d12</option>
+                  <option value="15">d15</option>
                 </select>
-                <select id="sfDepthSelect" aria-label="Engine depth" title="How deep the in-browser engine searches" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-cy">
-                  <option value="14">d14</option><option value="18">d18</option><option value="22">d22</option><option value="26">d26</option><option value="0">∞</option>
-                </select>
-                <button id="btnSfCloud" class="px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 text-[10px] font-medium" title="Toggle Free Lichess Cloud Eval">☁ Cloud</button>
-                <button class="panel-close-btn" data-panel-close="sf" title="Hide Stockfish" aria-label="Hide Stockfish">✕</button>
+              </div>
+              <div class="flex items-center gap-0.5 flex-wrap">
+                <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px] text-cy" data-nag="!" title="Good move" aria-label="Annotate good move">!</button>
+                <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px] text-ro" data-nag="?" title="Mistake" aria-label="Annotate mistake">?</button>
+                <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px] text-em" data-nag="!!" title="Brilliant move" aria-label="Annotate brilliant move">!!</button>
+                <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px] text-ro" data-nag="??" title="Blunder" aria-label="Annotate blunder">??</button>
+                <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px]" data-nag="±" title="White is better" aria-label="Annotate White advantage">±</button>
+                <button class="nag-btn px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[10px]" data-nag="=" title="Equal position" aria-label="Annotate equal position">=</button>
+                <span class="w-px h-3.5 bg-borderSubtle mx-0.5"></span>
+                <button id="btnToggleComment" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px]" title="Add/Edit Move Comment" aria-label="Edit move comment">💬</button>
+                <button id="btnPromoteVar" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px]" title="Promote Variation" aria-label="Promote variation">↑</button>
+                <button id="btnDeleteVar" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] text-ro" title="Delete Variation" aria-label="Delete variation">🗑</button>
+                <button class="panel-close-btn ml-0.5" data-panel-close="tree" title="Hide Variation Tree" aria-label="Hide Variation Tree">✕</button>
               </div>
             </div>
 
-            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
-              <div class="flex items-center gap-2">
-                <span id="sfMainEval" class="px-1.5 py-[1px] rounded bg-cy/20 text-cy font-bold min-w-[46px] text-center">—</span>
-                <span id="sfDepth" class="text-txtMuted">Depth: —</span>
-              </div>
-              <span id="sfNps" class="text-txtMuted text-[10px]"></span>
+            <div id="gameReviewPanel" class="hidden px-2 py-1.5 bg-bg/40 border-b border-borderSubtle"></div>
+
+            <div id="commentEditorWrap" class="hidden px-2 py-1.5 bg-bg/40 border-b border-borderSubtle flex items-center gap-1.5">
+              <input id="commentInput" type="text" placeholder="Add annotation note for current move..." class="flex-1 px-2 py-1 rounded bg-surface border border-borderSubtle text-[11px] focus:outline-none focus:border-em" />
+              <button id="btnSaveComment" class="px-2.5 py-1 rounded bg-em text-[#041f15] font-semibold text-[11px]">Save</button>
             </div>
 
-            <div id="sfLinesList" class="flex-1 overflow-y-auto divide-y divide-borderSubtle/40 font-mono text-[11px]">
-              <div class="p-2 text-txtMuted">Starting Stockfish 19 WASM...</div>
-            </div>
+            <div id="variationTreeContainer" class="flex-1 p-2 overflow-y-auto font-mono text-[11.5px] leading-relaxed"></div>
           </div>
         </div>
       </section>

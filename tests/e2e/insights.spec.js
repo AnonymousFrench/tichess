@@ -129,11 +129,31 @@ test('Studio panels can be swapped, resized and arranged with presets', async ({
   await page.keyboard.press('=');
   expect(Math.abs((await board.boundingBox()).width - before)).toBeLessThan(12);
 
+  // Default order: Engine sits below the board, Live/Master Hub in r1, Explorer/Scout in r2, Variation Tree in r3.
+  const rowOf = (id) => page.locator(`#${id}`).evaluate((el) => el.parentElement.dataset.row);
+  expect(await rowOf('panel-sf')).toBe('below');
+  expect(await rowOf('panel-hub')).toBe('r1');
+  expect(await rowOf('panel-tree')).toBe('r3');
+
+  // Board controls sit on a single row: icon-only Flip + export dropdown (FEN / PGN / Share).
+  const navY = (await page.locator('#btnFirst').boundingBox()).y;
+  const flipBox = await page.locator('#btnFlip').boundingBox();
+  const exportBox = await page.locator('#btnBoardExport').boundingBox();
+  expect(Math.abs(flipBox.y - navY)).toBeLessThan(4);
+  expect(Math.abs(exportBox.y - navY)).toBeLessThan(4);
+  expect((await page.locator('#btnFlip').textContent()).trim()).toBe('');
+  await page.click('#btnBoardExport');
+  await expect(page.locator('#menu-board-export')).toBeVisible();
+  await expect(page.locator('#btnCopyFen')).toBeVisible();
+  await expect(page.locator('#btnCopyPgn')).toBeVisible();
+  await expect(page.locator('#btnShareLink')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#menu-board-export')).toBeHidden();
+
   // Drag Stockfish onto the explorer to swap them; the layout survives a reload.
   await page.dragAndDrop('[data-grip="sf"]', '#panel-explorer');
-  const rowOf = (id) => page.locator(`#${id}`).evaluate((el) => el.parentElement.dataset.row);
   expect(await rowOf('panel-sf')).toBe('r2');
-  expect(await rowOf('panel-explorer')).toBe('r3');
+  expect(await rowOf('panel-explorer')).toBe('below');
   await page.reload();
   expect(await rowOf('panel-sf')).toBe('r2');
 

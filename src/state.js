@@ -88,6 +88,12 @@ export const state = {
   },
   sf: {
     running: true,
+    // Lines shown (MultiPV) and in-browser search depth (0 = until stopped)
+    multiPv: Math.min(5, Math.max(1, Number(safeGetJsonStorage('tichess_sf_opts', { multiPv: 3 }).multiPv) || 3)),
+    depth: (() => {
+      const d = Number(safeGetJsonStorage('tichess_sf_opts', { depth: 18 }).depth);
+      return Number.isInteger(d) && d >= 0 && d <= 60 ? d : 18;
+    })(),
     cloudEnabled: true,
     mode: 'init', // 'init' | 'wasm' | 'ws' | 'error'
     wsUrl: safeGetStorage('cms_sf_ws', 'ws://localhost:8081'),

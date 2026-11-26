@@ -48,13 +48,32 @@ function handleSfInfoLine(line, infoFen, expectedMode) {
   if (!line.includes(' pv ') || !line.includes(' score ')) return;
 
   const parsed = parseUciInfoLine(line);
-  if (!parsed || parsed.multipv > 3) return;
+  if (!parsed || parsed.multipv > state.sf.multiPv) return;
 
   parsed.pv = normalizePv(infoFen, parsed.pv);
   if (!parsed.pv.length) return;
 
   state.sf.lines[parsed.multipv] = parsed;
   renderSfUI();
+}
+
+/**
+ * Change how many lines Stockfish shows (1–5) and how deep the in-browser
+ * engine searches (0 = until stopped). Saved for next time; re-runs analysis.
+ */
+export function setSfOptions({ multiPv, depth } = {}) {
+  if (Number.isInteger(multiPv) && multiPv >= 1 && multiPv <= 5) state.sf.multiPv = multiPv;
+  if (Number.isInteger(depth) && depth >= 0 && depth <= 60) state.sf.depth = depth;
+  try {
+    localStorage.setItem('tichess_sf_opts', JSON.stringify({ multiPv: state.sf.multiPv, depth: state.sf.depth }));
+  } catch (_) {
+    /* ignore */
+  }
+  stopLocalSf();
+  const cmd = `setoption name MultiPV value ${state.sf.multiPv}`;
+  if (state.sf.worker && state.sf.ready) state.sf.worker.postMessage(cmd);
+  if (state.sf.ws?.readyState === WebSocket.OPEN) state.sf.ws.send(cmd);
+  triggerSfAnalysis();
 }
 
 export function initStockfish({ forceSingleThread = false } = {}) {
@@ -121,7 +140,7 @@ export function initStockfish({ forceSingleThread = false } = {}) {
           w.postMessage(`setoption name Threads value ${threads}`);
           w.postMessage('setoption name Hash value 32');
         }
-        w.postMessage('setoption name MultiPV value 3');
+        w.postMessage(`setoption name MultiPV value ${state.sf.multiPv}`);
         w.postMessage('isready');
         triggerSfAnalysis();
         return;
@@ -214,14 +233,14 @@ export async function triggerSfAnalysis() {
     const ctrl = new AbortController();
     cloudAbortCtrl = ctrl;
     try {
-      const data = await fetchCloudEval(fen, 3, { signal: ctrl.signal });
+      const data = await fetchCloudEval(fen, state.sf.multiPv, { signal: ctrl.signal });
       if (reqId !== state.sf.cloudReqId || fen !== getCurrentFen()) return;
       if (data?.pvs?.length) {
         if (wsSession) wsSession.stop();
         if (wasmSession) wasmSession.stop();
         const flip = fen.split(' ')[1] === 'b' ? -1 : 1;
         const nodes = typeof data.knodes === 'number' ? data.knodes * 1000 : null;
-        data.pvs.slice(0, 3).forEach((pvObj, idx) => {
+        data.pvs.slice(0, state.sf.multiPv).forEach((pvObj, idx) => {
           const isMate = typeof pvObj.mate === 'number';
           const rawPv = (pvObj.moves || '').trim().split(/\s+/).filter(Boolean);
           const normPv = normalizePv(fen, rawPv);
@@ -267,7 +286,7 @@ export async function triggerSfAnalysis() {
   if (state.sf.ready && state.sf.worker && state.sf.mode === 'wasm' && wasmSession) {
     const badge = document.getElementById('sfModeBadge');
     if (badge) badge.textContent = getWasmBadgeLabel();
-    wasmSession.analyze(fen, 'go depth 18');
+    wasmSession.analyze(fen, state.sf.depth > 0 ? `go depth ${state.sf.depth}` : 'go infinite');
     return;
   }
 
@@ -349,7 +368,7 @@ export function connectSfWs(url) {
       state.sf.wsUrl = url;
       localStorage.setItem('cms_sf_ws', url);
       ws.send('uci');
-      ws.send('setoption name MultiPV value 3');
+      ws.send(`setoption name MultiPV value ${state.sf.multiPv}`);
       ws.send('isready');
       const badge = document.getElementById('sfModeBadge');
       if (badge) badge.textContent = 'SF Local UCI';

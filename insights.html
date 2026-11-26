@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Insights · tichess</title>
+</head>
+<body class="bg-bg text-txt min-h-screen">
+  <header class="sticky top-0 z-30 bg-panel/95 backdrop-blur border-b border-borderSubtle">
+    <div class="max-w-[1400px] mx-auto px-3 h-12 flex items-center gap-3">
+      <div data-app-nav class="min-w-0"></div>
+      <div id="hdrRight" class="ml-auto flex items-center gap-2 min-w-0"></div>
+    </div>
+    <div id="syncBar" class="h-[2px] bg-surface" hidden><div id="syncBarFill" class="h-full bg-em transition-[width] duration-500" style="width:0"></div></div>
+  </header>
+  <div id="toolbar" class="lg:sticky lg:top-12 z-20 bg-bg/95 backdrop-blur border-b border-borderSubtle" hidden></div>
+  <main id="view" class="max-w-[1400px] mx-auto px-3 py-3 pb-10"></main>
+  <div id="popover"></div>
+  <input type="file" id="pgnInput" accept=".pgn,.txt" hidden />
+  <div id="toast" class="opacity-0 pointer-events-none" role="status" aria-live="polite"></div>
+  <script type="module" src="/src/insights/main.js"></script>
+</body>
+</html>

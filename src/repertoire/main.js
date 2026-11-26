@@ -6,6 +6,7 @@ import '@fontsource/inter/800.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import './repertoire.css';
+import { mountAppNav } from '../shared/appNav.js';
 
 import { parseRepertoireFile, mergeProgress, buildExportFile } from './model.js';
 import { buildRepertoireFromPgn, mergeRepertoires } from './pgnImport.js';
@@ -176,6 +177,7 @@ function bindImportControls() {
 }
 
 async function boot() {
+  mountAppNav('repertoire');
   bindImportControls();
   onCloudSyncState(renderSyncHeader);
 

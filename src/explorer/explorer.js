@@ -12,6 +12,10 @@ import { fetchExplorer, fetchExplorerGamePgn } from '../api/lichess.js';
 import { getCloudSyncState, getLoginUrl } from '../sync/cloudSync.js';
 import { playMoveOnTree, renderArrows } from '../board/board.js';
 import { addBoardTab } from '../board/tabs.js';
+import { fetchMineExplorer } from './mineSource.js';
+
+/** Sources that show the user's own games (results read from their side). */
+const isPersonal = () => state.refSource === 'player' || state.refSource === 'mine';
 
 export function renderWdbBar(w, d, b) {
   const tot = w + d + b || 1;
@@ -92,6 +96,34 @@ export async function refreshReferenceExplorer() {
     tbodyEl.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">Loading ${escapeHtml(sync.user?.username || 'your')} ${state.refPlayerColor === 'black' ? 'Black' : 'White'} games…</td></tr>`;
   }
 
+  if (state.refSource === 'mine' && tbodyEl) {
+    try {
+      const data = await fetchMineExplorer(getActiveTab()?.current, {
+        color: state.refPlayerColor || 'white',
+        sinceKey: state.refPlayerSince || '',
+      });
+      if (reqId !== state.refReqId) return;
+      if (data.unsupported) {
+        tbodyEl.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">Your games are matched by moves from the starting position. This tab starts from a custom position.</td></tr>`;
+        document.getElementById('refTotalGames').textContent = '—';
+        if (summaryEl) summaryEl.textContent = '';
+        return;
+      }
+      renderRefTable(data.moves, {
+        sinceKey: state.refPlayerSince || '',
+        posTotals: { white: data.white, draws: data.draws, black: data.black },
+      });
+      const fb = getFallbackOpeningForCurrentPosition(fen);
+      setOpeningPill(fb.eco, fb.name);
+      state.mastersGamesCache = data.recentGames;
+      renderMasterGamesTable();
+    } catch (_) {
+      if (reqId !== state.refReqId) return;
+      tbodyEl.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">Could not read your games from this browser.</td></tr>`;
+    }
+    return;
+  }
+
   try {
     const data = await fetchExplorer(state.refSource, fen, {
       signal: ctrl.signal,
@@ -166,7 +198,7 @@ export function renderRefTable(moves, meta = {}) {
 
   const summaryEl = document.getElementById('refPlayerSummary');
   if (summaryEl) {
-    if (state.refSource === 'player') {
+    if (isPersonal()) {
       const posW = meta.posTotals?.white ?? moves.reduce((s, m) => s + m.white, 0);
       const posD = meta.posTotals?.draws ?? moves.reduce((s, m) => s + m.draws, 0);
       const posB = meta.posTotals?.black ?? moves.reduce((s, m) => s + m.black, 0);
@@ -200,15 +232,14 @@ export function renderRefTable(moves, meta = {}) {
       : '';
 
   if (!moves.length) {
-    const emptyMsg =
-      state.refSource === 'player'
-        ? `No ${state.refPlayerColor === 'black' ? 'Black' : 'White'} Lichess games reached this position (${sinceLabel}).`
-        : 'No database games here.';
+    const emptyMsg = isPersonal()
+      ? `None of your ${state.refPlayerColor === 'black' ? 'Black' : 'White'} games reached this position (${sinceLabel}).`
+      : 'No database games here.';
     tbody.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">${escapeHtml(emptyMsg)}</td></tr>${footerRow}`;
     return;
   }
 
-  const isPlayerMode = state.refSource === 'player';
+  const isPlayerMode = isPersonal();
   const pCol = state.refPlayerColor || 'white';
 
   tbody.innerHTML =
@@ -246,7 +277,7 @@ export function renderMasterGamesTable() {
   if (!tbody) return;
 
   if (!state.mastersGamesCache.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="py-5 text-center text-txtMuted">No games for this position from Lichess Explorer.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="py-5 text-center text-txtMuted">${state.refSource === 'mine' ? 'None of your games reached this position.' : 'No games for this position from Lichess Explorer.'}</td></tr>`;
     return;
   }
 
@@ -264,7 +295,9 @@ export function renderMasterGamesTable() {
         ? 'Masters OTB'
         : state.refSource === 'player'
           ? `${sync.user?.username || 'My'} Lichess`
-          : 'Lichess',
+          : state.refSource === 'mine'
+            ? 'My games'
+            : 'Lichess',
     date: g.year || g.month || '',
     snippet: 'Click to load PGN',
   }));

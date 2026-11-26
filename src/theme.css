@@ -1,0 +1,30 @@
+/* Shared design tokens for every tichess page (Tailwind theme + board colors). */
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+  --color-bg: #0b0c0f;
+  --color-panel: #13151a;
+  --color-surface: #1b1e25;
+  --color-surfaceHover: #242833;
+  --color-borderSubtle: #252934;
+  --color-borderBright: #353b4a;
+  --color-txt: #e5e7eb;
+  --color-txtMuted: #8e96a8;
+  --color-em: #10b981;
+  --color-cy: #38bdf8;
+  --color-vi: #a78bfa;
+  --color-ro: #fb7185;
+  --color-am: #f59e0b;
+}
+
+:root {
+  --bg: #0b0c0f;
+  --panel: #13151a;
+  --surface: #1b1e25;
+  --border: #252934;
+  --sq-light: #dce3ea;
+  --sq-dark: #708499;
+  --sq-last-light: #cadc88;
+  --sq-last-dark: #88a45c;
+  --sq-select: rgba(16, 185, 129, 0.48);
+}

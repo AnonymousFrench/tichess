@@ -1,0 +1,47 @@
+/* Shared Lichess account control (plain CSS so it matches on every page) */
+.ta { position: relative; display: inline-flex; align-items: center; font-family: 'Inter', system-ui, sans-serif; }
+.ta[hidden] { display: none; }
+.ta-knight { font-size: 14px; line-height: 1; flex: none; }
+.ta-signin {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 8px;
+  background: #e5e7eb; color: #0b0c0f;
+  font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap;
+}
+.ta-signin:hover { background: #ffffff; }
+.ta-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 8px 2px 2px; border-radius: 999px;
+  background: #1b1e25; border: 1px solid #252934; color: #e5e7eb;
+  font: 600 12px 'Inter', system-ui, sans-serif; cursor: pointer; max-width: 170px;
+}
+.ta-chip:hover { border-color: #353b4a; }
+.ta-avatar {
+  position: relative; width: 22px; height: 22px; border-radius: 999px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #10b981, #38bdf8); color: #04130d; font-size: 11px; font-weight: 800;
+}
+.ta-dot { position: absolute; right: -1px; bottom: -1px; width: 8px; height: 8px; border-radius: 999px; border: 2px solid #13151a; }
+.ta-dot.is-ok { background: #10b981; }
+.ta-dot.is-warn { background: #f59e0b; }
+.ta-dot.is-syncing { background: #38bdf8; animation: taPulse 1.2s ease-in-out infinite; }
+@keyframes taPulse { 50% { opacity: 0.4; } }
+.ta-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ta-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; width: 270px;
+  background: #13151a; border: 1px solid #353b4a; border-radius: 12px; padding: 10px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55); color: #e5e7eb;
+}
+.ta-menu[hidden] { display: none; }
+.ta-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ta-head .ta-knight { font-size: 22px; }
+.ta-title { font-size: 13px; font-weight: 700; }
+.ta-sub { font-size: 11px; color: #8e96a8; }
+.ta-note { font-size: 11px; line-height: 1.45; color: #8e96a8; margin: 0 0 8px; }
+.ta-menu button {
+  display: block; width: 100%; text-align: left; padding: 6px 8px; border-radius: 7px;
+  background: transparent; border: 0; color: #e5e7eb; font: 500 12px 'Inter', system-ui, sans-serif; cursor: pointer;
+}
+.ta-menu button:hover { background: #242833; }
+.ta-menu button[data-ta='signout'] { color: #fb7185; }
+@media (max-width: 520px) { .ta-name { display: none; } .ta-chip { padding-right: 2px; } }

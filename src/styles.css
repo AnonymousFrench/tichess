@@ -206,6 +206,80 @@ html, body {
   background-color: #252934;
   margin: 4px 0;
 }
+.menu-label {
+  padding: 5px 10px 3px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8e96a8;
+}
+.menu-key {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  color: #8e96a8;
+  border: 1px solid #303543;
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 15px;
+}
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  color: #e5e7eb;
+}
+.menu-seg {
+  display: inline-flex;
+  border: 1px solid #303543;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.menu-seg button {
+  padding: 2px 9px;
+  font-size: 11px;
+  color: #e5e7eb;
+  background: #1b1e25;
+}
+.menu-seg button + button {
+  border-left: 1px solid #303543;
+}
+.menu-seg button:hover {
+  background: #242833;
+}
+.menu-swatches {
+  display: inline-flex;
+  gap: 5px;
+}
+.menu-swatch {
+  width: 22px;
+  height: 14px;
+  border-radius: 3px;
+  overflow: hidden;
+  display: inline-flex;
+  outline: 1px solid #303543;
+  outline-offset: 1px;
+}
+.menu-swatch i {
+  flex: 1;
+}
+.menu-swatch.is-active {
+  outline: 2px solid #10b981;
+}
+@media (max-width: 640px) {
+  .menu-dropdown {
+    position: fixed;
+    top: 44px;
+    left: 8px;
+    right: 8px;
+    min-width: 0 !important;
+    max-height: calc(100dvh - 56px);
+    overflow-y: auto;
+  }
+}
 
 /* Compact Tables */
 .pro-table th {

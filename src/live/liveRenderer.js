@@ -1,262 +1,241 @@
 import { state, escapeHtml } from '../state.js';
 
-function formatRoundDate(startsAt) {
-  if (!startsAt) return '—';
-  const d = new Date(startsAt);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString(undefined, { month: 'short', day: '2-digit' });
-}
+/*
+ * Live hub, two views:
+ *   events: compact list (Live now / Ongoing / Upcoming / Recently finished) with search
+ *   event:  one event, every round as a chip, and the selected round's games as rows
+ * Rendering is pure DOM writes from `state`; liveEvents.js owns data and handlers.
+ */
 
-function formatRoundTime(startsAt) {
-  if (!startsAt) return '';
-  const d = new Date(startsAt);
+const SECTION_LIMIT = 8;
+const expandedSections = new Set();
+
+function fmtDay(t) {
+  if (!t) return '';
+  const d = new Date(t);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function getStatusBadgeInfo(status) {
-  if (status === 'live') return { label: 'LIVE', cls: 'bg-ro/20 text-ro' };
-  if (status === 'upcoming') return { label: 'SOON', cls: 'bg-panel text-txtMuted' };
-  if (status === 'finished') return { label: 'ENDED', cls: 'bg-panel text-txtMuted/75' };
-  return { label: 'ACTIVE', cls: 'bg-panel text-cy' };
+function fmtDayTime(t) {
+  if (!t) return '';
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return '';
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
-export function updateLiveIndicators(isTourLive) {
-  const anyLiveBroadcast =
-    isTourLive || state.allBroadcasts.some((b) => b.status === 'live');
+const liveDot = '<span class="w-1.5 h-1.5 rounded-full bg-ro live-dot shrink-0"></span>';
+
+/** Red dot on the hub tab and the header pill whenever something is live. */
+export function updateLiveIndicators() {
+  const anyLive = state.liveSections.live.length > 0 || state.featuredTour?.rounds?.some((r) => r.ongoing === true);
   const hubDot = document.getElementById('liveHubDot');
   if (hubDot) {
-    hubDot.className = anyLiveBroadcast
-      ? 'w-2 h-2 rounded-full bg-ro live-dot'
-      : 'w-2 h-2 rounded-full bg-txtMuted/50';
+    hubDot.className = anyLive ? 'w-2 h-2 rounded-full bg-ro live-dot' : 'w-2 h-2 rounded-full bg-txtMuted/50';
   }
-}
-
-export function updateSpotlightBanner() {
-  const titleEl = document.getElementById('featuredEventTitle');
-  const subEl = document.getElementById('featuredEventSubtitle');
-  const badgeEl = document.getElementById('featuredEventBadge');
-  const statusEl = document.getElementById('featuredStatus');
-  const watchBtn = document.getElementById('btnWatchFeatured');
-  const quickJumpBtn = document.getElementById('btnLiveQuickJump');
-  const quickJumpText = document.getElementById('liveQuickJumpLabel');
-  const quickJumpDot = document.getElementById('liveQuickJumpDot');
-
-  const tour = state.featuredTour?.tour;
-  const rounds = state.featuredTour?.rounds || [];
-  const ongoingRound = rounds.find((r) => r.ongoing === true);
-  const activeRound =
-    rounds.find((r) => r.id === state.liveRoundId) ||
-    ongoingRound ||
-    rounds[rounds.length - 1];
-
-  const isOngoing = Boolean(ongoingRound);
-  updateLiveIndicators(isOngoing);
-
-  if (!tour) {
-    if (titleEl) titleEl.textContent = 'Live FIDE & Lichess Broadcasts';
-    if (subEl) subEl.textContent = 'Select a tournament below or paste any Lichess broadcast URL.';
-    if (badgeEl) {
-      badgeEl.innerHTML = 'LICHESS BROADCASTS';
-      badgeEl.className =
-        'inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cy/15 text-cy border border-cy/35 font-mono text-[9.5px] font-bold';
-    }
-    if (quickJumpText) quickJumpText.textContent = 'Broadcasts';
-    if (quickJumpDot) quickJumpDot.classList.add('hidden');
-    if (watchBtn) {
-      watchBtn.disabled = !state.liveRoundGames.length;
-      watchBtn.textContent = state.liveRoundGames.length ? '▶ Watch Top Board' : 'No Live Board';
-    }
-    return;
-  }
-
-  if (titleEl) titleEl.textContent = tour.name || 'Live Broadcast';
-  if (subEl) {
-    const infoParts = [];
-    if (tour.info?.location) infoParts.push(tour.info.location);
-    if (tour.info?.tc) infoParts.push(tour.info.tc);
-    if (activeRound?.name) infoParts.push(activeRound.name);
-    subEl.textContent = infoParts.join(' · ') || tour.description || 'Official Lichess Broadcast';
-  }
-
-  if (badgeEl) {
-    badgeEl.innerHTML = isOngoing
-      ? `<span class="w-1.5 h-1.5 rounded-full bg-ro live-dot"></span> LIVE BROADCAST`
-      : `FEATURED BROADCAST`;
-    badgeEl.className = isOngoing
-      ? 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-ro/20 text-ro border border-ro/40 font-mono text-[9.5px] font-bold'
-      : 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cy/15 text-cy border border-cy/35 font-mono text-[9.5px] font-bold';
-  }
-
-  if (quickJumpText) {
-    quickJumpText.textContent = isOngoing ? `LIVE: ${tour.name}` : tour.name || 'Broadcasts';
-  }
-  if (quickJumpDot) {
-    quickJumpDot.classList.toggle('hidden', !isOngoing);
-  }
-  if (quickJumpBtn) {
-    quickJumpBtn.className = isOngoing
+  const pick = state.liveSections.live[0] || null;
+  const pill = document.getElementById('btnLiveQuickJump');
+  const label = document.getElementById('liveQuickJumpLabel');
+  const dot = document.getElementById('liveQuickJumpDot');
+  if (label) label.textContent = pick ? pick.tourName : 'Live events';
+  if (dot) dot.classList.toggle('hidden', !pick);
+  if (pill) {
+    pill.title = pick ? `Live now: ${pick.tourName}` : 'Open live events';
+    pill.className = pick
       ? 'flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-ro/15 hover:bg-ro/25 border border-ro/40 text-ro text-[11px] font-semibold transition-colors shrink-0 max-w-[240px]'
       : 'flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted text-[11px] font-semibold transition-colors shrink-0 max-w-[240px]';
   }
+}
 
-  if (statusEl) {
-    if (state.liveRoundGames.length) {
-      const liveCount = state.liveRoundGames.filter((g) => g.result === '*').length;
-      statusEl.textContent =
-        liveCount > 0 ? `● ${liveCount} Live Game(s)` : `${state.liveRoundGames.length} Game(s) Loaded`;
-      statusEl.className =
-        liveCount > 0
-          ? 'font-mono text-[10px] px-2 py-0.5 rounded bg-em/15 border border-em/35 text-em'
-          : 'font-mono text-[10px] px-2 py-0.5 rounded bg-surface border border-borderSubtle text-cy';
+/* ------------------------------------------------------------------ */
+/* Events list                                                         */
+/* ------------------------------------------------------------------ */
+
+function eventRight(b) {
+  const r = b.round || {};
+  if (b.status === 'live') {
+    return `<span class="inline-flex items-center gap-1 text-ro font-semibold">${liveDot}${escapeHtml(b.roundName || 'Live')}</span>`;
+  }
+  if (typeof r.startsAt === 'number' && r.startsAt > Date.now()) {
+    return `<span class="text-txtMuted">${escapeHtml(b.roundName ? `${b.roundName} · ` : '')}${escapeHtml(fmtDayTime(r.startsAt))}</span>`;
+  }
+  if (b.dates?.[1] && b.dates[1] < Date.now()) {
+    return `<span class="text-txtMuted">Ended ${escapeHtml(fmtDay(b.dates[1]))}</span>`;
+  }
+  return `<span class="text-txtMuted">${escapeHtml(b.roundName || '')}</span>`;
+}
+
+function eventRow(b) {
+  const sub = [b.info?.format, b.info?.location].filter(Boolean).join(' · ');
+  return `<button class="live-event-row w-full text-left grid grid-cols-[1fr_auto] items-center gap-x-3 px-2 py-1.5 rounded-md hover:bg-surface transition-colors" data-tid="${escapeHtml(b.tourId)}" data-rid="${escapeHtml(b.roundId)}">
+      <span class="min-w-0">
+        <span class="block truncate text-[11.5px] font-semibold text-txt">${escapeHtml(b.tourName)}</span>
+        ${sub ? `<span class="block truncate text-[10px] text-txtMuted">${escapeHtml(sub)}</span>` : ''}
+      </span>
+      <span class="text-[10.5px] whitespace-nowrap text-right">${eventRight(b)}</span>
+    </button>`;
+}
+
+function section(id, title, items) {
+  if (!items.length) return '';
+  const open = expandedSections.has(id);
+  const shown = open ? items : items.slice(0, SECTION_LIMIT);
+  const more = items.length - shown.length;
+  return `<section class="mb-1.5">
+      <h4 class="px-2 pt-1 pb-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">${escapeHtml(title)} <span class="font-mono normal-case tracking-normal">${items.length}</span></h4>
+      ${shown.map(eventRow).join('')}
+      ${more > 0 ? `<button class="live-more px-2 py-1 text-[10.5px] text-cy hover:underline" data-sec="${id}">Show ${more} more</button>` : ''}
+    </section>`;
+}
+
+export function renderEventsList({ onOpenEvent } = {}) {
+  const list = document.getElementById('liveEventsList');
+  if (!list) return;
+  const q = (document.getElementById('customBroadcastInput')?.value || '').trim().toLowerCase();
+  const match = (b) => !q || `${b.tourName} ${b.roundName} ${b.info?.location || ''} ${b.info?.players || ''}`.toLowerCase().includes(q);
+  const S = state.liveSections;
+  const searching = q.length >= 3 && state.liveSearch.q === q;
+  const searchHits = searching
+    ? state.liveSearch.results.filter((b) => ![...S.live, ...S.ongoing, ...S.upcoming, ...S.recent].some((x) => x.tourId === b.tourId))
+    : [];
+
+  let html =
+    section('live', 'Live now', S.live.filter(match)) +
+    section('ongoing', 'Ongoing', S.ongoing.filter(match)) +
+    section('upcoming', 'Upcoming', S.upcoming.filter(match)) +
+    section('recent', 'Recently finished', S.recent.filter(match)) +
+    section('search', 'More results', searchHits);
+
+  if (!html) {
+    if (state.liveSearch.loading) {
+      html = '<div class="py-6 text-center text-[11px] text-txtMuted">Searching Lichess…</div>';
+    } else if (state.liveStatus === 'loading') {
+      html = '<div class="py-6 text-center text-[11px] text-txtMuted">Loading events…</div>';
+    } else if (state.liveStatus === 'error') {
+      html = '<div class="py-6 text-center text-[11px] text-txtMuted">Lichess is unreachable right now. Paste a broadcast link above, or try again with ↻.</div>';
     } else {
-      statusEl.textContent = isOngoing ? '● Round Live' : 'Connected';
-      statusEl.className = isOngoing
-        ? 'font-mono text-[10px] px-2 py-0.5 rounded bg-em/15 border border-em/35 text-em'
-        : 'font-mono text-[10px] px-2 py-0.5 rounded bg-surface border border-borderSubtle text-cy';
+      html = `<div class="py-6 text-center text-[11px] text-txtMuted">${q ? 'No events match. Press Enter to search all of Lichess.' : 'No events right now.'}</div>`;
     }
   }
+  list.innerHTML = html;
 
-  if (watchBtn) {
-    const hasGames = state.liveRoundGames.length > 0;
-    watchBtn.disabled = !hasGames;
-    watchBtn.classList.toggle('opacity-50', !hasGames);
-    watchBtn.classList.toggle('cursor-not-allowed', !hasGames);
-    watchBtn.textContent = hasGames
-      ? `▶ Watch ${activeRound?.name || 'Top Board'}`
-      : 'No Games Yet';
-  }
+  list.querySelectorAll('.live-event-row').forEach((btn) => {
+    btn.onclick = () => onOpenEvent?.(btn.dataset.tid, btn.dataset.rid);
+  });
+  list.querySelectorAll('.live-more').forEach((btn) => {
+    btn.onclick = () => {
+      expandedSections.add(btn.dataset.sec);
+      renderEventsList({ onOpenEvent });
+    };
+  });
 }
 
-export function renderTournamentRoundsTable({ onSelectRound } = {}) {
-  const tbody = document.getElementById('roundsTableBody');
-  if (!tbody) return;
+/* ------------------------------------------------------------------ */
+/* One event                                                           */
+/* ------------------------------------------------------------------ */
 
+function roundChip(r) {
+  const sel = r.id === state.liveRoundId;
+  const live = r.ongoing === true;
+  const done = r.finished === true && !live;
+  const when = !live && !done && r.startsAt ? fmtDay(r.startsAt) : '';
+  const base = 'live-round-chip inline-flex items-center gap-1 px-2 py-[3px] rounded-md border text-[10.5px] whitespace-nowrap transition-colors';
+  const tone = sel
+    ? 'bg-em text-[#041f15] border-em font-bold'
+    : live
+      ? 'bg-ro/10 border-ro/40 text-ro font-semibold hover:bg-ro/20'
+      : done
+        ? 'bg-surface border-borderSubtle text-txt hover:bg-surfaceHover'
+        : 'bg-transparent border-borderSubtle text-txtMuted hover:text-txt';
+  return `<button class="${base} ${tone}" data-rid="${escapeHtml(r.id)}" aria-pressed="${sel}" title="${escapeHtml(
+    [r.name, r.startsAt ? fmtDayTime(r.startsAt) : '', live ? 'live' : done ? 'finished' : 'not started'].filter(Boolean).join(' · ')
+  )}">${live && !sel ? liveDot : ''}${escapeHtml(r.name || 'Round')}${when ? `<span class="opacity-70 font-normal">${escapeHtml(when)}</span>` : ''}</button>`;
+}
+
+const resultLabel = (res) => (res === '1/2-1/2' ? '½-½' : res);
+
+function gameRow(g, i) {
+  const live = g.result === '*';
+  const player = (name, elo, clk, white) => `<span class="flex items-center gap-1.5 min-w-0">
+      <span class="w-2 h-2 rounded-[2px] shrink-0 ${white ? 'bg-[#e5e7eb]' : 'bg-[#2a2f3a] border border-[#5b6273]'}"></span>
+      <span class="truncate text-txt">${escapeHtml(name)}</span>
+      ${elo ? `<span class="font-mono text-[10px] text-txtMuted shrink-0">${escapeHtml(elo)}</span>` : ''}
+      ${live && clk ? `<span class="ml-auto font-mono text-[10px] text-txtMuted shrink-0">${escapeHtml(clk)}</span>` : ''}
+    </span>`;
+  return `<button class="live-game-row w-full text-left grid grid-cols-[42px_1fr] items-center gap-2 px-2 py-1 rounded-md hover:bg-surface border-b border-borderSubtle/50 last:border-0 text-[11px] transition-colors" data-gidx="${i}">
+      <span class="text-center font-mono text-[10px] font-bold rounded px-1 py-[2px] ${live ? 'bg-ro/20 text-ro' : 'bg-surface text-txtMuted'}">${live ? 'LIVE' : escapeHtml(resultLabel(g.result))}</span>
+      <span class="min-w-0 grid gap-[1px]">${player(g.white, g.whiteElo, g.whiteClk, true)}${player(g.black, g.blackElo, g.blackClk, false)}</span>
+    </button>`;
+}
+
+export function renderEventView({ onBack, onSelectRound, onOpenGame } = {}) {
+  const head = document.getElementById('liveEventHeader');
+  const chips = document.getElementById('liveRoundChips');
+  const gamesEl = document.getElementById('liveRoundGames');
+  if (!head || !chips || !gamesEl) return;
+
+  const tour = state.featuredTour?.tour;
   const rounds = state.featuredTour?.rounds || [];
-  if (!rounds.length) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="4" class="py-5 text-center text-txtMuted">
-          No tournament rounds loaded yet. Click <b>Sync Live</b> or choose a tournament in <b>All Live Broadcasts</b>.
-        </td>
-      </tr>
-    `;
-    return;
+  const live = rounds.some((r) => r.ongoing === true);
+  const info = tour?.info || {};
+  const sub = [info.format, info.location, info.tc].filter(Boolean).join(' · ');
+  head.innerHTML = `<div class="flex items-start gap-2">
+      <button id="btnLiveBack" class="shrink-0 px-1.5 py-0.5 rounded hover:bg-surface text-txtMuted hover:text-txt text-[11px]" title="All events" aria-label="Back to all events">← Events</button>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-1.5 min-w-0"><span class="font-bold text-[12.5px] text-txt truncate">${escapeHtml(tour?.name || (state.liveStatus === 'loading' ? 'Loading…' : 'Broadcast'))}</span>${live ? liveDot : ''}</div>
+        ${sub ? `<div class="text-[10px] text-txtMuted truncate">${escapeHtml(sub)}</div>` : ''}
+      </div>
+      ${tour?.url ? `<a href="${escapeHtml(tour.url)}" target="_blank" rel="noopener noreferrer" class="shrink-0 text-[10.5px] text-cy hover:underline">Lichess ↗</a>` : ''}
+    </div>`;
+
+  chips.innerHTML = rounds.length
+    ? `<div class="flex flex-wrap gap-1">${rounds.map(roundChip).join('')}</div>`
+    : '';
+
+  const round = rounds.find((r) => r.id === state.liveRoundId);
+  const games = state.liveRoundGames;
+  const liveCount = games.filter((g) => g.result === '*').length;
+  let body;
+  if (state.liveRoundLoading && !games.length) {
+    body = '<div class="py-5 text-center text-[11px] text-txtMuted">Loading games…</div>';
+  } else if (!games.length) {
+    const notStarted = round && round.ongoing !== true && round.finished !== true;
+    body = `<div class="py-5 text-center text-[11px] text-txtMuted">${
+      notStarted && round.startsAt ? `${escapeHtml(round.name || 'This round')} starts ${escapeHtml(fmtDayTime(round.startsAt))}.` : 'No games in this round yet.'
+    }</div>`;
+  } else {
+    body = `<div class="flex items-center justify-between px-2 pt-1 pb-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">
+        <span>${escapeHtml(round?.name || 'Games')} · ${games.length} game${games.length === 1 ? '' : 's'}${liveCount ? ` · <span class="text-ro">${liveCount} live</span>` : ''}</span>
+        <span class="normal-case tracking-normal font-normal">Click a game to open it</span>
+      </div>
+      <div>${games.map(gameRow).join('')}</div>`;
   }
+  gamesEl.innerHTML = body;
 
-  tbody.innerHTML = rounds
-    .map((r) => {
-      const isSelected = r.id === state.liveRoundId;
-      const isLive = r.ongoing === true;
-      const isDone = r.finished === true;
-
-      let statusHtml = `<span class="text-txtMuted font-mono text-[10px]">Upcoming</span>`;
-      if (isLive) {
-        statusHtml = `<span class="inline-flex items-center gap-1 px-1.5 py-[1px] rounded bg-ro/20 text-ro font-mono font-bold text-[10px]"><span class="w-1.5 h-1.5 rounded-full bg-ro live-dot"></span>LIVE</span>`;
-      } else if (isDone) {
-        statusHtml = `<span class="px-1.5 py-[1px] rounded bg-surface text-txtMuted font-mono text-[10px]">Finished</span>`;
-      }
-
-      const dateStr = formatRoundDate(r.startsAt);
-      const timeStr = formatRoundTime(r.startsAt);
-
-      return `
-        <tr class="round-row cursor-pointer ${isSelected ? 'bg-em/10' : ''} ${isLive ? 'bg-ro/5' : ''}" data-rid="${escapeHtml(r.id)}" data-rname="${escapeHtml(r.name || 'Round')}">
-          <td class="font-medium ${isLive ? 'text-ro font-semibold' : isSelected ? 'text-em font-semibold' : 'text-txt'}">${escapeHtml(r.name || 'Round')}</td>
-          <td class="font-mono text-txtMuted">${escapeHtml(dateStr)}${timeStr ? ` <span class="opacity-65">${escapeHtml(timeStr)}</span>` : ''}</td>
-          <td>${statusHtml}</td>
-          <td class="text-right font-mono text-[10px] ${isSelected ? 'text-em' : 'text-cy'}">${isSelected ? 'Viewing' : 'Load →'}</td>
-        </tr>
-      `;
-    })
-    .join('');
-
-  if (onSelectRound) {
-    tbody.querySelectorAll('.round-row').forEach((tr) => {
-      tr.onclick = () => {
-        const rid = tr.dataset.rid;
-        const rname = tr.dataset.rname;
-        if (rid) onSelectRound(rid, rname);
-      };
-    });
-  }
+  const back = document.getElementById('btnLiveBack');
+  if (back) back.onclick = () => onBack?.();
+  chips.querySelectorAll('.live-round-chip').forEach((btn) => {
+    btn.onclick = () => onSelectRound?.(btn.dataset.rid);
+  });
+  gamesEl.querySelectorAll('.live-game-row').forEach((btn) => {
+    btn.onclick = () => {
+      const g = state.liveRoundGames[parseInt(btn.dataset.gidx, 10)];
+      if (g) onOpenGame?.(g, state.liveRoundId);
+    };
+  });
 }
 
-export function renderLiveRoundGamesStrip({ onOpenGame } = {}) {
-  const box = document.getElementById('liveRoundGamesBox');
-  const list = document.getElementById('liveRoundGamesList');
-  if (!box || !list) return;
-
-  if (!state.liveRoundGames.length) {
-    box.classList.add('hidden');
-    return;
-  }
-
-  box.classList.remove('hidden');
-  document.getElementById('liveRoundTitle').textContent =
-    state.liveRoundName || `Round ${state.liveRoundId}`;
-
-  list.innerHTML = state.liveRoundGames
-    .slice(0, 8)
-    .map(
-      (g, i) => `
-      <button class="live-game-card text-left px-2 py-1.5 rounded bg-[#0c121e] hover:bg-surface border border-borderSubtle flex items-center justify-between gap-2 text-[11px] transition-colors" data-gidx="${i}">
-        <div class="min-w-0">
-          <div class="truncate font-medium text-txt">${escapeHtml(g.white)} <span class="text-txtMuted font-mono text-[10px]">${escapeHtml(g.whiteClk || '')}</span></div>
-          <div class="truncate font-medium text-txt">${escapeHtml(g.black)} <span class="text-txtMuted font-mono text-[10px]">${escapeHtml(g.blackClk || '')}</span></div>
-        </div>
-        <span class="px-1.5 py-0.5 rounded font-mono text-[10px] font-bold ${
-          g.result === '*' ? 'bg-ro/20 text-ro' : 'bg-surface text-txtMuted'
-        } shrink-0">${g.result === '*' ? 'LIVE' : escapeHtml(g.result)}</span>
-      </button>
-    `
-    )
-    .join('');
-
-  if (onOpenGame) {
-    list.querySelectorAll('.live-game-card').forEach((btn) => {
-      btn.onclick = () => {
-        const g = state.liveRoundGames[parseInt(btn.dataset.gidx, 10)];
-        if (g) onOpenGame(g, state.liveRoundId);
-      };
-    });
-  }
-}
-
-export function renderAllBroadcastsList({ onSelectBroadcast } = {}) {
-  const list = document.getElementById('allBroadcastsList');
-  if (!list) return;
-  const q = (document.getElementById('broadcastSearchInput')?.value || '').toLowerCase();
-  const filtered = state.allBroadcasts.filter((b) =>
-    `${b.tourName} ${b.roundName}`.toLowerCase().includes(q)
-  );
-  const countBadge = document.getElementById('broadcastCountBadge');
-  if (countBadge) countBadge.textContent = `${filtered.length} events`;
-
-  if (!filtered.length) {
-    list.innerHTML = `<div class="col-span-full py-4 text-center text-txtMuted text-xs">No broadcasts matched. Paste any Lichess Broadcast URL above to load directly.</div>`;
-    return;
-  }
-
-  list.innerHTML = filtered
-    .slice(0, 16)
-    .map((b) => {
-      const badge = getStatusBadgeInfo(b.status);
-      return `
-      <button class="bc-item text-left px-2.5 py-2 rounded bg-surface/60 hover:bg-surfaceHover border border-borderSubtle flex items-center justify-between gap-2 text-[11px]" data-tid="${escapeHtml(b.tourId)}" data-rid="${escapeHtml(b.roundId)}" data-name="${escapeHtml(b.tourName + (b.roundName ? ' · ' + b.roundName : ''))}">
-        <div class="min-w-0">
-          <div class="font-semibold text-txt truncate">${escapeHtml(b.tourName)}</div>
-          <div class="text-[10px] text-txtMuted truncate">${escapeHtml(b.roundName || 'Round')}</div>
-        </div>
-        <span class="px-1.5 py-0.5 rounded font-mono text-[9.5px] font-bold shrink-0 ${badge.cls}">${badge.label}</span>
-      </button>
-    `;
-    })
-    .join('');
-
-  if (onSelectBroadcast) {
-    list.querySelectorAll('.bc-item').forEach((btn) => {
-      btn.onclick = () => onSelectBroadcast(btn.dataset.tid, btn.dataset.rid, btn.dataset.name);
-    });
-  }
+/** Show the list or the event, and the poll controls only where they mean something. */
+export function showLiveView() {
+  const ev = state.liveView === 'event';
+  document.getElementById('liveEventsView')?.classList.toggle('hidden', ev);
+  document.getElementById('liveEventView')?.classList.toggle('hidden', !ev);
+  document.getElementById('livePollBar')?.classList.toggle('hidden', state.activeHub !== 'live');
 }

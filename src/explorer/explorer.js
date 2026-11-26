@@ -34,6 +34,9 @@ function setOpeningPill(eco, name) {
   const nameEl = document.getElementById('openingName');
   if (ecoEl) ecoEl.textContent = eco || '—';
   if (nameEl) nameEl.textContent = name || '—';
+  // Nothing to say (unknown position, explorer offline): hide the pill instead of showing dashes.
+  const known = (eco && eco !== '—') || (name && name !== '—');
+  document.getElementById('openingPill')?.classList.toggle('invisible', !known);
 }
 
 function getFallbackOpeningForCurrentPosition(fen) {

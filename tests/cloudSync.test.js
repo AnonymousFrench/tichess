@@ -64,6 +64,9 @@ describe('Cloud Sync auth session & PKCE helpers', () => {
 
     expect(sanitizeReturnTo('/')).toBe('/');
     expect(sanitizeReturnTo('/repertoire.html')).toBe('/repertoire.html');
+    expect(sanitizeReturnTo('/insights.html')).toBe('/insights.html');
+    expect(sanitizeReturnTo('/insights.html?x=1')).toBe('/insights.html?x=1');
+    expect(sanitizeReturnTo('/insights.htmlx')).toBe('/');
     expect(sanitizeReturnTo('//evil.com/phish')).toBe('/');
     expect(sanitizeReturnTo('https://evil.com')).toBe('/');
     expect(sanitizeReturnTo('/evil')).toBe('/');

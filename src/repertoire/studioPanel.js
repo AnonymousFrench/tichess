@@ -43,7 +43,8 @@ let loadedProg = {};
 let fenIndex = new Map();
 let activeDrawer = null; // null | 'pgn' | 'addLine' | 'prep'
 let addLineDraft = null; // optional { color, sectionName, lineName }
-let collapsedSections = new Set(); // section ids explicitly collapsed by user
+let sectionToggles = new Map(); // section id → expanded (explicit user choice; otherwise sections follow the board)
+let lastScrolledKey = ''; // board path the tree last scrolled to, so re-renders do not fight the user's scrolling
 let treeViewMode = (() => {
   try {
     return typeof localStorage !== 'undefined' && localStorage.getItem('tichess_rep_view') === 'merged'
@@ -936,28 +937,81 @@ function statusDotHtml(st) {
   return '';
 }
 
-function renderMoveTreeNodeHtml(node, { activeNormFen, startFen, showNum }) {
-  const isActive = Boolean(activeNormFen && node.normFen === activeNormFen);
+/**
+ * Where the board is, in tree terms: the UCI path from the board's root and the
+ * current position, so the tree can light up the exact line being looked at.
+ */
+function boardTreeContext() {
+  const tab = getActiveTab();
+  const ucis = [];
+  let n = tab?.current;
+  while (n && n.parent) {
+    ucis.unshift(n.uci);
+    n = n.parent;
+  }
+  const fen = getCurrentFen();
+  return {
+    activeNormFen: normalizeFen(fen),
+    rootNormFen: tab?.root?.fen ? normalizeFen(tab.root.fen) : normalizeFen(START_FEN),
+    path: ucis.join(' '),
+  };
+}
+
+/** 'active' (the board position), 'path' (a move leading to it) or '' for a tree node. */
+function nodeBoardState(node, treeRootNorm, ctx) {
+  if (treeRootNorm === ctx.rootNormFen) {
+    const p = node.pathUci.join(' ');
+    if (p === ctx.path) return 'active';
+    if (ctx.path.startsWith(`${p} `)) return 'path';
+  }
+  // Same position reached by another move order (a transposition).
+  return node.normFen && node.normFen === ctx.activeNormFen ? 'active' : '';
+}
+
+/**
+ * How far the board has travelled into this tree: the ply of the deepest node
+ * that is the board position or on the line to it. 0 when the board is at the
+ * tree's starting position, -1 when the tree is not on the board's line at all.
+ */
+function boardDepthInTree(root, ctx) {
+  let best = root.normFen === ctx.activeNormFen ? 0 : -1;
+  const stack = [...root.children];
+  while (stack.length) {
+    const n = stack.pop();
+    if (nodeBoardState(n, root.normFen, ctx)) best = Math.max(best, n.pathUci.length);
+    stack.push(...n.children);
+  }
+  return best;
+}
+
+function renderMoveTreeNodeHtml(node, { treeRootNorm, ctx, startFen, showNum }) {
+  const where = nodeBoardState(node, treeRootNorm, ctx);
   const num = node.color === 'w' ? `${node.moveNum}.` : showNum ? `${node.moveNum}...` : '';
   const tipParts = [];
   if (node.note) tipParts.push(node.note);
   if (node.warning) tipParts.push(`⚠ ${node.warning}`);
   const titleAttr = tipParts.length ? ` title="${escapeHtml(tipParts.join(' — '))}"` : '';
 
-  const tone = isActive
-    ? 'bg-em/25 text-em ring-1 ring-em/50 font-bold'
-    : node.mine
-      ? 'text-em/95 hover:bg-em/15 font-semibold'
-      : 'text-txtMuted hover:text-txt hover:bg-surface';
+  const tone =
+    where === 'active'
+      ? 'rep-tree-active bg-em text-[#041f15] font-bold shadow-[0_0_0_2px_rgba(16,185,129,0.35)]'
+      : where === 'path'
+        ? 'bg-em/15 text-txt font-semibold'
+        : node.mine
+          ? 'text-em/95 hover:bg-em/15 font-semibold'
+          : 'text-txtMuted hover:text-txt hover:bg-surface';
 
-  const noteDot = node.note ? '<span class="text-[8px] text-cy/80 ml-0.5">•</span>' : '';
-  return `<button class="rep-tree-move inline-flex items-center px-1 py-[1px] rounded font-mono text-[10.5px] leading-tight transition-colors ${tone}" data-start-fen="${escapeHtml(startFen)}" data-path="${escapeHtml(node.pathUci.join(' '))}" data-uci="${escapeHtml(node.uci)}"${titleAttr}>${
-    num ? `<span class="opacity-55 mr-[1px]">${num}</span>` : ''
+  const noteDot = node.note ? `<span class="text-[8px] ${where === 'active' ? 'text-[#041f15]' : 'text-cy/80'} ml-0.5">•</span>` : '';
+  return `<button class="rep-tree-move inline-flex items-center px-1 py-[1px] rounded font-mono text-[10.5px] leading-tight transition-colors ${tone}"${
+    where === 'active' ? ' data-active="1" aria-current="true"' : ''
+  } data-start-fen="${escapeHtml(startFen)}" data-path="${escapeHtml(node.pathUci.join(' '))}" data-uci="${escapeHtml(node.uci)}"${titleAttr}>${
+    num ? `<span class="opacity-60 mr-[1px]">${num}</span>` : ''
   }${escapeHtml(node.san)}${statusDotHtml(node.status)}${noteDot}</button>`;
 }
 
-function renderSectionTreeHtml(treeRoot, activeNormFen) {
+function renderSectionTreeHtml(treeRoot, ctx) {
   const startFen = treeRoot.fen;
+  const treeRootNorm = treeRoot.normFen;
 
   function renderRun(startNode, depth, prefixGlyph) {
     const chain = [];
@@ -974,7 +1028,8 @@ function renderSectionTreeHtml(treeRoot, activeNormFen) {
     const movesHtml = chain
       .map((n, idx) =>
         renderMoveTreeNodeHtml(n, {
-          activeNormFen,
+          treeRootNorm,
+          ctx,
           startFen,
           showNum: idx === 0 || n.color === 'w',
         })
@@ -1008,6 +1063,53 @@ function renderSectionTreeHtml(treeRoot, activeNormFen) {
   return treeRoot.children
     .map((ch, idx) => renderRun(ch, 0, idx === treeRoot.children.length - 1 ? '└' : '├'))
     .join('');
+}
+
+/**
+ * In or out of book along the board line: the last position on the board's path
+ * that is in the repertoire, the move that left it, and what the repertoire has there.
+ */
+export function bookStatus(index, repertoire, progress, boardNodes) {
+  if (!index || !repertoire || !boardNodes?.length) return null;
+  const inBook = (n) => index.has(normalizeFen(n.fen));
+  const cur = boardNodes[boardNodes.length - 1];
+  if (inBook(cur)) {
+    return { inBook: true, ply: boardNodes.length - 1 };
+  }
+  for (let i = boardNodes.length - 2; i >= 0; i--) {
+    if (!inBook(boardNodes[i])) continue;
+    const hit = lookupRepertoirePosition(index, repertoire, progress, boardNodes[i].fen);
+    if (!hit?.moves?.length) return null; // the line simply ended; nothing was expected
+    const played = boardNodes[i + 1];
+    return {
+      inBook: false,
+      lastBookIndex: i,
+      played,
+      expected: hit.moves,
+      yours: hit.moves.some((m) => m.mine),
+    };
+  }
+  return null;
+}
+
+const moveLabel = (n) => (n?.san ? `${n.moveNum}${n.color === 'w' ? '.' : '...'}${n.san}` : '');
+
+/** Keep the highlighted move visible inside the panel when the board moves. */
+function scrollActiveIntoView(host, key) {
+  const el = host.querySelector('.rep-tree-move[data-active]');
+  if (!el || key === lastScrolledKey) return;
+  lastScrolledKey = key;
+  let box = el.parentElement;
+  while (box && box !== document.body) {
+    const oy = getComputedStyle(box).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && box.scrollHeight > box.clientHeight) break;
+    box = box.parentElement;
+  }
+  if (!box || box === document.body) return;
+  const er = el.getBoundingClientRect();
+  const br = box.getBoundingClientRect();
+  if (er.top >= br.top + 8 && er.bottom <= br.bottom - 8) return;
+  box.scrollTop += er.top - br.top - box.clientHeight / 2 + er.height / 2;
 }
 
 export function renderStudioRepertoirePanel() {
@@ -1084,7 +1186,11 @@ export function renderStudioRepertoirePanel() {
   const fen = getCurrentFen();
   const { total, sections } = summarizeRepertoire(rep, loadedProg);
   const hit = lookupRepertoirePosition(fenIndex, rep, loadedProg, fen);
-  const activeNormFen = normalizeFen(fen);
+  const ctx = boardTreeContext();
+  const tab = getActiveTab();
+  const boardNodes = [];
+  for (let n = tab?.current; n; n = n.parent) boardNodes.unshift(n);
+  const book = bookStatus(fenIndex, rep, loadedProg, boardNodes);
   syncRepertoireBoardArrows();
 
   const drawerHtml =
@@ -1096,8 +1202,28 @@ export function renderStudioRepertoirePanel() {
           ? renderPrepDrawer()
           : '';
 
-  // Slim 1-row next-move strip + inline note for the current board position
+  // Where the board stands in the repertoire, then the prepared moves from here.
   const firstNoteMove = hit?.moves?.find((m) => m.note || m.warning);
+  let statusHtml = '';
+  if (book && !book.inBook) {
+    const expected = book.expected
+      .slice(0, 3)
+      .map((m) => `<b class="font-mono ${m.mine ? 'text-em' : 'text-txt'}">${escapeHtml(m.san)}</b>`)
+      .join(', ');
+    statusHtml = `<div class="rep-book-status flex items-center gap-2 flex-wrap px-2 py-1 rounded-md bg-am/10 border border-am/35 text-[11px]">
+        <span class="w-2 h-2 rounded-full bg-am shrink-0"></span>
+        <span class="text-txt">Out of your repertoire at <b class="font-mono">${escapeHtml(moveLabel(book.played))}</b>${
+          expected ? ` <span class="text-txtMuted">· ${book.yours ? 'you prepared' : 'prepared replies'}: ${expected}</span>` : ''
+        }</span>
+        <button class="rep-back-to-book ml-auto px-1.5 py-[1px] rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10px] font-semibold" data-i="${book.lastBookIndex}">Back to book</button>
+      </div>`;
+  } else if (book?.inBook && book.ply > 0) {
+    statusHtml = `<div class="rep-book-status flex items-center gap-2 px-2 py-1 rounded-md bg-em/10 border border-em/30 text-[11px]">
+        <span class="w-2 h-2 rounded-full bg-em shrink-0"></span>
+        <span class="text-txt min-w-0 truncate">In your repertoire${hit?.openingName ? ` · <span class="text-txtMuted">${escapeHtml(hit.openingName)}</span>` : ''}</span>
+        <span class="ml-auto font-mono text-[10px] text-txtMuted shrink-0">${escapeHtml(moveLabel(boardNodes[boardNodes.length - 1]))}</span>
+      </div>`;
+  }
   const movesHtml = hit?.moves?.length
     ? `
       <div class="px-2 py-1 rounded-md bg-bg/70 border border-borderSubtle flex flex-col gap-1">
@@ -1156,23 +1282,34 @@ export function renderStudioRepertoirePanel() {
             ${colBtn('b', '♟ Black')}
           </div>
         </div>
-        <div class="px-2 py-1.5">${renderSectionTreeHtml(mergedRoot, activeNormFen)}</div>
+        <div class="px-2 py-1.5">${renderSectionTreeHtml(mergedRoot, ctx)}</div>
       </div>
     `;
   } else {
+    // Sections follow the board: everything is open at the start, and as you play
+    // only the openings that go deepest along the board's line stay open.
+    const trees = new Map(
+      sections.map((s) => {
+        const secObj = secById.get(s.id);
+        const root = secObj ? buildSectionMoveTree(rep, secObj, loadedProg) : null;
+        return [s.id, { root, depth: root ? boardDepthInTree(root, ctx) : -1 }];
+      })
+    );
+    const maxDepth = Math.max(-1, ...[...trees.values()].map((t) => t.depth));
     treeBodyHtml = `<div class="flex flex-col gap-1">${sections
       .map((s) => {
-        const secObj = secById.get(s.id);
-        const isCollapsed = collapsedSections.has(s.id);
-        const treeRoot = secObj ? buildSectionMoveTree(rep, secObj, loadedProg) : null;
+        const { root: treeRoot, depth } = trees.get(s.id);
+        const follows = depth >= 0 && depth === maxDepth;
+        // Sections open by themselves when the board enters them; a click overrides that.
+        const isCollapsed = sectionToggles.has(s.id) ? !sectionToggles.get(s.id) : !follows;
         const treeBody = !isCollapsed && treeRoot
-          ? `<div class="px-2 py-1 border-t border-borderSubtle/50 bg-bg/60">${renderSectionTreeHtml(treeRoot, activeNormFen)}</div>`
+          ? `<div class="px-2 py-1 border-t border-borderSubtle/50 bg-bg/60">${renderSectionTreeHtml(treeRoot, ctx)}</div>`
           : '';
 
         return `
-          <div class="rounded-md border border-borderSubtle/80 bg-surface/35 overflow-hidden">
+          <div class="rounded-md border ${follows ? 'border-em/45' : 'border-borderSubtle/80'} bg-surface/35 overflow-hidden">
             <div class="flex items-center justify-between gap-1.5 px-2 py-1 hover:bg-surface/70 text-[11px]">
-              <button class="rep-sec-toggle flex items-center gap-1.5 min-w-0 flex-1 text-left" data-secid="${escapeHtml(s.id)}">
+              <button class="rep-sec-toggle flex items-center gap-1.5 min-w-0 flex-1 text-left" data-secid="${escapeHtml(s.id)}" data-open="${isCollapsed ? '0' : '1'}" aria-expanded="${!isCollapsed}">
                 <span class="font-mono text-[10px] text-txtMuted w-3 shrink-0">${isCollapsed ? '▸' : '▾'}</span>
                 <span class="text-[11px] shrink-0">${s.color === 'w' ? '♙' : '♟'}</span>
                 <span class="font-semibold text-txt truncate">${escapeHtml(s.name)}</span>
@@ -1221,11 +1358,24 @@ export function renderStudioRepertoirePanel() {
 
       ${drawerHtml}
 
+      ${statusHtml}
+
       ${movesHtml}
 
       ${treeBodyHtml}
     </div>
   `;
+  scrollActiveIntoView(host, `${treeViewMode}|${ctx.rootNormFen}|${ctx.path}|${ctx.activeNormFen}`);
+
+  const backBtn = host.querySelector('.rep-back-to-book');
+  if (backBtn) {
+    backBtn.onclick = () => {
+      const target = boardNodes[Number(backBtn.dataset.i)];
+      if (!target || !tab) return;
+      tab.current = target;
+      emitPositionChanged();
+    };
+  }
 
   const viewGroupedBtn = host.querySelector('#btnRepViewGrouped');
   if (viewGroupedBtn) {
@@ -1325,8 +1475,7 @@ export function renderStudioRepertoirePanel() {
   host.querySelectorAll('.rep-sec-toggle').forEach((btn) => {
     btn.onclick = () => {
       const sid = btn.dataset.secid;
-      if (collapsedSections.has(sid)) collapsedSections.delete(sid);
-      else collapsedSections.add(sid);
+      sectionToggles.set(sid, btn.dataset.open !== '1');
       renderStudioRepertoirePanel();
     };
   });

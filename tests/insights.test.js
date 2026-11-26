@@ -25,6 +25,12 @@ import {
   ratingSeries,
   takeaways,
   DAY_MS,
+  previousPeriodGames,
+  ratingContext,
+  openingExtremes,
+  versusStrength,
+  gamesWithPrefix,
+  recentForm,
 } from '../src/insights/stats.js';
 
 const lichessGame = (over = {}) => ({
@@ -222,5 +228,38 @@ describe('stats', () => {
     expect(bad).toBeTruthy();
     expect(bad.tone).toBe('bad');
     expect(bad.link).toMatchObject({ tab: 'explorer', color: 'w', prefix: 'e4 e6 d4 d5 e5' });
+  });
+
+  it('compares with the previous period and with your own rating', () => {
+    const now = 1_800_000_000_000;
+    const g = [rec({ t: now - 2 * DAY_MS }), rec({ t: now - 10 * DAY_MS, res: 0 }), rec({ t: now - 40 * DAY_MS }), rec({ t: now - 50 * DAY_MS, res: 0 }), rec({ t: now - 70 * DAY_MS })];
+    const prev = previousPeriodGames(g, { period: '30d' }, now);
+    expect(prev.map((x) => x.t)).toEqual([now - 40 * DAY_MS, now - 50 * DAY_MS]);
+    expect(previousPeriodGames(g, { period: 'all' }, now)).toBeNull();
+    const rc = ratingContext([rec({ me: 1900, opR: 2000, res: 0.5 }), rec({ me: 1900, opR: 2000, res: 0.5 })]);
+    expect(rc).toMatchObject({ own: 1900, perf: 2000, diff: 100 });
+    expect(recentForm([rec({ t: 3 }), rec({ t: 1 }), rec({ t: 2 })], 2).map((x) => x.t)).toEqual([2, 3]);
+  });
+
+  it('ranks openings against your own average and splits stronger and weaker opponents', () => {
+    const g = [];
+    for (let i = 0; i < 30; i++) g.push(rec({ opening: 'Italian Game', moves: 'e4 e5 Nf3 Nc6 Bc4', oply: 5, res: i % 4 ? 1 : 0 }));
+    for (let i = 0; i < 30; i++) g.push(rec({ opening: 'French Defense', moves: 'e4 e6 d4 d5', oply: 4, res: i % 4 ? 0 : 1 }));
+    const x = openingExtremes(g, 'w');
+    expect(x.best[0].name).toBe('Italian Game');
+    expect(x.worst[0].name).toBe('French Defense');
+    expect(x.n).toBe(60);
+
+    const vs = versusStrength([rec({ me: 2000, opR: 2200, res: 1 }), rec({ me: 2000, opR: 1800, res: 0 }), rec({ me: 2000, opR: 2010, res: 1 })]);
+    expect(vs.stronger).toMatchObject({ n: 1, score: 1 });
+    expect(vs.weaker).toMatchObject({ n: 1, score: 0 });
+    expect(vs.stronger.expected).toBeCloseTo(0.24, 2);
+  });
+
+  it('drills down to games by move prefix', () => {
+    const g = [rec({ moves: 'e4 e5 Nf3' }), rec({ moves: 'e4 e5' }), rec({ moves: 'e4 e6 d4' }), rec({ moves: 'e4 e5 Nf3', color: 'b' })];
+    expect(gamesWithPrefix(g, 'e4 e5', 'w')).toHaveLength(2);
+    expect(gamesWithPrefix(g, 'e4 e', 'w')).toHaveLength(0);
+    expect(gamesWithPrefix(g, '', null)).toHaveLength(4);
   });
 });

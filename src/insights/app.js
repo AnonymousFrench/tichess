@@ -1,7 +1,7 @@
 /**
  * Insights page controller: accounts, syncing, filters, tabs and actions.
  */
-import { filterGames, PERIODS } from './stats.js';
+import { filterGames, PERIODS, previousPeriodGames } from './stats.js';
 import { TC_LABEL, TIME_CONTROLS, parsePgnGames, guessPgnOwner, normalizePgnGame, TERM_LABEL } from './normalize.js';
 import { loadAllGames, putGames, deleteAccountGames, loadAccounts, saveAccounts } from './store.js';
 import { syncLichess, syncChessCom, RateLimitError } from './sync.js';
@@ -9,17 +9,17 @@ import { esc, fmtInt } from './charts.js';
 import {
   renderOverview,
   renderGames,
-  renderExplorer,
   renderOpenings,
   renderOpponents,
-  renderActivity,
-  renderRating,
+  renderProgress,
   filterGamesTab,
   replay,
   relTime,
   movesText,
 } from './views.js';
 import { encodeMoveLine } from '../chess/shareUrl.js';
+import { initCloudSync, onCloudSyncState, getCloudSyncState, getLoginUrl } from '../sync/cloudSync.js';
+import { mountAccount } from '../shared/account.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const PREFS_KEY = 'tichess_insights_ui_v1';
@@ -27,20 +27,21 @@ const AUTO_SYNC_AFTER_MS = 10 * 60_000;
 
 const TABS = [
   ['overview', 'Overview'],
-  ['games', 'Games'],
-  ['explorer', 'Explorer'],
   ['openings', 'Openings'],
+  ['games', 'Games'],
   ['opponents', 'Opponents'],
-  ['activity', 'Activity'],
-  ['rating', 'Rating'],
+  ['progress', 'Progress'],
 ];
+// Views that were merged: old saved tabs and links land on their new home.
+const TAB_ALIAS = { explorer: 'openings', rating: 'progress', activity: 'progress' };
+const AUTO_ADDED_KEY = 'tichess_insights_auto_added_v1';
 
 const $ = (id) => document.getElementById(id);
 
 const DEFAULT_UI = {
   tab: 'overview',
-  filters: { tc: 'all', color: 'all', period: 'all', rated: 'all', opp: 'all', account: 'all' },
-  games: { outcome: 'all', term: 'all', sort: 'new', search: '', limit: 50 },
+  filters: { tc: 'all', color: 'all', period: '12m', rated: 'all', opp: 'all', account: 'all' },
+  games: { outcome: 'all', term: 'all', sort: 'new', search: '', limit: 50, day: '', prefix: '', pcolor: '' },
   explorer: { color: 'w', path: [] },
   openings: { sort: 'played', group: 'family', min: 5 },
   activity: { years: 3 },
@@ -56,6 +57,8 @@ function loadUi() {
       else if (raw[k] !== undefined) ui[k] = raw[k];
     }
     ui.games.limit = 50;
+    ui.tab = TAB_ALIAS[ui.tab] || ui.tab;
+    if (!TABS.some(([id]) => id === ui.tab)) ui.tab = 'overview';
     return ui;
   } catch (_) {
     return structuredClone(DEFAULT_UI);
@@ -73,6 +76,8 @@ const S = {
   version: 0,
   filteredKey: '',
   filtered: [],
+  prev: null,
+  moreOpen: false,
 };
 
 function saveUi() {
@@ -119,22 +124,30 @@ function accountGamesCount(a) {
   return n;
 }
 
+function filterSpec() {
+  const f = S.ui.filters;
+  return {
+    tc: f.tc === 'all' ? [] : [f.tc],
+    color: f.color,
+    period: f.period,
+    rated: f.rated,
+    opp: f.opp,
+    accounts: f.account === 'all' ? [] : [f.account],
+  };
+}
+
 function currentFiltered() {
   const f = S.ui.filters;
   const key = `${S.version}|${JSON.stringify(f)}`;
   if (key !== S.filteredKey) {
-    S.filtered = filterGames(S.list, {
-      tc: f.tc === 'all' ? [] : [f.tc],
-      color: f.color,
-      period: f.period,
-      rated: f.rated,
-      opp: f.opp,
-      accounts: f.account === 'all' ? [] : [f.account],
-    });
+    S.filtered = filterGames(S.list, filterSpec());
+    S.prev = previousPeriodGames(S.list, filterSpec());
     S.filteredKey = key;
   }
   return S.filtered;
 }
+
+const SECONDARY_FILTERS = ['opp', 'rated', 'account'];
 
 /* ------------------------------------------------------------------ */
 /* Header: accounts and sync status                                   */
@@ -144,6 +157,7 @@ function renderHeader() {
   const right = $('hdrRight');
   if (!S.accounts.length) {
     right.innerHTML = '';
+    $('syncBar').hidden = true;
     return;
   }
   let status;
@@ -164,10 +178,15 @@ function renderHeader() {
     status = `<span class="hidden sm:inline text-[11px] text-txtMuted">${last ? `Updated ${esc(relTime(last))}` : 'Not synced yet'}</span>
       <button data-act="sync" class="px-2.5 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11px] font-semibold whitespace-nowrap" title="Download new games" aria-label="Sync">↻<span class="hidden sm:inline"> Sync</span></button>`;
   }
+  // What is being analyzed (games and where they come from), not who is signed in:
+  // the account itself is the shared control next to this.
   const names = S.accounts.map((a) => a.name);
+  const n = S.list.length;
+  const short = n >= 10_000 ? `${Math.round(n / 1000)}k` : fmtInt(n);
   right.innerHTML = `${status}
-    <button data-act="accounts" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11.5px] font-semibold max-w-[110px] sm:max-w-[200px] min-w-0" aria-haspopup="dialog" aria-label="Accounts">
-      <span class="truncate">${esc(names.slice(0, 2).join(', '))}${names.length > 2 ? ` +${names.length - 2}` : ''}</span><span class="text-txtMuted text-[10px]">▾</span>
+    <button data-act="accounts" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11.5px] font-semibold min-w-0" aria-haspopup="dialog" aria-label="Game sources: ${esc(names.join(', '))}" title="Games from ${esc(names.join(', '))}. Add or remove accounts and files.">
+      <svg class="w-3.5 h-3.5 shrink-0 text-txtMuted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+      <span class="font-mono">${short}</span><span class="hidden sm:inline">games</span><span class="text-txtMuted text-[10px]">▾</span>
     </button>`;
   const bar = $('syncBar');
   if (S.sync && S.sync.total) {
@@ -182,6 +201,15 @@ function renderHeader() {
 /* Toolbar: tabs + filters                                            */
 /* ------------------------------------------------------------------ */
 
+function segmented(key, items, value, label) {
+  return `<div class="inline-flex p-0.5 rounded-lg bg-surface border border-borderSubtle text-[11px] shrink-0" role="group" aria-label="${label}">${items
+    .map(
+      ([v, l]) =>
+        `<button data-act="set-filter" data-k="${key}" data-v="${esc(v)}" aria-pressed="${value === v}" class="px-2 py-0.5 rounded-md font-semibold whitespace-nowrap ${value === v ? 'bg-txt text-bg' : 'text-txtMuted hover:text-txt'}">${esc(l)}</button>`
+    )
+    .join('')}</div>`;
+}
+
 function renderToolbar() {
   const tb = $('toolbar');
   if (!S.accounts.length) {
@@ -191,39 +219,47 @@ function renderToolbar() {
   tb.hidden = false;
   const tcsPresent = TIME_CONTROLS.filter((tc) => S.list.some((g) => g.tc === tc));
   const f = S.ui.filters;
-  const sel = (k, opts, label) =>
-    `<label class="sr-only" for="flt-${k}">${label}</label><select id="flt-${k}" data-act="filter" data-k="${k}" class="px-2 py-1 rounded-lg border text-[11.5px] font-medium focus:outline-none focus:border-em ${
-      f[k] !== 'all' ? 'bg-em/15 border-em/40 text-em' : 'bg-surface border-borderSubtle text-txt'
-    }">${opts.map(([v, l]) => `<option value="${esc(v)}"${v === f[k] ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
-  const colorSeg = `<div class="inline-flex p-0.5 rounded-lg bg-surface border border-borderSubtle text-[11px]" role="group" aria-label="Color">${[
-    ['all', 'Both'],
-    ['w', 'White'],
-    ['b', 'Black'],
-  ]
-    .map(
-      ([v, l]) =>
-        `<button data-act="set-filter" data-k="color" data-v="${v}" class="px-2 py-0.5 rounded-md font-semibold ${f.color === v ? 'bg-txt text-bg' : 'text-txtMuted hover:text-txt'}">${l}</button>`
-    )
-    .join('')}</div>`;
-  const acctOpts = S.accounts.length > 1 ? sel('account', [['all', 'All accounts'], ...S.accounts.map((a) => [accountKey(a), a.name])], 'Account') : '';
-  const anyFilter = Object.entries(f).some(([, v]) => v !== 'all');
+  const moreCount = SECONDARY_FILTERS.filter((k) => f[k] !== 'all').length;
+  const anyFilter = Object.entries(f).some(([k, v]) => v !== DEFAULT_UI.filters[k]);
   tb.innerHTML = `<div class="max-w-[1400px] mx-auto px-3 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
     <nav class="flex items-center gap-0.5 overflow-x-auto -mx-1 px-1 max-w-full" aria-label="Insights views">${TABS.map(
       ([id, label]) =>
-        `<button data-act="tab" data-v="${id}" class="px-2.5 py-1 rounded-lg text-[12px] font-semibold whitespace-nowrap ${
+        `<button data-act="tab" data-v="${id}" class="px-2 sm:px-2.5 py-1 rounded-lg text-[12px] font-semibold whitespace-nowrap ${
           S.ui.tab === id ? 'bg-surface text-txt border border-borderBright' : 'text-txtMuted hover:text-txt border border-transparent'
         }" ${S.ui.tab === id ? 'aria-current="page"' : ''}>${label}</button>`
     ).join('')}</nav>
-    <div class="flex items-center gap-1.5 overflow-x-auto max-w-full -mx-1 px-1 lg:mx-0 lg:px-0 lg:flex-wrap lg:overflow-visible lg:ml-auto [&>*]:shrink-0">
-      ${sel('tc', [['all', 'All time controls'], ...tcsPresent.map((t) => [t, TC_LABEL[t]])], 'Time control')}
-      ${colorSeg}
-      ${sel('period', Object.entries(PERIODS).map(([k, v]) => [k, v.label]), 'Period')}
-      ${sel('opp', [['all', 'Any opponent'], ['higher', 'Stronger opponents'], ['similar', 'Similar rating'], ['lower', 'Weaker opponents']], 'Opponent')}
-      ${sel('rated', [['all', 'Rated + casual'], ['rated', 'Rated only'], ['casual', 'Casual only']], 'Rated')}
-      ${acctOpts}
-      ${anyFilter ? '<button data-act="clear-filters" class="text-[11px] text-txtMuted hover:text-txt underline">Clear</button>' : ''}
+    <div class="flex items-center gap-1.5 overflow-x-auto max-w-full -mx-1 px-1 lg:mx-0 lg:px-0 lg:ml-auto">
+      ${tcsPresent.length > 1 ? segmented('tc', [['all', 'All'], ...tcsPresent.map((t) => [t, TC_LABEL[t]])], f.tc, 'Time control') : ''}
+      ${segmented('color', [['all', 'Both'], ['w', 'White'], ['b', 'Black']], f.color, 'Color')}
+      <label class="sr-only" for="flt-period">Period</label>
+      <select id="flt-period" data-act="filter" data-k="period" class="shrink-0 px-2 py-1 rounded-lg border text-[11.5px] font-medium focus:outline-none focus:border-em bg-surface border-borderSubtle text-txt">${Object.entries(PERIODS)
+        .map(([k, v]) => `<option value="${k}"${k === f.period ? ' selected' : ''}>${esc(v.label)}</option>`)
+        .join('')}</select>
+      <button id="btnMoreFilters" data-act="more-filters" aria-haspopup="dialog" class="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg border text-[11.5px] font-medium ${
+        moreCount ? 'bg-em/15 border-em/40 text-em' : 'bg-surface border-borderSubtle text-txt hover:bg-surfaceHover'
+      }">Filters${moreCount ? ` <span class="font-mono">${moreCount}</span>` : ''}</button>
+      ${anyFilter ? '<button data-act="clear-filters" class="shrink-0 text-[11px] text-txtMuted hover:text-txt underline">Reset</button>' : ''}
     </div>
   </div>`;
+}
+
+function openMoreFilters() {
+  const f = S.ui.filters;
+  const btn = $('btnMoreFilters');
+  const r = btn?.getBoundingClientRect();
+  const sel = (k, opts, label) =>
+    `<label class="grid gap-1 text-[11px] text-txtMuted">${label}<select id="flt-${k}" data-act="filter" data-k="${k}" class="px-2 py-1.5 rounded-lg border text-[12px] focus:outline-none focus:border-em ${
+      f[k] !== 'all' ? 'bg-em/15 border-em/40 text-em' : 'bg-surface border-borderSubtle text-txt'
+    }">${opts.map(([v, l]) => `<option value="${esc(v)}"${v === f[k] ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  const right = r ? Math.max(12, window.innerWidth - r.right) : 12;
+  const top = r ? r.bottom + 6 : 100;
+  $('popover').innerHTML = `<div class="fixed inset-0 z-40" data-act="close-popover"></div>
+    <div class="fixed z-50 w-[min(280px,calc(100vw-24px))] bg-panel border border-borderBright rounded-xl shadow-2xl p-3 grid gap-2.5" style="top:${top}px;right:${right}px" role="dialog" aria-label="More filters">
+      ${sel('opp', [['all', 'Any opponent'], ['higher', 'Stronger (50+ above you)'], ['similar', 'Similar rating'], ['lower', 'Weaker (50+ below you)']], 'Opponent strength')}
+      ${sel('rated', [['all', 'Rated and casual'], ['rated', 'Rated only'], ['casual', 'Casual only']], 'Rated')}
+      ${S.accounts.length > 1 ? sel('account', [['all', 'All accounts'], ...S.accounts.map((a) => [accountKey(a), a.name])], 'Account') : ''}
+    </div>`;
+  S.moreOpen = true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -231,22 +267,33 @@ function renderToolbar() {
 /* ------------------------------------------------------------------ */
 
 function renderOnboarding(prefill = '') {
+  const auth = getCloudSyncState();
+  const signedIn = Boolean(auth.authenticated && auth.user);
+  const quick = signedIn
+    ? `<button data-act="add-lichess" data-name="${esc(auth.user.username)}" class="w-full px-4 py-2.5 rounded-lg bg-em hover:brightness-110 text-[#04130d] font-bold text-[13.5px]">Analyze my Lichess games (${esc(auth.user.username)})</button>
+       <div class="text-center text-[11px] text-txtMuted my-2.5">or another account</div>`
+    : auth.configured
+      ? `<a href="${esc(getLoginUrl())}" class="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg bg-txt hover:bg-white text-bg font-bold text-[13.5px]"><span aria-hidden="true">♞</span>Sign in with Lichess</a>
+         <p class="text-[11px] text-txtMuted text-center mt-1.5">One sign-in for Insights, the Studio and your repertoire.</p>
+         <div class="text-center text-[11px] text-txtMuted my-2.5">or type any username</div>`
+      : '';
   $('view').innerHTML = `<div class="max-w-[560px] mx-auto mt-6 sm:mt-14">
     <div class="bg-panel border border-borderSubtle rounded-2xl p-5 sm:p-6">
       <div class="text-[11px] font-semibold uppercase tracking-wider text-em mb-1">Insights</div>
       <h1 class="text-[22px] font-bold leading-tight mb-1.5">See how you really play</h1>
-      <p class="text-[12.5px] text-txtMuted mb-4">Connect your Lichess or Chess.com account to see your strongest and weakest openings, how you do against stronger players, when you play best, and how your rating moves.</p>
+      <p class="text-[12.5px] text-txtMuted mb-4">Your strongest and weakest openings, how you do against stronger players, when you play best, and where your rating is heading.</p>
+      ${quick}
       <form data-act="add-account-form" class="grid gap-2">
         <div class="flex flex-wrap gap-2">
           <select name="src" class="px-2.5 py-2 rounded-lg bg-surface border border-borderSubtle text-[16px] sm:text-[12.5px] focus:outline-none focus:border-em" aria-label="Site">
             <option value="lichess">Lichess</option><option value="chesscom">Chess.com</option>
           </select>
-          <input name="name" required value="${esc(prefill)}" placeholder="Username" autocomplete="username" autocapitalize="off" spellcheck="false" class="flex-1 min-w-[140px] px-3 py-2 rounded-lg bg-surface border border-borderSubtle text-[16px] sm:text-[13px] focus:outline-none focus:border-em" aria-label="Username">
-          <button class="w-full sm:w-auto px-4 py-2 rounded-lg bg-em hover:brightness-110 text-[#04130d] font-bold text-[13px]">Analyze</button>
+          <input name="name" required value="${esc(signedIn ? '' : prefill)}" placeholder="Username" autocomplete="username" autocapitalize="off" spellcheck="false" class="flex-1 min-w-[140px] px-3 py-2 rounded-lg bg-surface border border-borderSubtle text-[16px] sm:text-[13px] focus:outline-none focus:border-em" aria-label="Username">
+          <button class="w-full sm:w-auto px-4 py-2 rounded-lg ${signedIn || auth.configured ? 'bg-surface hover:bg-surfaceHover border border-borderSubtle text-txt' : 'bg-em hover:brightness-110 text-[#04130d]'} font-bold text-[13px]">Analyze</button>
         </div>
       </form>
       <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11.5px] text-txtMuted">
-        <span>Your games are stored only in this browser.</span>
+        <span>Games are stored only in this browser.</span>
         <button data-act="import-pgn" class="text-cy hover:underline">Or import a PGN file</button>
       </div>
     </div>
@@ -258,7 +305,7 @@ function render() {
   renderHeader();
   renderToolbar();
   if (!S.accounts.length) {
-    if (!$('view').querySelector('[data-act="add-account-form"]')) renderOnboarding(S.prefillName || '');
+    if (!$('view').querySelector('[data-act="add-account-form"]')) renderOnboarding('');
     return;
   }
   const games = currentFiltered();
@@ -268,6 +315,7 @@ function render() {
   }
   const ctx = {
     games,
+    prevGames: S.prev,
     all: S.list,
     now: Date.now(),
     ui: S.ui,
@@ -278,12 +326,10 @@ function render() {
   };
   const renderers = {
     overview: renderOverview,
-    games: renderGames,
-    explorer: renderExplorer,
     openings: renderOpenings,
+    games: renderGames,
     opponents: renderOpponents,
-    activity: renderActivity,
-    rating: renderRating,
+    progress: renderProgress,
   };
   const scrollY = window.scrollY;
   const active = document.activeElement;
@@ -425,7 +471,7 @@ function openAccounts() {
     .join('');
   $('popover').innerHTML = `<div class="fixed inset-0 z-40" data-act="close-popover"></div>
     <div class="fixed z-50 right-3 top-[52px] w-[min(380px,calc(100vw-24px))] bg-panel border border-borderBright rounded-xl shadow-2xl p-3" role="dialog" aria-label="Accounts">
-      <div class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted mb-1">Accounts</div>
+      <div class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted mb-1">Game sources</div>
       <div>${rows}</div>
       <form data-act="add-account-form" class="flex gap-1.5 mt-3">
         <select name="src" class="px-2 py-1.5 rounded-lg bg-surface border border-borderSubtle text-[11.5px]" aria-label="Site"><option value="lichess">Lichess</option><option value="chesscom">Chess.com</option></select>
@@ -551,7 +597,7 @@ function exportPgn() {
 /* ------------------------------------------------------------------ */
 
 function setTab(tab) {
-  S.ui.tab = tab;
+  S.ui.tab = TAB_ALIAS[tab] || tab;
   saveUi();
   render();
   window.scrollTo(0, 0);
@@ -559,7 +605,13 @@ function setTab(tab) {
 
 function goExplore(color, prefix) {
   S.ui.explorer = { color: color === 'b' ? 'b' : 'w', path: prefix ? prefix.split(' ').filter(Boolean) : [] };
-  setTab('explorer');
+  setTab('openings');
+}
+
+/** Jump to the Games tab with a drill-down applied (keeps the global filters). */
+function showGames(patch) {
+  S.ui.games = { ...DEFAULT_UI.games, sort: S.ui.games.sort, ...patch, limit: 50 };
+  setTab('games');
 }
 
 function onClick(e) {
@@ -582,6 +634,12 @@ function onClick(e) {
       saveUi();
       render();
       break;
+    case 'more-filters':
+      openMoreFilters();
+      break;
+    case 'add-lichess':
+      addAccount('lichess', el.dataset.name || '');
+      break;
     case 'sync':
       runSync();
       break;
@@ -593,6 +651,7 @@ function onClick(e) {
       break;
     case 'close-popover':
       closePopover();
+      S.moreOpen = false;
       break;
     case 'remove-account':
       removeAccount(el.dataset.key);
@@ -609,11 +668,39 @@ function onClick(e) {
       const t = S.takeaways[Number(el.dataset.i)];
       if (!t?.link) break;
       if (t.link.tab === 'explorer') goExplore(t.link.color, t.link.prefix);
+      else if (t.link.tab === 'games') showGames({ outcome: t.link.outcome || 'all', term: t.link.term || 'all' });
       else setTab(t.link.tab);
+      break;
+    }
+    case 'takeaway-games': {
+      const t = S.takeaways[Number(el.dataset.i)];
+      if (t?.link?.prefix !== undefined) showGames({ prefix: t.link.prefix, pcolor: t.link.color || '' });
       break;
     }
     case 'explore':
       goExplore(el.dataset.color, el.dataset.prefix || '');
+      break;
+    case 'op-pick':
+      ui.explorer = { color: el.dataset.color === 'b' ? 'b' : 'w', path: (el.dataset.prefix || '').split(' ').filter(Boolean) };
+      saveUi();
+      render();
+      if (window.innerWidth < 1024) document.getElementById('insExplorer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      break;
+    case 'ex-games':
+      showGames({ prefix: ui.explorer.path.join(' '), pcolor: ui.explorer.color });
+      break;
+    case 'term-games':
+      showGames({ outcome: el.dataset.outcome || 'all', term: el.dataset.term || 'all' });
+      break;
+    case 'day-games':
+      showGames({ day: el.dataset.day || '' });
+      break;
+    case 'games-clear':
+      ui.games[el.dataset.k] = '';
+      if (el.dataset.k === 'prefix') ui.games.pcolor = '';
+      ui.games.limit = 50;
+      saveUi();
+      render();
       break;
     case 'ex-move':
       ui.explorer.path = [...ui.explorer.path, el.dataset.san];
@@ -651,8 +738,7 @@ function onClick(e) {
       exportPgn();
       break;
     case 'opp-games':
-      ui.games = { ...ui.games, search: el.dataset.name, outcome: 'all', limit: 50 };
-      setTab('games');
+      showGames({ search: el.dataset.name });
       break;
     case 'op-sort':
       ui.openings.sort = el.dataset.v;
@@ -735,8 +821,11 @@ function onSubmit(e) {
 }
 
 function onKey(e) {
-  if (e.key === 'Escape') closePopover();
-  if (S.ui.tab !== 'explorer') return;
+  if (e.key === 'Escape') {
+    closePopover();
+    S.moreOpen = false;
+  }
+  if (S.ui.tab !== 'openings') return;
   const tag = e.target?.tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
   if (e.key === 'ArrowLeft' && S.ui.explorer.path.length) {
@@ -755,15 +844,28 @@ function onKey(e) {
 /* Boot                                                                */
 /* ------------------------------------------------------------------ */
 
-async function signedInLichessName() {
+/**
+ * Signed in with Lichess (on any tichess page): add that account once, so
+ * Insights is ready without typing a username. Removing it later sticks.
+ */
+async function autoAddSignedInAccount(snap) {
+  if (!(snap.authenticated && snap.user?.username)) return false;
+  const name = String(snap.user.username);
+  let done = '';
   try {
-    const res = await fetch('/api/auth/me', { headers: { Accept: 'application/json' } });
-    if (!res.ok) return '';
-    const data = await res.json();
-    return data?.authenticated && data.user?.username ? String(data.user.username) : '';
+    done = localStorage.getItem(AUTO_ADDED_KEY) || '';
   } catch (_) {
-    return '';
+    /* private mode */
   }
+  if (done.toLowerCase() === name.toLowerCase()) return false;
+  try {
+    localStorage.setItem(AUTO_ADDED_KEY, name);
+  } catch (_) {
+    /* private mode */
+  }
+  if (S.accounts.some((a) => a.src === 'lichess' && a.name.toLowerCase() === name.toLowerCase())) return false;
+  await addAccount('lichess', name);
+  return true;
 }
 
 export async function startInsights() {
@@ -772,6 +874,7 @@ export async function startInsights() {
   document.addEventListener('input', onInput);
   document.addEventListener('submit', onSubmit);
   document.addEventListener('keydown', onKey);
+  mountAccount();
 
   try {
     S.accounts = await loadAccounts();
@@ -780,13 +883,17 @@ export async function startInsights() {
     console.error(err);
     toast('This browser blocked local storage, so games cannot be saved (private window?).', true);
   }
+  render();
+  onCloudSyncState((snap) => {
+    if (!S.accounts.length && $('view').querySelector('[data-act="add-account-form"]')) renderOnboarding('');
+    autoAddSignedInAccount(snap);
+  });
+  const snap = await initCloudSync();
+  if (await autoAddSignedInAccount(snap)) return;
   if (!S.accounts.length) {
-    render();
-    S.prefillName = await signedInLichessName();
-    if (S.prefillName) renderOnboarding(S.prefillName);
+    renderOnboarding('');
     return;
   }
-  render();
   const stale = S.accounts.some((a) => a.src !== 'pgn' && (!a.complete || Date.now() - (a.lastSync || 0) > AUTO_SYNC_AFTER_MS));
   if (stale) runSync();
 }

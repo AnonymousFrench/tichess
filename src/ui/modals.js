@@ -5,6 +5,7 @@ const SHORTCUTS = [
   ['Space', 'Start or stop engines'],
   ['[ / ]', 'Smaller / larger board'],
   ['=', 'Fit board to screen'],
+  ['n', 'New board (reset the current board)'],
   ['Alt+N', 'New analysis tab'],
   ['?', 'Show this list'],
 ];
@@ -118,18 +119,18 @@ const MODALS_HTML = `
   <div id="settingsModal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
     <div class="bg-panel border border-borderBright rounded-lg w-full max-w-xl max-h-[90vh] overflow-y-auto p-4 shadow-2xl flex flex-col gap-3.5">
       <div class="flex items-center justify-between">
-        <h2 class="font-bold text-sm">Studio Settings, Cloud Sync &amp; Local Bridge</h2>
+        <h2 class="font-bold text-sm">Settings</h2>
         <button class="modal-close text-txtMuted hover:text-txt px-1.5" aria-label="Close modal">✕</button>
       </div>
 
       <!-- Cloud Sync (Neon Postgres + Sign in with Lichess) -->
       <div class="p-3 rounded bg-surface/60 border border-cy/35 flex flex-col gap-2">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-xs font-semibold text-cy">☁ Phone ↔ Computer Cloud Sync (Lichess + Neon)</span>
+          <span class="text-xs font-semibold text-cy">Lichess account</span>
           <span id="settingsSyncStatusBadge" class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel text-txtMuted">Checking...</span>
         </div>
         <p id="settingsSyncDesc" class="text-[11px] text-txtMuted leading-relaxed">
-          Sign in with Lichess (zero scopes needed) to automatically sync your opening repertoire, spaced-repetition drill progress, and scouted player list between phone and desktop.
+          One sign-in for the whole site (no permissions requested): your games in Insights, your explorer here in the Studio, and your repertoire and drill progress on every device.
         </p>
         <div class="flex items-center gap-2 flex-wrap">
           <button id="btnSettingsSignIn" class="px-3 py-1.5 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-semibold text-xs">Sign in with Lichess</button>
@@ -140,11 +141,11 @@ const MODALS_HTML = `
 
       <!-- Lichess Token -->
       <div class="p-3 rounded bg-surface/60 border border-borderSubtle flex flex-col gap-2">
-        <div class="text-xs font-semibold text-em">1. Lichess Personal Access Token (Optional)</div>
+        <div class="text-xs font-semibold text-txt">Personal API token <span class="font-normal text-txtMuted">(optional)</span></div>
         <p class="text-[11px] text-txtMuted">
-          Unlocks full-depth Masters OTB &amp; Lichess Opening Explorer APIs (Live Broadcasts &amp; Cloud Eval work without a token).
-          <span class="text-txt">Leave all scopes unchecked</span> — Explorer only needs an unscoped read token.
-          <a href="https://lichess.org/account/oauth/token/create?description=tichess" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">Get free token ↗</a>
+          Not needed when you are signed in. Use it only if you prefer not to sign in: it unlocks the Masters and Lichess explorers in this browser.
+          Leave every scope unchecked.
+          <a href="https://lichess.org/account/oauth/token/create?description=tichess" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">Create a token ↗</a>
         </p>
         <div class="flex gap-2">
           <input id="inputLichessToken" type="password" placeholder="lip_xxxxxxxxxxxxxxxxxxxx" class="flex-1 px-2.5 py-1.5 rounded bg-panel border border-borderSubtle font-mono text-xs focus:outline-none focus:border-em" />
@@ -156,7 +157,7 @@ const MODALS_HTML = `
       <!-- Local UCI WebSocket Bridge -->
       <div class="p-3 rounded bg-surface/60 border border-borderSubtle flex flex-col gap-2">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold text-vi">2. Local UCI WebSocket Bridge (Real GPU Lc0 / Native Stockfish)</span>
+          <span class="text-xs font-semibold text-vi">Local engine bridge (Lc0 / native Stockfish)</span>
           <span id="bridgeStatusBadge" class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel text-txtMuted">No Bridge Connected</span>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -204,7 +205,7 @@ wss.on('connection', (ws) =&gt; {
       <!-- IndexedDB Storage -->
       <div class="p-3 rounded bg-surface/60 border border-borderSubtle flex items-center justify-between">
         <div>
-          <div class="text-xs font-semibold">3. Local Player Databases (IndexedDB)</div>
+          <div class="text-xs font-semibold">Games stored in this browser</div>
           <div id="settingsDbInfo" class="text-[11px] text-txtMuted mt-0.5">Checking local storage...</div>
         </div>
         <button id="btnWipeDb" class="px-3 py-1.5 rounded bg-ro/15 hover:bg-ro/25 text-ro border border-ro/30 text-xs font-medium">Clear All DBs</button>
@@ -212,7 +213,7 @@ wss.on('connection', (ws) =&gt; {
 
       <!-- About & Open Source Licenses -->
       <div class="p-3 rounded bg-surface/60 border border-borderSubtle flex flex-col gap-1">
-        <div class="text-xs font-semibold">4. About &amp; Licenses</div>
+        <div class="text-xs font-semibold">About &amp; licenses</div>
         <p class="text-[11px] text-txtMuted leading-relaxed">
           Bundles <span class="text-txt">Stockfish 19 Lite WASM</span> under the
           <a href="/stockfish/LICENSE.txt" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">GNU GPLv3</a>

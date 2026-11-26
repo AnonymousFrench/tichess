@@ -11,155 +11,90 @@
   <div id="dragGhost"></div>
 
   <!-- ======================================================================= -->
-  <!-- TOP 34px STUDIO MENU BAR                                                -->
+  <!-- TOP BAR: sections, one Settings menu, Layout, live jump, account        -->
   <!-- ======================================================================= -->
   <header class="min-h-[40px] lg:h-[40px] shrink-0 bg-panel border-b border-borderSubtle px-2.5 py-1 lg:py-0 flex flex-wrap lg:flex-nowrap items-center justify-between gap-x-2 gap-y-1 select-none z-40">
-    <!-- Left: Sections + Menus -->
-    <div class="flex flex-wrap items-center gap-0.5 sm:gap-1 min-w-0">
-      <div data-app-nav class="mr-2 shrink-0"></div>
+    <div class="flex items-center gap-1 min-w-0">
+      <div data-app-nav class="mr-1.5 shrink-0"></div>
 
-      <!-- File -->
-      <div class="relative">
-        <button data-menu="file" class="menu-trigger px-2 py-1 rounded text-[11.5px] text-txtMuted hover:text-txt hover:bg-surface">File</button>
-        <div id="menu-file" class="menu-dropdown hidden">
-          <button class="menu-item" id="actNewTab"><span>New Analysis Tab</span><span class="font-mono text-[10px] text-txtMuted">Alt+N</span></button>
-          <button class="menu-item" id="actLoadModal"><span>Load FEN / PGN...</span></button>
-          <button class="menu-item" id="actImportPgnMenu"><span>Import Local .pgn Database</span></button>
+      <!-- Settings: everything that used to live in File / Edit / View / Engine -->
+      <div class="relative shrink-0">
+        <button id="btnSettingsMenu" data-menu="settings" class="menu-trigger flex items-center gap-1.5 px-2 py-1 rounded text-[11.5px] text-txtMuted hover:text-txt hover:bg-surface" title="Settings" aria-haspopup="menu">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          <span class="hidden sm:inline">Settings</span>
+        </button>
+        <div id="menu-settings" class="menu-dropdown hidden" role="menu" style="min-width:250px">
+          <div class="menu-label">Game</div>
+          <button class="menu-item" id="actResetTab"><span>New board</span><span class="menu-key">n</span></button>
+          <button class="menu-item" id="actLoadModal"><span>Load PGN or FEN…</span></button>
+          <button class="menu-item" id="actImportPgnMenu"><span>Open a .pgn database…</span></button>
+          <button class="menu-item" id="actExportPgn"><span>Copy PGN</span></button>
           <div class="menu-sep"></div>
-          <button class="menu-item" id="actExportPgn"><span>Export Current Tab PGN</span></button>
-          <button class="menu-item" id="actShareLink"><span>Copy Shareable Analysis Link</span></button>
+          <div class="menu-label">Board</div>
+          <button class="menu-item" id="actToggleCoords"><span>Coordinates</span><span id="chkCoords" class="text-em font-mono">✓</span></button>
+          <button class="menu-item" id="actToggleArrows"><span>Engine arrows</span><span id="chkArrows" class="text-em font-mono">✓</span></button>
+          <button class="menu-item" id="actToggleEvalBar"><span>Eval bar</span><span id="chkEvalBar" class="text-em font-mono">✓</span></button>
+          <div class="menu-row">
+            <span>Size</span>
+            <span class="menu-seg">
+              <button id="actBoardSmaller" title="Smaller board ( [ )" aria-label="Smaller board">−</button>
+              <button id="actBoardFit" title="Fit board to screen ( = )">Fit</button>
+              <button id="actBoardLarger" title="Larger board ( ] )" aria-label="Larger board">+</button>
+            </span>
+          </div>
+          <div class="menu-row">
+            <span>Theme</span>
+            <span id="boardThemeItems" class="menu-swatches"></span>
+          </div>
+          <div class="menu-sep"></div>
+          <button class="menu-item" id="actOpenSettings"><span>Lichess token, engines &amp; data…</span></button>
+          <button class="menu-item" id="actShortcuts"><span>Keyboard shortcuts</span><span class="menu-key">?</span></button>
         </div>
       </div>
 
-      <!-- Edit -->
-      <div class="relative">
-        <button data-menu="edit" class="menu-trigger px-2 py-1 rounded text-[11.5px] text-txtMuted hover:text-txt hover:bg-surface">Edit</button>
-        <div id="menu-edit" class="menu-dropdown hidden">
-          <button class="menu-item" id="actResetTab"><span>Reset Current Board</span></button>
-          <button class="menu-item" id="actFlipBoard"><span>Flip Board</span><span class="font-mono text-[10px] text-txtMuted">f</span></button>
+      <!-- Layout -->
+      <div class="relative shrink-0">
+        <button id="btnPanelsMenu" data-menu="panels" class="menu-trigger flex items-center gap-1.5 px-2 py-1 rounded text-[11.5px] text-txtMuted hover:text-txt hover:bg-surface" title="Layout and panels" aria-haspopup="menu">
+          <span class="text-[12px] leading-none" aria-hidden="true">⊞</span>
+          <span class="hidden sm:inline">Layout</span>
+        </button>
+        <div id="menu-panels" class="menu-dropdown hidden" role="menu">
+          <div class="menu-label">Layouts</div>
+          <div id="layoutPresetItems"></div>
           <div class="menu-sep"></div>
-          <button class="menu-item" id="actPromoteVar"><span>Promote Current Variation</span></button>
-          <button class="menu-item" id="actDeleteVar"><span>Delete Current Variation</span></button>
-          <button class="menu-item" id="actClearDrawings"><span>Clear Board Drawings</span></button>
+          <div class="menu-label">Panels</div>
+          <button class="menu-item panel-toggle-item" data-panel="hub"><span>Live &amp; games</span><span data-panel-chk="hub" class="text-em font-mono">✓</span></button>
+          <button class="menu-item panel-toggle-item" data-panel="explorer"><span>Opening explorer</span><span data-panel-chk="explorer" class="text-em font-mono">✓</span></button>
+          <button class="menu-item panel-toggle-item" data-panel="scout"><span>Player scout</span><span data-panel-chk="scout" class="text-em font-mono">✓</span></button>
+          <button class="menu-item panel-toggle-item" data-panel="sf"><span>Stockfish</span><span data-panel-chk="sf" class="text-em font-mono">✓</span></button>
+          <button class="menu-item panel-toggle-item" data-panel="lc0"><span>Lc0 bridge</span><span data-panel-chk="lc0" class="text-em font-mono"></span></button>
+          <button class="menu-item panel-toggle-item" data-panel="tree"><span>Moves</span><span data-panel-chk="tree" class="text-em font-mono">✓</span></button>
+          <div class="menu-sep"></div>
+          <button class="menu-item" id="actResetPanels"><span>Reset layout</span></button>
+          <div class="px-2.5 pt-1 pb-1.5 text-[10px] text-txtMuted leading-snug max-w-[230px]">Drag a panel by its ⠿ grip onto another to swap them. Drag the dividers to resize.</div>
         </div>
       </div>
-
-      <!-- View -->
-      <div class="relative">
-        <button data-menu="view" class="menu-trigger px-2 py-1 rounded text-[11.5px] text-txtMuted hover:text-txt hover:bg-surface">View</button>
-        <div id="menu-view" class="menu-dropdown hidden">
-          <button class="menu-item" id="actToggleCoords"><span>Toggle Coordinates</span><span id="chkCoords" class="text-em font-mono">✓</span></button>
-          <button class="menu-item" id="actToggleArrows"><span>Toggle Engine Arrows</span><span id="chkArrows" class="text-em font-mono">✓</span></button>
-          <button class="menu-item" id="actToggleEvalBar"><span>Toggle Eval Bar</span><span id="chkEvalBar" class="text-em font-mono">✓</span></button>
-          <div class="menu-sep"></div>
-          <div class="px-2.5 py-1 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">Board size</div>
-          <button class="menu-item" id="actBoardLarger"><span>Larger board</span><span class="font-mono text-[10px] text-txtMuted">]</span></button>
-          <button class="menu-item" id="actBoardSmaller"><span>Smaller board</span><span class="font-mono text-[10px] text-txtMuted">[</span></button>
-          <button class="menu-item" id="actBoardFit"><span>Fit board to screen</span><span class="font-mono text-[10px] text-txtMuted">=</span></button>
-          <div class="menu-sep"></div>
-          <div class="px-2.5 py-1 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">Board theme</div>
-          <div id="boardThemeItems"></div>
-          <div class="menu-sep"></div>
-          <button class="menu-item" id="actShortcuts"><span>Keyboard shortcuts</span><span class="font-mono text-[10px] text-txtMuted">?</span></button>
-        </div>
-      </div>
-
-      <!-- Engine -->
-      <div class="relative">
-        <button data-menu="engine" class="menu-trigger px-2 py-1 rounded text-[11.5px] text-txtMuted hover:text-txt hover:bg-surface">Engine</button>
-        <div id="menu-engine" class="menu-dropdown hidden">
-          <button class="menu-item" id="actToggleBothEngines"><span>Start / Stop Engines</span><span class="font-mono text-[10px] text-txtMuted">Space</span></button>
-          <button class="menu-item" id="actToggleCloudMenu"><span>Toggle Lichess Cloud Eval</span><span id="chkCloudMenu" class="text-cy font-mono">✓</span></button>
-          <div class="menu-sep"></div>
-          <button class="menu-item" id="actOpenBridgeSettings"><span>Local UCI Bridge (Lc0 / SF)</span></button>
-        </div>
-      </div>
-
-      <!-- Settings -->
-      <button id="btnMenuSettings" class="px-2 py-1 rounded text-[11.5px] text-txtMuted hover:text-txt hover:bg-surface">Settings</button>
-
     </div>
 
-    <!-- Right: Live ECO Pill + Dynamic Broadcast Quick-Jump Badge -->
     <div class="flex items-center gap-2 min-w-0 ml-auto">
       <div id="openingPill" class="hidden xl:flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface border border-borderSubtle text-[11px] max-w-[260px] truncate">
         <span id="openingEco" class="font-mono font-bold text-em">—</span>
         <span id="openingName" class="text-txtMuted truncate">Starting Position</span>
       </div>
 
-      <button id="btnLiveQuickJump" class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted text-[11px] font-semibold transition-colors shrink-0 max-w-[240px]" title="Jump to Featured Broadcast">
+      <button id="btnLiveQuickJump" class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface hover:bg-surfaceHover border border-borderSubtle text-txtMuted text-[11px] font-semibold transition-colors shrink-0 max-w-[240px]" title="Open live events">
         <span id="liveQuickJumpDot" class="hidden w-2 h-2 rounded-full bg-ro live-dot shrink-0"></span>
-        <span id="liveQuickJumpLabel" class="truncate">Broadcasts</span>
+        <span id="liveQuickJumpLabel" class="truncate">Live events</span>
       </button>
 
-      <!-- Panels Layout Configurator -->
-      <div class="relative shrink-0">
-        <button id="btnPanelsMenu" data-menu="panels" class="menu-trigger flex items-center gap-1 px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] text-txtMuted hover:text-txt transition-colors" title="Show or hide workspace panels">
-          <span class="text-[11px] leading-none">⊞</span>
-          <span class="hidden sm:inline">Panels</span>
-        </button>
-        <div id="menu-panels" class="menu-dropdown menu-dropdown-right hidden">
-          <div class="px-2.5 py-1 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">Layouts</div>
-          <div id="layoutPresetItems"></div>
-          <div class="menu-sep"></div>
-          <div class="px-2.5 py-1 text-[9.5px] font-semibold uppercase tracking-wider text-txtMuted">Workspace Panels</div>
-          <button class="menu-item panel-toggle-item" data-panel="hub"><span>Live &amp; Games Hub</span><span data-panel-chk="hub" class="text-em font-mono">✓</span></button>
-          <button class="menu-item panel-toggle-item" data-panel="explorer"><span>Opening Explorer</span><span data-panel-chk="explorer" class="text-em font-mono">✓</span></button>
-          <button class="menu-item panel-toggle-item" data-panel="scout"><span>Player Scout</span><span data-panel-chk="scout" class="text-em font-mono">✓</span></button>
-          <button class="menu-item panel-toggle-item" data-panel="sf"><span>Stockfish Engine</span><span data-panel-chk="sf" class="text-em font-mono">✓</span></button>
-          <button class="menu-item panel-toggle-item" data-panel="lc0"><span>Lc0 Bridge</span><span data-panel-chk="lc0" class="text-em font-mono"></span></button>
-          <button class="menu-item panel-toggle-item" data-panel="tree"><span>Variation Tree</span><span data-panel-chk="tree" class="text-em font-mono">✓</span></button>
-          <div class="menu-sep"></div>
-          <button class="menu-item" id="actResetPanels"><span>Reset Default Layout</span></button>
-          <div class="px-2.5 pt-1 pb-1.5 text-[10px] text-txtMuted leading-snug max-w-[230px]">Drag a panel by its ⠿ grip onto another panel to swap them. Drag the dividers to resize.</div>
-        </div>
-      </div>
-
-      <button id="btnCloudSyncPill" class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] text-txtMuted" title="Cloud Sync across phone and computer">
-        <span id="cloudSyncDot" class="w-2 h-2 rounded-full bg-txtMuted/60"></span>
-        <span id="cloudSyncLabel">Sync</span>
-      </button>
-
-      <button id="btnTokenPill" class="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] text-txtMuted" title="Lichess Token & Storage Settings">
-        <span id="tokenDot" class="w-2 h-2 rounded-full bg-am"></span>
-        <span>API</span>
-      </button>
+      <div data-account></div>
     </div>
   </header>
 
   <!-- ======================================================================= -->
-  <!-- MAIN BODY: 42px LEFT RAIL + 2-COLUMN STUDIO WORKSPACE                   -->
+  <!-- MAIN BODY: STUDIO WORKSPACE                                             -->
   <!-- ======================================================================= -->
   <div class="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
-
-    <!-- 42px LEFT ICON RAIL -->
-    <aside class="lg:w-[42px] shrink-0 bg-panel border-b lg:border-b-0 lg:border-r border-borderSubtle flex lg:flex-col items-center justify-between px-2 py-1.5 lg:py-2.5 gap-2">
-      <div class="flex lg:flex-col items-center gap-1.5">
-        <button id="railBoard" class="w-8 h-8 rounded-md flex items-center justify-center text-em bg-surface border border-borderSubtle" title="Analysis Board" aria-label="Analysis Board">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/></svg>
-        </button>
-
-        <button id="railLive" class="relative w-8 h-8 rounded-md flex items-center justify-center text-ro hover:bg-surface transition-colors" title="Live FIDE & Lichess Broadcasts" aria-label="Live Broadcasts">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.07m7.072 0a5 5 0 010 7.07M13 12a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
-        </button>
-
-        <button id="railScout" class="w-8 h-8 rounded-md flex items-center justify-center text-txtMuted hover:text-cy hover:bg-surface transition-colors" title="Player Scout (Lichess / Chess.com / PGN)" aria-label="Player Scout">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
-        </button>
-
-        <button id="railRepertoire" class="w-8 h-8 rounded-md flex items-center justify-center text-txtMuted hover:text-em hover:bg-surface transition-colors" title="Opening Repertoire (Main Site)" aria-label="Opening Repertoire">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
-        </button>
-
-        <button id="railImportPgn" class="w-8 h-8 rounded-md flex items-center justify-center text-txtMuted hover:text-em hover:bg-surface transition-colors" title="Import Local .PGN Database" aria-label="Import PGN Database">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-        </button>
-      </div>
-
-      <button id="railSettings" class="w-8 h-8 rounded-md flex items-center justify-center text-txtMuted hover:text-vi hover:bg-surface transition-colors" title="Settings & Local UCI Bridge" aria-label="Settings">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-      </button>
-    </aside>
 
     <!-- Hidden global PGN file input -->
     <input type="file" id="globalPgnInput" accept=".pgn,.txt" class="hidden" />
@@ -309,7 +244,7 @@
             <div role="tablist" aria-label="Broadcast and game hub" class="flex items-center gap-1 overflow-x-auto">
               <button role="tab" aria-selected="true" data-hub="live" class="hub-tab flex items-center gap-1.5 px-2.5 py-1 rounded-t text-[11.5px] font-semibold bg-panel text-txt border-t border-x border-borderSubtle whitespace-nowrap">
                 <span id="liveHubDot" class="w-2 h-2 rounded-full bg-txtMuted/50"></span>
-                <span>Live Events</span>
+                <span>Live</span>
               </button>
               <button role="tab" aria-selected="false" data-hub="masters" class="hub-tab px-2.5 py-1 rounded-t text-[11.5px] font-medium text-txtMuted hover:text-txt whitespace-nowrap">
                 Master Games
@@ -325,92 +260,33 @@
 
             <!-- Live Poll Controls + Close Button -->
             <div class="flex items-center gap-1.5 pb-0.5 shrink-0">
-              <div id="livePollBar" class="flex items-center gap-1.5 text-[10.5px]">
-                <label class="inline-flex items-center gap-1 text-txtMuted cursor-pointer select-none" title="Poll live broadcast PGN every 15 seconds">
-                  <input type="checkbox" id="chkLiveAutoPoll" class="accent-em" checked />
-                  <span class="hidden sm:inline">Auto-Refresh</span>
-                </label>
-                <span id="liveCountdownBadge" class="font-mono text-[10px] px-1.5 py-[1px] rounded bg-surface border border-borderSubtle text-cy">15s</span>
-                <button id="btnSyncLiveNow" class="px-2 py-0.5 rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 font-semibold text-[10.5px] transition-colors">
-                  ↻ Sync Live
-                </button>
+              <div id="livePollBar" class="flex items-center gap-1 text-[10.5px]">
+                <span id="liveAutoWrap" class="hidden items-center gap-1">
+                  <label class="inline-flex items-center gap-1 text-txtMuted cursor-pointer select-none" title="Refresh live games every 15 seconds">
+                    <input type="checkbox" id="chkLiveAutoPoll" class="accent-em" checked />
+                    <span class="hidden sm:inline">Auto</span>
+                  </label>
+                  <span id="liveCountdownBadge" class="font-mono text-[10px] text-txtMuted w-7 text-right">15s</span>
+                </span>
+                <button id="btnSyncLiveNow" class="px-1.5 py-0.5 rounded hover:bg-surface text-txtMuted hover:text-txt text-[12px] leading-none" title="Refresh now" aria-label="Refresh now">↻</button>
               </div>
               <button class="panel-close-btn" data-panel-close="hub" title="Hide Live & Games Hub" aria-label="Hide Live and Games Hub">✕</button>
             </div>
           </div>
 
-          <!-- HUB VIEW A: LIVE EVENTS TRACKER (100% Dynamic from Lichess Broadcast API) -->
-          <div id="hub-live" class="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
-
-            <!-- Dynamic Spotlight Banner -->
-            <div class="rounded-lg bg-gradient-to-r from-surface/90 via-panel to-surface/60 border border-borderBright p-2.5 flex flex-col gap-2">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span id="featuredEventBadge" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-cy/15 text-cy border border-cy/35 font-mono text-[9.5px] font-bold">
-                      LICHESS BROADCASTS
-                    </span>
-                    <span id="featuredEventSubtitle" class="text-[10.5px] text-txtMuted truncate">Connecting to Lichess Broadcast API...</span>
-                  </div>
-                  <div id="featuredEventTitle" class="mt-1 font-bold text-[13px] text-txt truncate">
-                    Live FIDE &amp; Official Broadcasts
-                  </div>
-                </div>
-
-                <div class="flex items-center gap-1.5 shrink-0">
-                  <span id="featuredStatus" class="font-mono text-[10px] px-2 py-0.5 rounded bg-surface border border-borderSubtle text-cy">Connecting...</span>
-                  <button id="btnWatchFeatured" class="px-2.5 py-1 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-bold text-[11px] transition-colors opacity-50 cursor-not-allowed" disabled>
-                    Loading...
-                  </button>
-                </div>
-              </div>
-
-              <!-- Live Round Games Strip -->
-              <div id="liveRoundGamesBox" class="hidden border-t border-borderSubtle/70 pt-1.5 flex flex-col gap-1">
-                <div class="flex items-center justify-between text-[10px] text-txtMuted">
-                  <span id="liveRoundTitle" class="font-semibold text-cy">Active Broadcast Round</span>
-                  <span>Click any board to watch live</span>
-                </div>
-                <div id="liveRoundGamesList" class="grid grid-cols-1 sm:grid-cols-2 gap-1"></div>
-              </div>
+          <!-- HUB VIEW A: LIVE EVENTS. First the events, then one event's rounds and games. -->
+          <div id="hub-live" class="flex-1 overflow-y-auto">
+            <div id="liveEventsView" class="flex flex-col">
+              <form id="liveSearchForm" class="sticky top-0 z-10 bg-panel/95 backdrop-blur px-2 pt-2 pb-1.5 flex items-center gap-1.5" role="search">
+                <input id="customBroadcastInput" type="search" autocomplete="off" spellcheck="false" placeholder="Search events, or paste a Lichess broadcast link" aria-label="Search events or paste a Lichess broadcast link" class="flex-1 min-w-0 px-2.5 py-1 rounded-md bg-surface border border-borderSubtle text-[16px] sm:text-[11.5px] focus:outline-none focus:border-cy" />
+                <button id="btnLoadCustomBroadcast" type="submit" class="shrink-0 px-2 py-1 rounded-md bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11px] font-semibold text-txtMuted hover:text-txt">Go</button>
+              </form>
+              <div id="liveEventsList" class="px-1 pb-2"></div>
             </div>
-
-            <!-- Sub-switcher inside Live Events: Tournament Rounds | All Live Broadcasts -->
-            <div class="flex flex-wrap items-center justify-between gap-1.5">
-              <div class="flex items-center gap-1 bg-surface p-0.5 rounded border border-borderSubtle text-[10.5px]">
-                <button id="btnLiveSubRounds" class="px-2 py-0.5 rounded bg-em/20 text-em font-semibold">Tournament Rounds</button>
-                <button id="btnLiveSubAll" class="px-2 py-0.5 rounded text-txtMuted hover:text-txt font-medium">All Live Broadcasts</button>
-              </div>
-
-              <!-- Custom Broadcast URL / Round ID Loader -->
-              <div class="flex items-center gap-1 flex-1 max-w-[330px]">
-                <input id="customBroadcastInput" type="text" placeholder="Paste Lichess Broadcast URL or Round ID..." class="flex-1 min-w-[140px] px-2 py-0.5 rounded bg-surface border border-borderSubtle text-[10.5px] font-mono focus:outline-none focus:border-cy" />
-                <button id="btnLoadCustomBroadcast" class="px-2 py-0.5 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/35 text-[10.5px] font-semibold shrink-0">Load</button>
-              </div>
-            </div>
-
-            <!-- Sub-view 1: Dynamic Tournament Rounds Table -->
-            <div id="liveScheduleWrap" class="min-h-[160px] shrink-0 overflow-x-auto border border-borderSubtle rounded">
-              <table class="pro-table w-full text-left border-collapse text-[11px]">
-                <thead>
-                  <tr>
-                    <th>Round</th>
-                    <th class="w-32">Start</th>
-                    <th class="w-24">Status</th>
-                    <th class="w-20 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody id="roundsTableBody"></tbody>
-              </table>
-            </div>
-
-            <!-- Sub-view 2: All Active Lichess Official Broadcasts -->
-            <div id="liveAllBroadcastsWrap" class="hidden flex flex-col gap-1.5">
-              <div class="flex items-center gap-1.5">
-                <input id="broadcastSearchInput" type="text" placeholder="Filter live tournaments..." class="flex-1 px-2 py-1 rounded bg-surface border border-borderSubtle text-[11px] focus:outline-none focus:border-cy" />
-                <span id="broadcastCountBadge" class="font-mono text-[10px] text-txtMuted">0 events</span>
-              </div>
-              <div id="allBroadcastsList" class="grid grid-cols-1 sm:grid-cols-2 gap-1.5"></div>
+            <div id="liveEventView" class="hidden flex flex-col gap-1.5 p-2">
+              <div id="liveEventHeader"></div>
+              <div id="liveRoundChips"></div>
+              <div id="liveRoundGames" class="rounded-md border border-borderSubtle bg-bg/40"></div>
             </div>
           </div>
 

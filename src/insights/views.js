@@ -1,17 +1,24 @@
 /**
  * Tab renderers for the Insights page. Each takes a context and returns HTML.
  * Interactive elements carry data-act attributes handled by app.js.
+ *
+ * Five views, each answering one question:
+ *   Overview   How am I doing, and what should I work on?
+ *   Openings   Which openings work for me, and where do my games go wrong? (list + explorer)
+ *   Games      Show me the games behind any number (every chart drills down here).
+ *   Opponents  How do I do against stronger and weaker players, and how do games end?
+ *   Progress   Is my rating moving, and when and how do I play best?
  */
 import { Chess } from 'chess.js';
 import {
   wdl,
-  performance,
   byTimeControl,
   openings,
   opponents,
   terminations,
   ratingBuckets,
   byDay,
+  dayKey,
   timeOfDay,
   byMonth,
   habits,
@@ -22,6 +29,13 @@ import {
   fmtHour,
   fmtHourShort,
   DAY_MS,
+  PERIODS,
+  ratingContext,
+  seriesChange,
+  recentForm,
+  openingExtremes,
+  versusStrength,
+  gamesWithPrefix,
 } from './stats.js';
 import { TC_LABEL, TERM_LABEL } from './normalize.js';
 import {
@@ -42,14 +56,22 @@ import { miniBoardHtml } from './miniBoard.js';
 /* Shared bits                                                         */
 /* ------------------------------------------------------------------ */
 
-export function card(title, body, { right = '', cls = '', pad = 'p-3' } = {}) {
+export function card(title, body, { right = '', cls = '', pad = 'p-3', sub = '' } = {}) {
   return `<section class="bg-panel border border-borderSubtle rounded-xl ${pad} min-w-0 ${cls}">
-    ${title || right ? `<div class="flex items-center justify-between gap-2 mb-2.5"><h3 class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted">${title}</h3>${right}</div>` : ''}
+    ${
+      title || right
+        ? `<div class="flex items-start justify-between gap-2 mb-2.5"><div class="min-w-0"><h3 class="text-[12.5px] font-semibold text-txt">${title}</h3>${
+            sub ? `<p class="text-[11px] text-txtMuted mt-0.5">${sub}</p>` : ''
+          }</div>${right}</div>`
+        : ''
+    }
     ${body}
   </section>`;
 }
 
 const empty = (msg) => `<div class="py-6 text-center text-txtMuted text-[11.5px]">${msg}</div>`;
+
+const linkBtn = (label, attrs) => `<button ${attrs} class="shrink-0 text-[11px] text-cy hover:underline whitespace-nowrap">${label}</button>`;
 
 export function relTime(t, now = Date.now()) {
   const s = Math.max(0, (now - t) / 1000);
@@ -66,7 +88,7 @@ export function relTime(t, now = Date.now()) {
 const fmtDate = (t) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 const colorDot = (c) =>
-  `<span class="inline-block w-2.5 h-2.5 rounded-[3px] border ${c === 'w' ? 'bg-[#e5e7eb] border-[#9aa3b5]' : 'bg-[#2a2f3a] border-[#5b6273]'}" title="${c === 'w' ? 'White' : 'Black'}"></span>`;
+  `<span class="inline-block w-2.5 h-2.5 rounded-[3px] border shrink-0 ${c === 'w' ? 'bg-[#e5e7eb] border-[#9aa3b5]' : 'bg-[#2a2f3a] border-[#5b6273]'}" title="${c === 'w' ? 'White' : 'Black'}"></span>`;
 
 const resultChip = (res) =>
   res === 1
@@ -80,11 +102,21 @@ const scorePill = (score, n) =>
     ? `<span class="font-mono text-[11px] font-semibold" style="color:${scoreColor(score)}">${Math.round(score * 100)}%</span>`
     : '<span class="text-txtMuted">—</span>';
 
+/** Signed change with an arrow: green when up is good. */
+function delta(value, { unit = '', good = 1, digits = 0 } = {}) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '';
+  const r = Number(value.toFixed(digits));
+  if (r === 0) return '<span class="text-txtMuted">no change</span>';
+  const up = r > 0;
+  const cls = up === good > 0 ? 'text-em' : 'text-ro';
+  return `<span class="${cls} font-semibold">${up ? '▲' : '▼'} ${up ? '+' : '−'}${Math.abs(r)}${unit}</span>`;
+}
+
 const sectionTabs = (items, active, act) =>
   `<div class="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-surface border border-borderSubtle text-[11px]">${items
     .map(
       ([v, l]) =>
-        `<button data-act="${act}" data-v="${esc(v)}" class="px-2 py-0.5 rounded-md font-semibold ${v === active ? 'bg-em text-[#04130d]' : 'text-txtMuted hover:text-txt'}">${esc(l)}</button>`
+        `<button data-act="${act}" data-v="${esc(v)}" class="px-2 py-0.5 rounded-md font-semibold ${v === active ? 'bg-txt text-bg' : 'text-txtMuted hover:text-txt'}" aria-pressed="${v === active}">${esc(l)}</button>`
     )
     .join('')}</div>`;
 
@@ -118,6 +150,13 @@ export function replay(sans) {
   return { fen: g.fen(), last, ucis, chess: g };
 }
 
+function clockLabel(clock) {
+  const [b, i] = clock.split('+').map(Number);
+  if (!Number.isFinite(b)) return clock;
+  const base = b >= 60 && b % 60 === 0 ? `${b / 60}` : b >= 60 ? `${(b / 60).toFixed(1)}` : `${b}s`;
+  return `${base}+${i || 0}`;
+}
+
 function gameRow(g, ctx, { compact = false } = {}) {
   const tc = `<span class="text-txtMuted">${esc(TC_LABEL[g.tc] || g.tc)}${g.clock && !compact ? ` <span class="font-mono text-[10px]">${esc(clockLabel(g.clock))}</span>` : ''}</span>`;
   const opp = `<span class="font-medium text-txt">${g.opT ? `<span class="text-am font-bold mr-1">${esc(g.opT)}</span>` : ''}${esc(g.op)}</span>${g.opR ? ` <span class="font-mono text-[10px] text-txtMuted">${g.opR}</span>` : ''}`;
@@ -142,151 +181,163 @@ function gameRow(g, ctx, { compact = false } = {}) {
   </tr>`;
 }
 
-function clockLabel(clock) {
-  const [b, i] = clock.split('+').map(Number);
-  if (!Number.isFinite(b)) return clock;
-  const base = b >= 60 && b % 60 === 0 ? `${b / 60}` : b >= 60 ? `${(b / 60).toFixed(1)}` : `${b}s`;
-  return `${base}+${i || 0}`;
-}
-
 /* ------------------------------------------------------------------ */
 /* Overview                                                            */
 /* ------------------------------------------------------------------ */
+
+function formStrip(games) {
+  const form = recentForm(games, 20);
+  if (!form.length) return '';
+  const cells = form
+    .map((g) => {
+      const c = g.res === 1 ? 'bg-em' : g.res === 0 ? 'bg-ro' : 'bg-[#5b6273]';
+      const label = `${g.res === 1 ? 'Won' : g.res === 0 ? 'Lost' : 'Drew'} vs ${g.op}${g.opR ? ` (${g.opR})` : ''}, ${relTime(g.t)}`;
+      return `<button data-act="open-game" data-id="${esc(g.id)}" class="w-3.5 h-3.5 rounded-[3px] ${c} hover:ring-2 hover:ring-txt/50" title="${esc(label)}" aria-label="${esc(label)}"></button>`;
+    })
+    .join('');
+  const w = form.filter((g) => g.res === 1).length;
+  const l = form.filter((g) => g.res === 0).length;
+  return `<div class="flex items-center gap-2 flex-wrap"><span class="text-[11px] text-txtMuted">Last ${form.length}</span><div class="flex gap-[3px]">${cells}</div><span class="text-[11px] text-txtMuted font-mono">${w}W ${form.length - w - l}D ${l}L</span></div>`;
+}
+
+const TONE = {
+  good: { box: 'border-em/40 bg-em/[0.06]', icon: '▲', color: 'text-em' },
+  bad: { box: 'border-ro/40 bg-ro/[0.06]', icon: '▼', color: 'text-ro' },
+  info: { box: 'border-cy/35 bg-cy/[0.05]', icon: '●', color: 'text-cy' },
+};
+
+/** Buttons for a finding: where to look next. */
+function takeawayActions(t, i) {
+  const l = t.link || {};
+  const btn = (label, act) =>
+    `<button data-act="${act}" data-i="${i}" class="px-2 py-0.5 rounded-md bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] font-semibold text-txt">${label}</button>`;
+  if (l.tab === 'explorer') return btn('Explore the line', 'takeaway') + btn('See the games', 'takeaway-games');
+  if (l.tab === 'games') return btn('See the games', 'takeaway');
+  if (l.tab === 'rating') return btn('Rating chart', 'takeaway');
+  if (l.tab === 'activity') return btn('When you play best', 'takeaway');
+  if (l.tab === 'openings') return btn('Compare openings', 'takeaway');
+  return '';
+}
+
+function openingsSnapshot(games) {
+  const col = (color) => {
+    const x = openingExtremes(games, color);
+    const side = color === 'w' ? 'White' : 'Black';
+    const row = (r, tone) => `<button data-act="explore" data-color="${color}" data-prefix="${esc(r.prefix)}" class="w-full grid grid-cols-[1fr_auto_44px] items-center gap-2 py-1 px-1 -mx-1 rounded text-left text-[11.5px] hover:bg-surface/70">
+        <span class="truncate">${esc(r.name)}</span><span class="font-mono text-[10.5px] text-txtMuted">${fmtInt(r.n)}</span><span class="text-right font-mono text-[11px] font-semibold ${tone}">${Math.round(r.score * 100)}%</span></button>`;
+    const list = (rows, tone, label, none) =>
+      `<div class="text-[10.5px] font-semibold ${tone} mt-1.5 mb-0.5">${label}</div>${rows.length ? rows.map((r) => row(r, tone)).join('') : `<div class="text-[11px] text-txtMuted py-1">${none}</div>`}`;
+    return `<div class="min-w-0">
+        <div class="flex items-center gap-1.5 text-[11.5px] font-semibold">${colorDot(color)}As ${side} <span class="text-txtMuted font-normal">· ${fmtInt(x.n)} games · avg ${x.n ? Math.round(x.base * 100) : 0}%</span></div>
+        ${list(x.best, 'text-em', 'Working well', 'Nothing clearly above your average yet.')}
+        ${list(x.worst, 'text-ro', 'Costing you points', 'Nothing clearly below your average.')}
+      </div>`;
+  };
+  return `<div class="grid gap-4 sm:grid-cols-2">${col('w')}${col('b')}</div>`;
+}
+
+function strengthVerdict(vs) {
+  const line = (b, who) => {
+    if (b.n < 10) return '';
+    const d = Math.round((b.score - b.expected) * 100);
+    const verdict = Math.abs(d) < 2 ? 'as ratings predict' : d > 0 ? `${d} pts better than ratings predict` : `${-d} pts worse than ratings predict`;
+    return `<div class="flex items-baseline justify-between gap-2 text-[11.5px]"><span>Against ${who} <span class="text-txtMuted">(${fmtInt(b.n)} games)</span></span><span class="${d >= 2 ? 'text-em' : d <= -2 ? 'text-ro' : 'text-txtMuted'} font-semibold text-right">${Math.round(b.score * 100)}%, ${verdict}</span></div>`;
+  };
+  return [line(vs.stronger, 'stronger players'), line(vs.weaker, 'weaker players')].filter(Boolean).join('');
+}
 
 export function renderOverview(ctx) {
   const { games, now } = ctx;
   if (!games.length) return empty('No games match these filters.');
   const total = wdl(games);
   const tcs = byTimeControl(games);
-  const main = tcs[0];
+  const main = tcs.find((r) => r.rating) || tcs[0];
   const recent = [...games].sort((a, b) => b.t - a.t);
-  const last100 = performance(recent.slice(0, 100));
-  const lastGame = recent[0];
-  const takes = takeaways(games, now);
+  const periodMs = PERIODS[ctx.ui.filters.period]?.ms ?? Infinity;
+  const periodLabel = Number.isFinite(periodMs) ? PERIODS[ctx.ui.filters.period].label.toLowerCase() : 'all time';
+  const prev = ctx.prevGames && ctx.prevGames.length >= 5 ? ctx.prevGames : null;
+  const prevW = prev ? wdl(prev) : null;
+  const rc = ratingContext(games);
+  const series = ratingSeries(games, main.tc);
+  const change = seriesChange(series);
 
   const kpi = (label, value, sub = '') =>
-    `<div class="min-w-0"><div class="text-[10.5px] text-txtMuted uppercase tracking-wider font-semibold">${label}</div><div class="text-[22px] font-bold leading-tight tabular-nums">${value}</div>${sub ? `<div class="text-[11px] text-txtMuted truncate">${sub}</div>` : ''}</div>`;
+    `<div class="min-w-0"><div class="text-[11px] text-txtMuted">${label}</div><div class="text-[24px] font-bold leading-tight tabular-nums">${value}</div><div class="text-[11px] text-txtMuted truncate min-h-[16px]">${sub}</div></div>`;
 
-  const kpis = `<section class="bg-panel border border-borderSubtle rounded-xl p-3 grid grid-cols-2 md:grid-cols-5 gap-3 items-center">
-      ${kpi('Games', fmtInt(total.n), `${fmtInt(total.w)} W · ${fmtInt(total.d)} D · ${fmtInt(total.l)} L`)}
-      <div class="col-span-2 md:col-span-1 min-w-0"><div class="text-[10.5px] text-txtMuted uppercase tracking-wider font-semibold mb-1">Score ${scorePill(total.score, total.n)}</div>${wdlBar(total)}</div>
-      ${kpi(`${esc(main.label)} rating`, main.rating || '—', main.peak ? `Peak ${main.peak}` : '')}
-      ${kpi('Performance', last100 ?? '—', 'Last 100 games')}
-      ${kpi('Last game', lastGame ? esc(relTime(lastGame.t, now)) : '—', lastGame ? `${lastGame.res === 1 ? 'Won' : lastGame.res === 0 ? 'Lost' : 'Drew'} vs ${esc(lastGame.op)}` : '')}
+  const kpis = `<section class="bg-panel border border-borderSubtle rounded-xl p-3 grid gap-3">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        ${kpi('Games', fmtInt(total.n), prev ? `${delta(((total.n - prev.length) / prev.length) * 100, { unit: '%' })} vs previous ${esc(periodLabel)}` : `${fmtInt(total.w)} W · ${fmtInt(total.d)} D · ${fmtInt(total.l)} L`)}
+        ${kpi('Score', `<span style="color:${scoreColor(total.score)}">${Math.round(total.score * 100)}%</span>`, prevW ? `${delta((total.score - prevW.score) * 100, { unit: ' pts' })} vs previous ${esc(periodLabel)}` : 'points per game, draws count half')}
+        ${kpi(`${esc(main.label)} rating`, main.rating || '—', change !== null ? `${delta(change)} over ${esc(periodLabel)}${main.peak ? ` · peak ${main.peak}` : ''}` : main.peak ? `Peak ${main.peak}` : '')}
+        ${kpi('Performance', rc.perf ?? '—', rc.diff !== null ? `${delta(rc.diff)} vs your rating (${rc.own})` : 'rating your results were worth')}
+      </div>
+      <div class="grid gap-2 md:grid-cols-[1fr_auto] items-center">
+        ${wdlBar(total)}
+        ${formStrip(games)}
+      </div>
     </section>`;
 
-  const toneStyle = { good: 'border-em/40 bg-em/[0.06]', bad: 'border-ro/40 bg-ro/[0.06]', info: 'border-cy/35 bg-cy/[0.05]' };
-  const toneIcon = { good: '▲', bad: '▼', info: '●' };
-  const toneColor = { good: 'text-em', bad: 'text-ro', info: 'text-cy' };
+  const takes = takeaways(games, now);
+  ctx.setTakeaways(takes);
   const takeHtml = takes.length
     ? `<div class="grid gap-2">${takes
-        .map(
-          (t, i) => `<button data-act="takeaway" data-i="${i}" class="text-left rounded-lg border ${toneStyle[t.tone]} px-3 py-2 hover:brightness-125 transition">
-            <div class="flex items-start gap-2"><span class="${toneColor[t.tone]} text-[10px] mt-[3px]">${toneIcon[t.tone]}</span><div class="min-w-0">
-            <div class="text-[12.5px] font-semibold text-txt">${esc(t.title)}</div><div class="text-[11.5px] text-txtMuted">${esc(t.detail)}</div></div></div></button>`
-        )
+        .map((t, i) => {
+          const tone = TONE[t.tone] || TONE.info;
+          return `<div class="rounded-lg border ${tone.box} px-3 py-2">
+            <div class="flex items-start gap-2"><span class="${tone.color} text-[10px] mt-[3px]">${tone.icon}</span><div class="min-w-0 flex-1">
+            <div class="text-[12.5px] font-semibold text-txt">${esc(t.title)}</div><div class="text-[11.5px] text-txtMuted">${esc(t.detail)}</div>
+            <div class="flex flex-wrap gap-1.5 mt-1.5">${takeawayActions(t, i)}</div></div></div></div>`;
+        })
         .join('')}</div>`
     : empty('Play at least 30 games in this selection to see patterns.');
-  ctx.setTakeaways(takes);
 
-  const tcTable = `<table class="w-full text-[11.5px]"><thead><tr class="text-txtMuted text-[10px] uppercase tracking-wider"><th class="text-left font-semibold pb-1.5">Time control</th><th class="text-right font-semibold pb-1.5">Games</th><th class="text-right font-semibold pb-1.5 px-2">Rating</th><th class="font-semibold pb-1.5 w-[42%]">Results</th></tr></thead><tbody>${tcs
+  const shownSeries = Number.isFinite(periodMs) ? series : series.filter((p) => p.t >= now - 365 * DAY_MS);
+  const ratingChart = lineChart(
+    shownSeries.map((p) => ({ x: p.t, y: p.r })),
+    { height: 190, label: `${main.label} rating` }
+  );
+
+  const vs = versusStrength(games);
+  const buckets = ratingBuckets(games);
+  const strength = `<div class="grid gap-1.5 mb-3">${strengthVerdict(vs) || '<div class="text-[11px] text-txtMuted">Not enough rated games against stronger or weaker players.</div>'}</div><div class="grid gap-1.5">${expectedVsActual(buckets)}</div>`;
+
+  const terms = terminations(games);
+  const termRows = (rows, outcome, cls) =>
+    rows
+      .slice(0, 3)
+      .map(
+        (r) => `<button data-act="term-games" data-outcome="${outcome}" data-term="${esc(r.term)}" class="w-full flex items-center justify-between text-[11.5px] py-0.5 hover:text-txt text-txtMuted"><span>${esc(r.label)}</span><span class="font-mono ${cls}">${fmtPct(r.share)}</span></button>`
+      )
+      .join('');
+  const endings = `<div class="grid grid-cols-2 gap-4"><div><div class="text-[10.5px] font-semibold text-em mb-1">Wins by</div>${termRows(terms.win, 'win', 'text-em')}</div><div><div class="text-[10.5px] font-semibold text-ro mb-1">Losses by</div>${termRows(terms.loss, 'loss', 'text-ro')}</div></div>`;
+
+  const tcTable = `<table class="w-full text-[11.5px]"><tbody>${tcs
     .map(
-      (r) => `<tr class="border-t border-borderSubtle/60"><td class="py-1.5 font-medium"><button data-act="set-filter" data-k="tc" data-v="${r.tc}" class="hover:text-em">${esc(r.label)}</button></td><td class="py-1.5 text-right font-mono">${fmtInt(r.n)}</td><td class="py-1.5 text-right font-mono px-2">${r.rating || '—'}</td><td class="py-1.5">${wdlBar(r)}</td></tr>`
+      (r) => `<tr class="border-t border-borderSubtle/60 first:border-0"><td class="py-1.5 font-medium"><button data-act="set-filter" data-k="tc" data-v="${r.tc}" class="hover:text-em" title="Show only ${esc(r.label)}">${esc(r.label)}</button></td><td class="py-1.5 text-right font-mono text-txtMuted">${fmtInt(r.n)}</td><td class="py-1.5 text-right font-mono px-2">${r.rating || '—'}</td><td class="py-1.5 w-[45%]">${wdlBar(r, { labels: false, height: 'h-[10px]' })}</td></tr>`
     )
     .join('')}</tbody></table>`;
 
-  const openingList = (color) => {
-    const rows = openings(games, { color, groupBy: 'family' }).slice(0, 6);
-    if (!rows.length) return empty('No games');
-    return rows
-      .map(
-        (r) => `<button data-act="explore" data-color="${color}" data-prefix="${esc(r.prefix)}" class="w-full grid grid-cols-[1fr_44px_90px] items-center gap-2 py-1 text-left text-[11.5px] hover:text-em">
-          <span class="truncate">${esc(r.name)}</span><span class="text-right font-mono text-txtMuted">${fmtInt(r.n)}</span>${wdlBar(r, { labels: false, height: 'h-[10px]' })}</button>`
-      )
-      .join('');
-  };
-
-  const series = ratingSeries(games, main.tc).filter((p) => p.t >= now - 365 * DAY_MS);
-  const ratingChart = lineChart(
-    series.map((p) => ({ x: p.t, y: p.r })),
-    { height: 170, label: `${main.label} rating, last 12 months` }
-  );
-
-  const dayMap = byDay(games.filter((g) => g.t >= now - 16 * 7 * DAY_MS));
-  const recentWeeks = weeksStrip(dayMap, now, 16);
-
-  const w = wdl(games.filter((g) => g.color === 'w'));
-  const b = wdl(games.filter((g) => g.color === 'b'));
-  const byColor = `<div class="grid gap-2 text-[11.5px]">
-      <div class="grid grid-cols-[70px_48px_1fr] items-center gap-2"><span class="flex items-center gap-1.5">${colorDot('w')}White</span><span class="font-mono text-right text-txtMuted">${fmtInt(w.n)}</span>${wdlBar(w)}</div>
-      <div class="grid grid-cols-[70px_48px_1fr] items-center gap-2"><span class="flex items-center gap-1.5">${colorDot('b')}Black</span><span class="font-mono text-right text-txtMuted">${fmtInt(b.n)}</span>${wdlBar(b)}</div>
-    </div>`;
-
-  const terms = terminations(games);
-  const termMini = (rows, cls) =>
-    rows
-      .slice(0, 3)
-      .map((r) => `<div class="flex items-center justify-between text-[11px]"><span class="text-txtMuted">${esc(r.label)}</span><span class="font-mono ${cls}">${fmtPct(r.share)}</span></div>`)
-      .join('');
-  const endings = `<div class="grid grid-cols-2 gap-3"><div><div class="text-[10.5px] font-semibold text-em mb-1">Wins by</div>${termMini(terms.win, 'text-em')}</div><div><div class="text-[10.5px] font-semibold text-ro mb-1">Losses by</div>${termMini(terms.loss, 'text-ro')}</div></div>`;
-
   const recentList = recent
-    .slice(0, 8)
+    .slice(0, 6)
     .map((g) => gameRow(g, ctx, { compact: true }))
     .join('');
 
   return `<div class="grid gap-3">
     ${kpis}
-    <div class="grid gap-3 lg:grid-cols-[1.15fr_1fr] items-start">
-      ${card('What stands out', takeHtml)}
-      <div class="grid gap-3">
-        ${card('Time controls', tcTable)}
-        <div class="grid gap-3 sm:grid-cols-2">${card('By color', byColor)}${card('How games end', endings)}</div>
-      </div>
+    <div class="grid gap-3 lg:grid-cols-[1.1fr_1fr] items-start">
+      ${card('What to work on', takeHtml, { sub: 'The patterns that move your results most, largest first.' })}
+      ${card(`${esc(main.label)} rating`, ratingChart, { right: linkBtn('Progress', 'data-act="tab" data-v="progress"') })}
     </div>
-    <div class="grid gap-3 lg:grid-cols-3">
-      ${card(`${esc(main.label)} rating · 12 months`, ratingChart, { right: '<button data-act="tab" data-v="rating" class="text-[10.5px] text-cy hover:underline">Details</button>' })}
-      ${card('Openings as White', openingList('w'), { right: '<button data-act="tab" data-v="openings" class="text-[10.5px] text-cy hover:underline">All</button>' })}
-      ${card('Openings as Black', openingList('b'), { right: '<button data-act="tab" data-v="openings" class="text-[10.5px] text-cy hover:underline">All</button>' })}
+    <div class="grid gap-3 lg:grid-cols-[1.1fr_1fr] items-start">
+      ${card('Your openings', openingsSnapshot(games), { sub: 'Compared with your own average for each color. Click one to explore it.', right: linkBtn('All openings', 'data-act="tab" data-v="openings"') })}
+      ${card('Against stronger and weaker players', strength, { sub: 'Your score by rating gap. The white tick is what Elo predicts.' })}
     </div>
-    <div class="grid gap-3 lg:grid-cols-[1fr_2fr] items-start">
-      ${card('Last 16 weeks', recentWeeks, { right: '<button data-act="tab" data-v="activity" class="text-[10.5px] text-cy hover:underline">Activity</button>' })}
-      ${card('Recent games', recentList, { right: '<button data-act="tab" data-v="games" class="text-[10.5px] text-cy hover:underline">All games</button>' })}
+    <div class="grid gap-3 lg:grid-cols-3 items-start">
+      ${card('Time controls', tcTable)}
+      ${card('How games end', endings, { sub: 'Click to see those games.' })}
+      ${card('Recent games', recentList, { right: linkBtn('All games', 'data-act="tab" data-v="games"') })}
     </div>
   </div>`;
-}
-
-/** Compact calendar of the last `weeks` weeks ending today. */
-function weeksStrip(dayMap, now, weeks) {
-  const cell = 13;
-  const gap = 3;
-  const end = new Date(now);
-  end.setHours(0, 0, 0, 0);
-  const start = new Date(end);
-  start.setDate(end.getDate() - end.getDay() - (weeks - 1) * 7);
-  const max = Math.max(1, ...[...dayMap.values()].map((v) => v.n));
-  let rects = '';
-  for (let wk = 0; wk < weeks; wk++) {
-    for (let wd = 0; wd < 7; wd++) {
-      const d = new Date(start);
-      d.setDate(start.getDate() + wk * 7 + wd);
-      if (d > end) continue;
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const v = dayMap.get(key);
-      const x = wk * (cell + gap);
-      const y = wd * (cell + gap);
-      rects += `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="2.5" fill="#1b1e25"/>`;
-      if (v?.n) {
-        const s = Math.max(4, Math.round(cell * Math.sqrt(v.n / max)));
-        const o = (cell - s) / 2;
-        rects += `<rect x="${x + o}" y="${y + o}" width="${s}" height="${s}" rx="2" fill="${scoreColor(v.pts / v.n)}"><title>${key}: ${v.n} games, ${Math.round((v.pts / v.n) * 100)}%</title></rect>`;
-      }
-    }
-  }
-  const W = weeks * (cell + gap);
-  const H = 7 * (cell + gap);
-  return `<svg viewBox="0 0 ${W} ${H}" class="w-full h-auto block">${rects}</svg>
-    <div class="flex items-center justify-between mt-2 text-[10px] text-txtMuted"><span>Size: games played</span><span class="flex items-center gap-1">Score <i class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${scoreColor(0.3)}"></i><i class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${scoreColor(0.5)}"></i><i class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${scoreColor(0.7)}"></i></span></div>`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -299,6 +350,8 @@ export function filterGamesTab(games, ui) {
   else if (ui.outcome === 'draw') rows = rows.filter((g) => g.res === 0.5);
   else if (ui.outcome === 'loss') rows = rows.filter((g) => g.res === 0);
   if (ui.term && ui.term !== 'all') rows = rows.filter((g) => g.term === ui.term);
+  if (ui.day) rows = rows.filter((g) => dayKey(g.t) === ui.day);
+  if (ui.prefix) rows = gamesWithPrefix(rows, ui.prefix, ui.pcolor || null);
   const q = (ui.search || '').trim().toLowerCase();
   if (q) rows = rows.filter((g) => g.op.toLowerCase().includes(q) || g.opening.toLowerCase().includes(q) || g.eco.toLowerCase() === q);
   const sorters = {
@@ -311,25 +364,37 @@ export function filterGamesTab(games, ui) {
   return [...rows].sort(sorters[ui.sort] || sorters.new);
 }
 
+function drillChips(ui) {
+  const chip = (label, key) =>
+    `<span class="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-cy/15 border border-cy/35 text-cy text-[11px] font-semibold">${label}<button data-act="games-clear" data-k="${key}" class="w-4 h-4 rounded-full hover:bg-cy/25 leading-none" aria-label="Remove filter">×</button></span>`;
+  const out = [];
+  if (ui.prefix) out.push(chip(`${ui.pcolor === 'b' ? 'As Black' : ui.pcolor === 'w' ? 'As White' : ''} ${esc(movesText(ui.prefix.split(' ')))}`.trim(), 'prefix'));
+  if (ui.day) out.push(chip(esc(new Date(`${ui.day}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })), 'day'));
+  return out.join('');
+}
+
 export function renderGames(ctx) {
   const ui = ctx.ui.games;
   const rows = filterGamesTab(ctx.games, ui);
   const shown = rows.slice(0, ui.limit);
   const sel = (key, opts, value, label) =>
-    `<select data-act="games-ui" data-k="${key}" aria-label="${label}" class="px-2 py-1 rounded-lg bg-surface border border-borderSubtle text-[11.5px] focus:outline-none focus:border-em">${opts
-      .map(([v, l]) => `<option value="${v}"${v === value ? ' selected' : ''}>${l}</option>`)
-      .join('')}</select>`;
+    `<select data-act="games-ui" data-k="${key}" aria-label="${label}" class="px-2 py-1 rounded-lg border text-[11.5px] focus:outline-none focus:border-em ${
+      value && value !== 'all' && key !== 'sort' ? 'bg-em/15 border-em/40 text-em' : 'bg-surface border-borderSubtle'
+    }">${opts.map(([v, l]) => `<option value="${v}"${v === value ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
   const terms = [['all', 'Any ending'], ...Object.entries(TERM_LABEL)];
+  const r = wdl(rows);
   const toolbar = `<div class="flex flex-wrap items-center gap-2 mb-2.5">
       <input data-act="games-search" value="${esc(ui.search)}" placeholder="Search opponent or opening…" class="flex-1 min-w-[180px] max-w-[320px] px-2.5 py-1 rounded-lg bg-surface border border-borderSubtle text-[16px] sm:text-[11.5px] focus:outline-none focus:border-em" aria-label="Search games">
       ${sel('outcome', [['all', 'All results'], ['win', 'Wins'], ['draw', 'Draws'], ['loss', 'Losses']], ui.outcome, 'Result')}
       ${sel('term', terms, ui.term, 'Ending')}
       ${sel('sort', [['new', 'Newest'], ['old', 'Oldest'], ['opp', 'Strongest opponent'], ['long', 'Longest'], ['short', 'Shortest']], ui.sort, 'Sort')}
+      ${drillChips(ui)}
       <span class="ml-auto flex items-center gap-2">
-        <span class="text-[11px] text-txtMuted font-mono">${fmtInt(rows.length)} games · ${scorePill(wdl(rows).score, rows.length)}</span>
+        <span class="text-[11px] text-txtMuted font-mono">${fmtInt(rows.length)} games · ${scorePill(r.score, rows.length)}</span>
         <button data-act="export-pgn" class="px-2.5 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11px] font-semibold" ${rows.length ? '' : 'disabled'}>Download PGN</button>
       </span>
-    </div>`;
+    </div>
+    ${rows.length ? `<div class="mb-2.5">${wdlBar(r, { height: 'h-[8px]', labels: false })}</div>` : ''}`;
   const table = shown.length
     ? `<div class="overflow-x-auto"><table class="w-full text-[11.5px]"><thead><tr class="text-left text-txtMuted text-[10px] uppercase tracking-wider">
         <th class="font-semibold pb-1.5 pr-2">Played</th><th class="font-semibold pb-1.5 pr-2">Time</th><th class="font-semibold pb-1.5 pr-2"></th><th class="font-semibold pb-1.5 pr-2">Result</th><th class="font-semibold pb-1.5 pr-2">Opponent</th><th class="font-semibold pb-1.5 pr-2 text-right">Moves</th><th class="font-semibold pb-1.5 pr-2 hidden lg:table-cell">Opening</th><th></th></tr></thead>
@@ -340,10 +405,10 @@ export function renderGames(ctx) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Explorer                                                            */
+/* Openings: your repertoire in numbers (left) + your own explorer     */
 /* ------------------------------------------------------------------ */
 
-export function renderExplorer(ctx) {
+function explorerPanel(ctx) {
   const ui = ctx.ui.explorer;
   const node = explorerNode(ctx.games, ui.path, { color: ui.color });
   const { fen, last, chess } = replay(ui.path);
@@ -384,10 +449,9 @@ export function renderExplorer(ctx) {
         .join('')
     : `<tr><td colspan="5">${empty(node.total.n ? 'No further moves: games ended here.' : 'No games reached this position.')}</td></tr>`;
 
-  const recentHere = [...node.reached].sort((a, b) => b.t - a.t).slice(0, 6);
+  const recentHere = [...node.reached].sort((a, b) => b.t - a.t).slice(0, 5);
   const side = ui.color === 'w' ? 'White' : 'Black';
-
-  return `<div class="grid gap-3 lg:grid-cols-[minmax(280px,440px)_1fr] items-start">
+  return `<div class="grid gap-3 xl:grid-cols-[minmax(240px,360px)_1fr] items-start min-w-0" id="insExplorer">
     <div class="grid gap-2">
       ${board}
       <div class="flex items-center gap-1.5">
@@ -400,52 +464,66 @@ export function renderExplorer(ctx) {
     <div class="grid gap-3 min-w-0">
       ${card(
         '',
-        `<div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-            ${sectionTabs([['w', 'As White'], ['b', 'As Black']], ui.color, 'ex-color')}
-            <span class="text-[11px] text-txtMuted"><b class="text-txt font-mono">${fmtInt(node.total.n)}</b> games · ${scorePill(node.total.score, node.total.n)} score · ${myTurn ? 'your move' : 'opponent to move'}</span>
+        `<div class="flex flex-wrap items-center gap-1 text-[11.5px] mb-1.5">${crumbs}</div>
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-2 text-[11px] text-txtMuted">
+            <span><b class="text-txt font-mono">${fmtInt(node.total.n)}</b> games as ${side} · ${scorePill(node.total.score, node.total.n)} · ${myTurn ? 'your move' : 'opponent to move'}</span>
+            ${node.total.n ? `<button data-act="ex-games" class="text-cy hover:underline">See these ${fmtInt(node.total.n)} games</button>` : ''}
           </div>
-          <div class="flex flex-wrap items-center gap-1 text-[11.5px] mb-2">${crumbs}</div>
-          ${node.total.n ? `<div class="mb-2">${wdlBar(node.total)}</div>` : ''}
-          <div class="overflow-x-auto"><table class="w-full text-[11.5px]"><thead><tr class="text-left text-txtMuted text-[10px] uppercase tracking-wider"><th class="font-semibold pb-1 pr-2">Move</th><th class="font-semibold pb-1 pr-2 text-right">Games</th><th class="font-semibold pb-1 pr-2">Results (${side})</th><th class="font-semibold pb-1 pr-2 text-right">Score</th><th class="font-semibold pb-1 text-right hidden sm:table-cell">Last played</th></tr></thead><tbody>${rows}</tbody></table></div>`
+          ${node.total.n ? `<div class="mb-2">${wdlBar(node.total, { height: 'h-[10px]', labels: false })}</div>` : ''}
+          <div class="overflow-x-auto"><table class="w-full text-[11.5px]"><thead><tr class="text-left text-txtMuted text-[10px] uppercase tracking-wider"><th class="font-semibold pb-1 pr-2">Move</th><th class="font-semibold pb-1 pr-2 text-right">Games</th><th class="font-semibold pb-1 pr-2">Results</th><th class="font-semibold pb-1 pr-2 text-right">Score</th><th class="font-semibold pb-1 text-right hidden sm:table-cell">Last played</th></tr></thead><tbody>${rows}</tbody></table></div>`
       )}
-      ${recentHere.length ? card('Your recent games here', recentHere.map((g) => gameRow(g, ctx, { compact: true })).join('')) : ''}
+      ${recentHere.length ? card('Your latest games here', recentHere.map((g) => gameRow(g, ctx, { compact: true })).join('')) : ''}
     </div>
   </div>`;
 }
 
-/* ------------------------------------------------------------------ */
-/* Openings                                                            */
-/* ------------------------------------------------------------------ */
-
 export function renderOpenings(ctx) {
   const ui = ctx.ui.openings;
-  const col = (color) => {
-    const rows = openings(ctx.games, { color, groupBy: ui.group, minGames: ui.min, sort: ui.sort }).slice(0, 40);
-    const max = Math.max(1, ...rows.map((r) => r.n));
-    const total = wdl(ctx.games.filter((g) => g.color === color));
-    const body = rows.length
-      ? rows
-          .map(
-            (r) => `<button data-act="explore" data-color="${color}" data-prefix="${esc(r.prefix)}" class="w-full text-left grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 py-2 border-t border-borderSubtle/60 hover:bg-surface/50 px-1 rounded">
+  const color = ctx.ui.explorer.color;
+  const colorGames = ctx.games.filter((g) => g.color === color);
+  const total = wdl(colorGames);
+  const rows = openings(ctx.games, { color, groupBy: ui.group, minGames: ui.min, sort: ui.sort }).slice(0, 60);
+  const max = Math.max(1, ...rows.map((r) => r.n));
+  const path = ctx.ui.explorer.path.join(' ');
+  // The row whose line the explorer is in (longest matching prefix).
+  let activePrefix = '';
+  for (const r of rows) {
+    if (r.prefix && (path === r.prefix || path.startsWith(`${r.prefix} `)) && r.prefix.length > activePrefix.length) activePrefix = r.prefix;
+  }
+  const list = rows.length
+    ? rows
+        .map((r) => {
+          const on = r.prefix && r.prefix === activePrefix;
+          return `<button data-act="op-pick" data-color="${color}" data-prefix="${esc(r.prefix)}" class="w-full text-left grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 py-1.5 px-2 rounded-lg border ${on ? 'bg-em/10 border-em/40' : 'border-transparent hover:bg-surface/60'}">
               <span class="min-w-0 truncate text-[12px] font-medium">${r.eco ? `<span class="font-mono text-[10px] text-txtMuted mr-1.5">${esc(r.eco)}</span>` : ''}${esc(r.name)}</span>
-              <span class="text-right text-[11px] font-mono text-txtMuted">${fmtInt(r.n)} · ${scorePill(r.score, r.n)}${r.perf ? ` · ${r.perf}` : ''}</span>
-              <span class="col-span-2 block" style="width:${Math.max(14, (r.n / max) * 100).toFixed(1)}%">${wdlBar(r, { labels: false, height: 'h-[8px]' })}</span>
-            </button>`
-          )
-          .join('')
-      : empty(`No openings with at least ${ui.min} games.`);
-    return card(`As ${color === 'w' ? 'White' : 'Black'} · ${fmtInt(total.n)} games · ${Math.round(total.score * 100)}%`, body);
-  };
-  const controls = `<div class="flex flex-wrap items-center gap-2 mb-3">
+              <span class="text-right text-[11px] font-mono text-txtMuted">${fmtInt(r.n)} · ${scorePill(r.score, r.n)}</span>
+              <span class="col-span-2 block" style="width:${Math.max(14, (r.n / max) * 100).toFixed(1)}%">${wdlBar(r, { labels: false, height: 'h-[6px]' })}</span>
+            </button>`;
+        })
+        .join('')
+    : empty(`No openings with at least ${ui.min} games.`);
+
+  const controls = `<div class="flex flex-wrap items-center gap-2">
+      ${sectionTabs([['w', 'As White'], ['b', 'As Black']], color, 'ex-color')}
       ${sectionTabs([['played', 'Most played'], ['best', 'Best'], ['worst', 'Worst']], ui.sort, 'op-sort')}
       ${sectionTabs([['family', 'Openings'], ['name', 'Variations']], ui.group, 'op-group')}
       <label class="text-[11px] text-txtMuted flex items-center gap-1.5">Min. games
         <select data-act="op-min" class="px-1.5 py-0.5 rounded-lg bg-surface border border-borderSubtle text-[11px]">${[1, 5, 10, 25, 50, 100]
           .map((v) => `<option value="${v}"${v === ui.min ? ' selected' : ''}>${v}</option>`)
           .join('')}</select></label>
-      <span class="text-[11px] text-txtMuted ml-auto">Games · your score · performance. Bar length shows how often you play it. Click to explore.</span>
     </div>`;
-  return `${controls}<div class="grid gap-3 lg:grid-cols-2">${col('w')}${col('b')}</div>`;
+
+  return `<div class="grid gap-3">
+    ${controls}
+    <div class="grid gap-3 lg:grid-cols-[minmax(280px,380px)_1fr] items-start">
+      ${card(
+        `As ${color === 'w' ? 'White' : 'Black'} · ${fmtInt(total.n)} games · ${Math.round(total.score * 100)}%`,
+        `<div class="grid gap-0.5 lg:max-h-[calc(100vh-190px)] lg:overflow-y-auto -mx-1 px-1">${list}</div>`,
+        { sub: 'Games · your score. Pick one to explore it move by move.' }
+      )}
+      ${explorerPanel(ctx)}
+    </div>
+  </div>`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -458,12 +536,13 @@ export function renderOpponents(ctx) {
   const o = opponents(games, { limit: 25 });
   const buckets = ratingBuckets(games);
   const terms = terminations(games);
+  const vs = versusStrength(games);
 
   const oppTable = (rows) =>
     rows.length
       ? `<table class="w-full text-[11.5px]"><thead><tr class="text-left text-txtMuted text-[10px] uppercase tracking-wider"><th class="font-semibold pb-1">Opponent</th><th class="font-semibold pb-1 text-right">Games</th><th class="font-semibold pb-1 text-right px-2">Rating</th><th class="font-semibold pb-1 w-[38%]">Results</th><th class="font-semibold pb-1 text-right hidden md:table-cell">Last</th></tr></thead><tbody>${rows
           .map(
-            (r) => `<tr class="border-t border-borderSubtle/60 hover:bg-surface/50 cursor-pointer" data-act="opp-games" data-name="${esc(r.name)}">
+            (r) => `<tr class="border-t border-borderSubtle/60 hover:bg-surface/50 cursor-pointer" data-act="opp-games" data-name="${esc(r.name)}" title="See your games against ${esc(r.name)}">
               <td class="py-1.5 pr-2 truncate max-w-[180px]">${r.title ? `<span class="text-am font-bold mr-1">${esc(r.title)}</span>` : ''}${esc(r.name)}</td>
               <td class="py-1.5 text-right font-mono">${fmtInt(r.n)}</td><td class="py-1.5 text-right font-mono px-2">${r.rating || '—'}</td>
               <td class="py-1.5">${wdlBar(r)}</td><td class="py-1.5 text-right text-txtMuted whitespace-nowrap hidden md:table-cell pl-2">${esc(relTime(r.last, ctx.now))}</td></tr>`
@@ -471,14 +550,14 @@ export function renderOpponents(ctx) {
           .join('')}</tbody></table>`
       : empty('None in this selection.');
 
-  const termTable = (rows, color) =>
+  const termTable = (rows, outcome, color) =>
     rows.length
       ? rows
           .map(
-            (r) => `<div class="grid grid-cols-[1fr_46px_52px] items-center gap-2 text-[11.5px] py-1 border-t border-borderSubtle/50">
+            (r) => `<button data-act="term-games" data-outcome="${outcome}" data-term="${esc(r.term)}" class="w-full grid grid-cols-[1fr_46px_52px] items-center gap-2 text-[11.5px] py-1 border-t border-borderSubtle/50 text-left hover:bg-surface/50">
               <span class="truncate">${esc(r.label)}</span>
               <span class="text-right font-mono ${color}">${fmtPct(r.share)}</span>
-              <span class="text-right font-mono text-txtMuted" title="Average moves">${r.avgMoves.toFixed(0)} mv</span></div>`
+              <span class="text-right font-mono text-txtMuted" title="Average moves">${r.avgMoves.toFixed(0)} mv</span></button>`
           )
           .join('')
       : empty('None');
@@ -487,15 +566,17 @@ export function renderOpponents(ctx) {
     <div class="grid gap-3 lg:grid-cols-[1.1fr_1fr]">
       ${card(
         'Results by rating gap',
-        `<p class="text-[11px] text-txtMuted mb-2.5">Your score against opponents rated lower or higher than you. The white tick is what Elo predicts; green means you beat the prediction.</p><div class="grid gap-1.5">${expectedVsActual(buckets)}</div>`
+        `<div class="grid gap-1.5 mb-3">${strengthVerdict(vs)}</div><div class="grid gap-1.5">${expectedVsActual(buckets)}</div>`,
+        { sub: 'Your score against opponents rated lower or higher than you. The white tick is what Elo predicts.' }
       )}
       ${card(
         'How games end',
         `<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div><div class="text-[11px] font-semibold text-em mb-1">Wins · ${fmtInt(terms.totals.win)}</div>${termTable(terms.win, 'text-em')}</div>
-          <div><div class="text-[11px] font-semibold text-ro mb-1">Losses · ${fmtInt(terms.totals.loss)}</div>${termTable(terms.loss, 'text-ro')}</div>
-          <div><div class="text-[11px] font-semibold text-txtMuted mb-1">Draws · ${fmtInt(terms.totals.draw)}</div>${termTable(terms.draw, 'text-txt')}</div>
-        </div>`
+          <div><div class="text-[11px] font-semibold text-em mb-1">Wins · ${fmtInt(terms.totals.win)}</div>${termTable(terms.win, 'win', 'text-em')}</div>
+          <div><div class="text-[11px] font-semibold text-ro mb-1">Losses · ${fmtInt(terms.totals.loss)}</div>${termTable(terms.loss, 'loss', 'text-ro')}</div>
+          <div><div class="text-[11px] font-semibold text-txtMuted mb-1">Draws · ${fmtInt(terms.totals.draw)}</div>${termTable(terms.draw, 'draw', 'text-txt')}</div>
+        </div>`,
+        { sub: 'Click a line to see those games.' }
       )}
     </div>
     <div class="grid gap-3 lg:grid-cols-2">
@@ -506,12 +587,74 @@ export function renderOpponents(ctx) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Activity                                                            */
+/* Progress: rating, then activity and habits                          */
 /* ------------------------------------------------------------------ */
 
-export function renderActivity(ctx) {
+function ratingSection(ctx) {
+  const { games, now } = ctx;
+  const tcs = byTimeControl(games).filter((r) => r.rating);
+  if (!tcs.length) return card('Rating', empty('No rated games in this selection.'));
+  const ui = ctx.ui.rating;
+  const tc = tcs.some((r) => r.tc === ui.tc) ? ui.tc : tcs[0].tc;
+  const series = ratingSeries(games, tc);
+  const range = ui.range === 'all' ? Infinity : Number(ui.range) * DAY_MS;
+  const shown = series.filter((p) => p.t >= now - range);
+  const current = series[series.length - 1];
+  const peak = series.reduce((a, b) => (b.r > a.r ? b : a), series[0]);
+  const change = (days) => {
+    const ref = [...series].reverse().find((p) => p.t <= now - days * DAY_MS);
+    if (!ref || !current) return '—';
+    return delta(current.r - ref.r) || '—';
+  };
+  const tcGames = games.filter((g) => g.tc === tc);
+  const windows = performanceWindows(tcGames);
+  const profileRows = ctx.profiles
+    .flatMap((p) =>
+      Object.entries(p.perfs || {})
+        .filter(([k]) => ['bullet', 'blitz', 'rapid', 'classical', 'correspondence', 'daily'].includes(k))
+        .map(([k, v]) => ({ acct: p.name, src: p.src, k, ...v }))
+    )
+    .filter((r) => r.games > 0);
+
+  const stat = (label, value) => `<div><div class="text-[11px] text-txtMuted">${label}</div><div class="text-[20px] font-bold tabular-nums leading-tight">${value}</div></div>`;
+  return `<div class="grid gap-3">
+    <section class="bg-panel border border-borderSubtle rounded-xl p-3">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h3 class="text-[12.5px] font-semibold">Rating</h3>
+        <div class="flex flex-wrap items-center gap-2">
+          ${sectionTabs(tcs.map((r) => [r.tc, r.label]), tc, 'rt-tc')}
+          ${sectionTabs([['90', '3M'], ['365', '1Y'], ['1095', '3Y'], ['all', 'All']], ui.range, 'rt-range')}
+        </div>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-3">
+        ${stat('Current', current?.r ?? '—')}
+        ${stat('Peak', peak ? `${peak.r}<span class="text-[11px] text-txtMuted font-normal ml-1.5">${esc(fmtDate(peak.t))}</span>` : '—')}
+        ${stat('30 days', `<span class="text-[16px]">${change(30)}</span>`)}${stat('1 year', `<span class="text-[16px]">${change(365)}</span>`)}${stat('Games', fmtInt(tcGames.length))}
+      </div>
+      ${lineChart(shown.map((p) => ({ x: p.t, y: p.r })), { height: 230, label: `${TC_LABEL[tc]} rating` })}
+    </section>
+    <div class="grid gap-3 lg:grid-cols-2">
+      ${card(
+        `Performance · ${esc(TC_LABEL[tc])}`,
+        `<table class="w-full text-[11.5px]"><thead><tr class="text-left text-txtMuted text-[10px] uppercase tracking-wider"><th class="font-semibold pb-1">Games</th><th class="font-semibold pb-1 text-right">Performance</th><th class="font-semibold pb-1 text-right px-2">Score</th><th class="font-semibold pb-1 w-[40%]">Results</th></tr></thead><tbody>${windows
+          .map((w) => `<tr class="border-t border-borderSubtle/60"><td class="py-1.5">${esc(w.label)}</td><td class="py-1.5 text-right font-mono font-semibold">${w.perf ?? '—'}</td><td class="py-1.5 text-right px-2">${scorePill(w.score, w.n)}</td><td class="py-1.5">${wdlBar(w, { labels: false, height: 'h-[10px]' })}</td></tr>`)
+          .join('')}</tbody></table>`,
+        { sub: 'The rating your results were worth over your most recent games.' }
+      )}
+      ${card(
+        'Ratings on your accounts',
+        profileRows.length
+          ? `<table class="w-full text-[11.5px]"><tbody>${profileRows
+              .map((r) => `<tr class="border-t border-borderSubtle/60 first:border-0"><td class="py-1.5">${esc(r.acct)} <span class="text-txtMuted text-[10px]">${r.src === 'chesscom' ? 'Chess.com' : 'Lichess'}</span></td><td class="py-1.5 capitalize">${esc(r.k === 'correspondence' ? 'Daily' : r.k)}</td><td class="py-1.5 text-right font-mono font-semibold">${r.rating}${r.prov ? '?' : ''}</td><td class="py-1.5 text-right font-mono text-txtMuted">${fmtInt(r.games)} games</td></tr>`)
+              .join('')}</tbody></table><p class="text-[10.5px] text-txtMuted mt-2">Live from each site. A ? marks a provisional rating.</p>`
+          : empty('Sync an account to see its current ratings.')
+      )}
+    </div>
+  </div>`;
+}
+
+function activitySection(ctx) {
   const { games } = ctx;
-  if (!games.length) return empty('No games match these filters.');
   const days = byDay(games);
   const years = [...new Set(games.map((g) => new Date(g.t).getFullYear()))].sort((a, b) => b - a);
   const shownYears = years.slice(0, ctx.ui.activity.years);
@@ -520,11 +663,10 @@ export function renderActivity(ctx) {
     .map((y) => {
       const yGames = [...days.entries()].filter(([k]) => k.startsWith(`${y}-`));
       const n = yGames.reduce((a, [, v]) => a + v.n, 0);
-      const active = yGames.length;
-      return `<div class="mb-3 last:mb-0"><div class="flex items-baseline gap-2 mb-1"><span class="text-[12px] font-semibold">${y}</span><span class="text-[10.5px] text-txtMuted">${fmtInt(n)} games · ${active} active days</span></div>${yearCalendar(y, days, { maxN })}</div>`;
+      return `<div class="mb-3 last:mb-0"><div class="flex items-baseline gap-2 mb-1"><span class="text-[12px] font-semibold">${y}</span><span class="text-[10.5px] text-txtMuted">${fmtInt(n)} games · ${yGames.length} active days</span></div>${yearCalendar(y, days, { maxN })}</div>`;
     })
     .join('');
-  const more = years.length > shownYears.length ? `<button data-act="act-more" class="text-[10.5px] text-cy hover:underline">Show ${years.length - shownYears.length} older year${years.length - shownYears.length > 1 ? 's' : ''}</button>` : '';
+  const more = years.length > shownYears.length ? `<button data-act="act-more" class="text-[11px] text-cy hover:underline">Show ${years.length - shownYears.length} older year${years.length - shownYears.length > 1 ? 's' : ''}</button>` : '';
 
   const tod = timeOfDay(games);
   const hourItems = tod.hours.map((h, i) => ({ label: i % 3 === 0 ? fmtHourShort(i) : '', n: h.n, score: h.n ? h.pts / h.n : 0 }));
@@ -547,82 +689,22 @@ export function renderActivity(ctx) {
     </div>`;
 
   return `<div class="grid gap-3">
-    ${card('Every day you played', cal + more, { right: '<span class="text-[10px] text-txtMuted">Size: games · Color: score</span>' })}
     <div class="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
-      ${card('Week at a glance', hourGrid(tod.grid, { hourLabel: fmtHour }))}
-      ${card('Habits', `<p class="text-[11px] text-txtMuted mb-2">A session is a run of games less than 30 minutes apart.</p>${habitsHtml}`)}
+      ${card('When you play best', hourGrid(tod.grid, { hourLabel: fmtHour }), { sub: 'Square size: games played. Color: your score.' })}
+      ${card('Habits', habitsHtml, { sub: 'A session is a run of games less than 30 minutes apart.' })}
     </div>
     <div class="grid gap-3 lg:grid-cols-3">
       ${card('By hour', scoreBars(hourItems))}
       ${card('By weekday', scoreBars(dayItems))}
-      ${card('Games per month · 24 months', scoreBars(monthItems, { showScore: false }))}
+      ${card('Games per month', scoreBars(monthItems, { showScore: false }), { sub: 'Last 24 months' })}
     </div>
+    ${card('Every day you played', cal + more, { sub: 'Click a day to see its games.' })}
   </div>`;
 }
 
-/* ------------------------------------------------------------------ */
-/* Rating                                                              */
-/* ------------------------------------------------------------------ */
-
-export function renderRating(ctx) {
-  const { games, now } = ctx;
-  const tcs = byTimeControl(games).filter((r) => r.rating);
-  if (!tcs.length) return empty('No rated games in this selection.');
-  const ui = ctx.ui.rating;
-  const tc = tcs.some((r) => r.tc === ui.tc) ? ui.tc : tcs[0].tc;
-  const series = ratingSeries(games, tc);
-  const range = ui.range === 'all' ? Infinity : Number(ui.range) * DAY_MS;
-  const shown = series.filter((p) => p.t >= now - range);
-  const current = series[series.length - 1];
-  const peak = series.reduce((a, b) => (b.r > a.r ? b : a), series[0]);
-  const change = (days) => {
-    const ref = [...series].reverse().find((p) => p.t <= now - days * DAY_MS);
-    if (!ref || !current) return '—';
-    const d = current.r - ref.r;
-    return `<span class="${d >= 0 ? 'text-em' : 'text-ro'}">${d >= 0 ? '+' : '−'}${Math.abs(d)}</span>`;
-  };
-  const tcGames = games.filter((g) => g.tc === tc);
-  const windows = performanceWindows(tcGames);
-  const profileRows = ctx.profiles
-    .flatMap((p) =>
-      Object.entries(p.perfs || {})
-        .filter(([k]) => ['bullet', 'blitz', 'rapid', 'classical', 'correspondence', 'daily'].includes(k))
-        .map(([k, v]) => ({ acct: p.name, src: p.src, k, ...v }))
-    )
-    .filter((r) => r.games > 0);
-
-  const stat = (label, value) => `<div><div class="text-[10.5px] text-txtMuted uppercase tracking-wider font-semibold">${label}</div><div class="text-[20px] font-bold tabular-nums leading-tight">${value}</div></div>`;
-  return `<div class="grid gap-3">
-    <div class="flex flex-wrap items-center gap-2">
-      ${sectionTabs(tcs.map((r) => [r.tc, r.label]), tc, 'rt-tc')}
-      ${sectionTabs([['90', '3M'], ['365', '1Y'], ['1095', '3Y'], ['all', 'All']], ui.range, 'rt-range')}
-    </div>
-    <section class="bg-panel border border-borderSubtle rounded-xl p-3">
-      <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-3">
-        ${stat('Current', current?.r ?? '—')}
-        ${stat('Peak', peak ? `${peak.r}<span class="text-[11px] text-txtMuted font-normal ml-1.5">${esc(fmtDate(peak.t))}</span>` : '—')}
-        ${stat('30 days', change(30))}${stat('1 year', change(365))}${stat('Games', fmtInt(tcGames.length))}
-      </div>
-      ${lineChart(shown.map((p) => ({ x: p.t, y: p.r })), { height: 230, label: `${TC_LABEL[tc]} rating` })}
-    </section>
-    <div class="grid gap-3 lg:grid-cols-2">
-      ${card(
-        `Performance · ${esc(TC_LABEL[tc])}`,
-        `<p class="text-[11px] text-txtMuted mb-2">The rating your results were worth over your most recent games, from your score and your opponents' ratings.</p>
-        <table class="w-full text-[11.5px]"><thead><tr class="text-left text-txtMuted text-[10px] uppercase tracking-wider"><th class="font-semibold pb-1">Games</th><th class="font-semibold pb-1 text-right">Performance</th><th class="font-semibold pb-1 text-right px-2">Score</th><th class="font-semibold pb-1 w-[40%]">Results</th></tr></thead><tbody>${windows
-          .map((w) => `<tr class="border-t border-borderSubtle/60"><td class="py-1.5">${esc(w.label)}</td><td class="py-1.5 text-right font-mono font-semibold">${w.perf ?? '—'}</td><td class="py-1.5 text-right px-2">${scorePill(w.score, w.n)}</td><td class="py-1.5">${wdlBar(w, { labels: false, height: 'h-[10px]' })}</td></tr>`)
-          .join('')}</tbody></table>`
-      )}
-      ${card(
-        'Ratings on your accounts',
-        profileRows.length
-          ? `<table class="w-full text-[11.5px]"><tbody>${profileRows
-              .map((r) => `<tr class="border-t border-borderSubtle/60 first:border-0"><td class="py-1.5">${esc(r.acct)} <span class="text-txtMuted text-[10px]">${r.src === 'chesscom' ? 'Chess.com' : 'Lichess'}</span></td><td class="py-1.5 capitalize">${esc(r.k === 'correspondence' ? 'Daily' : r.k)}</td><td class="py-1.5 text-right font-mono font-semibold">${r.rating}${r.prov ? '?' : ''}</td><td class="py-1.5 text-right font-mono text-txtMuted">${fmtInt(r.games)} games</td></tr>`)
-              .join('')}</tbody></table><p class="text-[10.5px] text-txtMuted mt-2">Live from each site. A ? marks a provisional rating.</p>`
-          : empty('Sync an account to see its current ratings.')
-      )}
-    </div>
-  </div>`;
+export function renderProgress(ctx) {
+  if (!ctx.games.length) return empty('No games match these filters.');
+  return `<div class="grid gap-3">${ratingSection(ctx)}${activitySection(ctx)}</div>`;
 }
 
 export { movesText as formatMoves };

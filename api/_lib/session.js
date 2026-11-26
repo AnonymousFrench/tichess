@@ -164,8 +164,10 @@ export function sanitizeReturnTo(raw) {
   if (typeof raw !== 'string') return '/';
   const trimmed = raw.trim();
   if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\\')) return '/';
-  if (trimmed === '/repertoire.html' || trimmed.startsWith('/repertoire.html?')) return trimmed;
-  if (trimmed === '/' || trimmed.startsWith('/?')) return trimmed;
+  // Only the app's own pages (optionally with a query string) are valid destinations.
+  for (const page of ['/', '/repertoire.html', '/insights.html']) {
+    if (trimmed === page || trimmed.startsWith(`${page}?`)) return trimmed;
+  }
   return '/';
 }
 

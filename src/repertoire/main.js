@@ -7,6 +7,7 @@ import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import './repertoire.css';
 import { mountAppNav } from '../shared/appNav.js';
+import { mountAccount } from '../shared/account.js';
 
 import { parseRepertoireFile, mergeProgress, buildExportFile } from './model.js';
 import { buildRepertoireFromPgn, mergeRepertoires } from './pgnImport.js';
@@ -19,7 +20,6 @@ import {
   getLoginUrl,
   pushRepertoireToCloud,
   scheduleProgressSync,
-  signOutCloudSync,
 } from '../sync/cloudSync.js';
 
 const $ = (id) => document.getElementById(id);
@@ -33,45 +33,23 @@ function showImporter(error) {
   err.textContent = error || '';
 }
 
+/** The account itself lives in the shared header control; this only reflects save status. */
 function renderSyncHeader(snap) {
   const syncEl = $('sync');
-  const authBtn = $('b-sync-auth');
   const cloudRow = $('imp-cloud-row');
-
-  if (snap.authenticated && snap.user) {
-    if (syncEl) {
-      syncEl.textContent =
-        snap.status === 'syncing'
-          ? '☁ Syncing…'
-          : snap.status === 'error'
-            ? '☁ Sync error'
-            : snap.status === 'offline'
-              ? '☁ Offline'
-              : `☁ ${snap.user.username}`;
-      syncEl.title = snap.error || 'Synced automatically across devices';
-    }
-    if (authBtn) {
-      authBtn.hidden = false;
-      authBtn.textContent = 'Sign out';
-      authBtn.onclick = async () => {
-        await signOutCloudSync();
-      };
-    }
-    if (cloudRow) cloudRow.hidden = true;
-  } else if (snap.configured) {
-    if (syncEl) syncEl.textContent = 'Local';
-    if (authBtn) {
-      authBtn.hidden = false;
-      authBtn.textContent = 'Sign in';
-      authBtn.onclick = () => {
-        window.location.href = getLoginUrl('/repertoire.html');
-      };
-    }
-    if (cloudRow) cloudRow.hidden = false;
-  } else {
-    if (authBtn) authBtn.hidden = true;
-    if (cloudRow) cloudRow.hidden = true;
+  const signedIn = Boolean(snap.authenticated && snap.user);
+  if (syncEl && signedIn) {
+    syncEl.textContent =
+      snap.status === 'syncing'
+        ? 'Syncing…'
+        : snap.status === 'error'
+          ? 'Sync error'
+          : snap.status === 'offline'
+            ? 'Offline: saved in this browser'
+            : 'Saved and synced';
+    syncEl.title = snap.error || 'Saved in this browser and synced to your other devices';
   }
+  if (cloudRow) cloudRow.hidden = signedIn || !snap.configured;
 }
 
 async function importFile(file) {
@@ -155,7 +133,7 @@ function bindImportControls() {
   const cloudSignIn = $('imp-cloud-signin');
   if (cloudSignIn) {
     cloudSignIn.onclick = () => {
-      window.location.href = getLoginUrl('/repertoire.html');
+      window.location.href = getLoginUrl();
     };
   }
   drop.addEventListener('keydown', (e) => {
@@ -178,6 +156,7 @@ function bindImportControls() {
 
 async function boot() {
   mountAppNav('repertoire');
+  mountAccount();
   bindImportControls();
   onCloudSyncState(renderSyncHeader);
 

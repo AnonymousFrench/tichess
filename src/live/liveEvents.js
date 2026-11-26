@@ -16,13 +16,11 @@ import {
   computeRoundTransition,
   parseBroadcastRoundPgn,
   parseBroadcastInput,
+  buildEventSections,
+  looksLikeBroadcastRef,
+  pickRound,
 } from './broadcastParser.js';
-import {
-  updateSpotlightBanner,
-  renderTournamentRoundsTable as renderRoundsTableDom,
-  renderLiveRoundGamesStrip as renderGamesStripDom,
-  renderAllBroadcastsList as renderAllListDom,
-} from './liveRenderer.js';
+import { updateLiveIndicators, renderEventsList, renderEventView, showLiveView } from './liveRenderer.js';
 
 export {
   parseBroadcastItem,
@@ -31,57 +29,187 @@ export {
   computeRoundTransition,
   parseBroadcastRoundPgn,
   parseBroadcastInput,
+  buildEventSections,
+  looksLikeBroadcastRef,
+  pickRound,
 };
 
 const TOUR_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const EVENTS_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const POLL_SECONDS = 15;
+
+/** Finished rounds never change, so their games are kept for instant round switching. */
+const finishedRoundGames = new Map();
+
+/* ------------------------------------------------------------------ */
+/* Rendering                                                           */
+/* ------------------------------------------------------------------ */
+
+/** Auto-refresh controls only while something on screen can still change. */
+function syncPollControls() {
+  const auto = document.getElementById('liveAutoWrap');
+  if (!auto) return;
+  const show = state.activeHub === 'live' && state.liveView === 'event' && roundsToPoll().length > 0;
+  auto.classList.toggle('hidden', !show);
+  auto.classList.toggle('inline-flex', show);
+}
+
+export function renderLiveHub() {
+  showLiveView();
+  syncPollControls();
+  if (state.liveView === 'event') {
+    renderEventView({
+      onBack: backToEvents,
+      onSelectRound: selectRound,
+      onOpenGame: openBroadcastGameTab,
+    });
+  } else {
+    renderEventsList({ onOpenEvent: openEvent });
+  }
+  updateLiveIndicators();
+}
 
 function getSelectedRound() {
   const rounds = state.featuredTour?.rounds || [];
   return rounds.find((r) => r.id === state.liveRoundId) || null;
 }
 
-function isSelectedRoundFinished() {
-  const round = getSelectedRound();
-  if (!round) return false;
-  if (round.finished === true && round.ongoing !== true) {
-    return !state.liveRoundGames.some((g) => g.result === '*');
+function roundIsFinal(round, games) {
+  return Boolean(round && round.finished === true && round.ongoing !== true && !games.some((g) => g.result === '*'));
+}
+
+/* ------------------------------------------------------------------ */
+/* Events list                                                         */
+/* ------------------------------------------------------------------ */
+
+export async function discoverAndSyncLiveBroadcasts() {
+  if (!state.lastEventsRefreshAt) state.liveStatus = 'loading';
+  renderLiveHub();
+  try {
+    const [topRes, searchRes] = await Promise.allSettled([fetchTopBroadcasts(), searchBroadcasts('World Championship')]);
+    const topData = topRes.status === 'fulfilled' ? topRes.value : null;
+    const searchData = searchRes.status === 'fulfilled' ? searchRes.value : null;
+    if (!topData && !searchData) throw new Error('unreachable');
+    state.liveSections = buildEventSections(topData, searchData);
+    state.allBroadcasts = mergeBroadcastLists(topData, searchData);
+    state.liveStatus = 'ok';
+    state.lastEventsRefreshAt = Date.now();
+  } catch (_) {
+    state.liveStatus = state.lastEventsRefreshAt ? 'ok' : 'error';
   }
-  return false;
+  renderLiveHub();
 }
 
-export function renderTournamentRoundsTable() {
-  renderRoundsTableDom({
-    onSelectRound: async (rid, rname) => {
-      state.userPinnedRound = true;
-      state.liveRoundId = rid;
-      state.liveRoundName = `${state.featuredTour?.tour?.name || 'Broadcast'} · ${rname}`;
-      renderTournamentRoundsTable();
-      updateSpotlightBanner();
-      await pollActiveRoundPgn();
-    },
-  });
+let searchTimer = 0;
+let searchSeq = 0;
+
+/** Filter the list as you type; after a pause, also search all of Lichess (past events included). */
+export function onLiveSearchInput() {
+  const q = (document.getElementById('customBroadcastInput')?.value || '').trim();
+  clearTimeout(searchTimer);
+  renderLiveHub();
+  if (q.length < 3 || looksLikeBroadcastRef(q)) return;
+  searchTimer = setTimeout(() => runRemoteSearch(q), 450);
 }
 
-export function renderLiveRoundGamesStrip() {
-  renderGamesStripDom({
-    onOpenGame: (g, roundId) => openBroadcastGameTab(g, roundId),
-  });
+async function runRemoteSearch(q) {
+  const seq = ++searchSeq;
+  state.liveSearch = { q: q.toLowerCase(), results: [], loading: true };
+  renderLiveHub();
+  try {
+    const data = await searchBroadcasts(q);
+    if (seq !== searchSeq) return;
+    const seen = new Set();
+    const results = [];
+    for (const it of data?.currentPageResults || []) {
+      const b = parseBroadcastItem(it);
+      if (!b.tourId || seen.has(b.tourId)) continue;
+      seen.add(b.tourId);
+      results.push({ ...b, info: b.tour?.info || null, tier: b.tour?.tier || 0, dates: b.tour?.dates || null });
+    }
+    state.liveSearch = { q: q.toLowerCase(), results, loading: false };
+  } catch (_) {
+    if (seq === searchSeq) state.liveSearch = { q: q.toLowerCase(), results: [], loading: false };
+  }
+  if (seq === searchSeq) renderLiveHub();
 }
 
-export function renderAllBroadcastsList() {
-  renderAllListDom({
-    onSelectBroadcast: async (tid, rid, name) => {
-      showToast(`Loading ${name}...`);
-      if (tid) {
-        await selectFeaturedTournament(tid, rid || null, { userPicked: false });
-      } else if (rid) {
-        state.userPinnedRound = true;
-        state.liveRoundId = rid;
-        state.liveRoundName = name;
-        await pollActiveRoundPgn();
-      }
-    },
-  });
+/** Enter in the search box: open a pasted link or id, otherwise search now. */
+export async function loadCustomBroadcastFromInput() {
+  const input = document.getElementById('customBroadcastInput');
+  const raw = (input?.value || '').trim();
+  if (!raw) return;
+  if (!looksLikeBroadcastRef(raw)) {
+    clearTimeout(searchTimer);
+    await runRemoteSearch(raw);
+    return;
+  }
+  const parsed = parseBroadcastInput(raw);
+  if (!parsed) return;
+  if (parsed.type === 'tour') {
+    await openEvent(parsed.id, null);
+    return;
+  }
+  try {
+    const info = await fetchBroadcastRoundById(parsed.id);
+    if (info?.tour?.id) {
+      await openEvent(info.tour.id, parsed.id, { pinned: true });
+      return;
+    }
+  } catch (_) {
+    /* fall through */
+  }
+  showToast('Could not find that broadcast. Check the link.', true);
+}
+
+/* ------------------------------------------------------------------ */
+/* One event                                                           */
+/* ------------------------------------------------------------------ */
+
+export async function openEvent(tourId, preferredRoundId = null, { pinned = false } = {}) {
+  if (!tourId) return;
+  const sameEvent = state.featuredTour?.tour?.id === tourId;
+  state.liveView = 'event';
+  if (!sameEvent) {
+    state.featuredTour = null;
+    state.liveRoundId = null;
+    state.liveRoundGames = [];
+    state.liveStatus = 'loading';
+  }
+  renderLiveHub();
+  try {
+    const full = await fetchBroadcastTournament(tourId);
+    state.featuredTour = full;
+    state.lastTourRefreshAt = Date.now();
+    state.liveStatus = 'ok';
+    const chosen = sameEvent && !preferredRoundId ? getSelectedRound() || pickRound(full) : pickRound(full, preferredRoundId);
+    state.userPinnedRound = Boolean(pinned && preferredRoundId);
+    if (chosen?.id) await selectRound(chosen.id, { pin: state.userPinnedRound });
+    else renderLiveHub();
+  } catch (_) {
+    state.liveStatus = 'error';
+    renderLiveHub();
+    showToast('Could not load that event from Lichess', true);
+  }
+}
+
+function backToEvents() {
+  state.liveView = 'events';
+  renderLiveHub();
+}
+
+/** Show one round's games. Picking a round by hand pins it (no auto-advance). */
+export async function selectRound(roundId, { pin = true } = {}) {
+  const round = (state.featuredTour?.rounds || []).find((r) => r.id === roundId);
+  state.liveRoundId = roundId;
+  state.liveRoundName = `${state.featuredTour?.tour?.name || 'Broadcast'} · ${round?.name || ''}`;
+  if (pin) state.userPinnedRound = true;
+  const cached = finishedRoundGames.get(roundId);
+  state.liveRoundGames = cached || [];
+  state.liveRoundLoading = !cached;
+  state.liveCountdown = POLL_SECONDS;
+  renderLiveHub();
+  if (!cached) await pollActiveRoundPgn();
 }
 
 export async function refreshFeaturedTournament({ silent = true } = {}) {
@@ -91,187 +219,127 @@ export async function refreshFeaturedTournament({ silent = true } = {}) {
     const full = await fetchBroadcastTournament(tourId);
     state.featuredTour = full;
     state.lastTourRefreshAt = Date.now();
-
     const transition = computeRoundTransition({
       currentRoundId: state.liveRoundId,
       currentRoundName: state.liveRoundName,
       userPinnedRound: state.userPinnedRound,
       tourData: full,
     });
-
     if (transition.nextRoundId && transition.nextRoundId !== state.liveRoundId) {
-      state.liveRoundId = transition.nextRoundId;
-      state.liveRoundName = transition.nextRoundName;
-      if (transition.advanced && transition.round?.name) {
-        showToast(`Now live: ${transition.round.name}`);
-      }
-      renderTournamentRoundsTable();
-      updateSpotlightBanner();
-      await pollActiveRoundPgn();
+      if (transition.advanced && transition.round?.name) showToast(`Now live: ${transition.round.name}`);
+      await selectRound(transition.nextRoundId, { pin: false });
       return;
     }
-
-    renderTournamentRoundsTable();
-    updateSpotlightBanner();
+    renderLiveHub();
   } catch (_) {
-    if (!silent) {
-      showToast('Failed to refresh tournament status', true);
-    }
+    if (!silent) showToast('Could not refresh the event', true);
   }
 }
 
-export async function selectFeaturedTournament(
-  tourId,
-  preferredRoundId = null,
-  { userPicked = false } = {}
-) {
-  try {
-    const full = await fetchBroadcastTournament(tourId);
-    state.featuredTour = full;
-    state.lastTourRefreshAt = Date.now();
-    state.userPinnedRound = Boolean(userPicked && preferredRoundId);
+/* ------------------------------------------------------------------ */
+/* Polling: the round on screen and every open live game              */
+/* ------------------------------------------------------------------ */
 
-    const rounds = full.rounds || [];
-    const chosen =
-      (preferredRoundId && rounds.find((r) => r.id === preferredRoundId)) ||
-      rounds.find((r) => r.ongoing === true) ||
-      (full.defaultRoundId && rounds.find((r) => r.id === full.defaultRoundId)) ||
-      [...rounds].reverse().find((r) => r.finished === true) ||
-      rounds[0];
-
-    if (chosen?.id) {
-      state.liveRoundId = chosen.id;
-      state.liveRoundName = `${full.tour?.name || 'Broadcast'} · ${chosen.name || ''}`;
-    }
-
-    renderTournamentRoundsTable();
-    updateSpotlightBanner();
-
-    if (state.liveRoundId) {
-      await pollActiveRoundPgn();
-    }
-  } catch (_) {
-    renderTournamentRoundsTable();
-    updateSpotlightBanner();
+function roundsToPoll() {
+  const ids = new Set();
+  const viewed = getSelectedRound();
+  if (state.liveView === 'event' && state.liveRoundId && !finishedRoundGames.has(state.liveRoundId)) {
+    const notYet =
+      viewed && viewed.ongoing !== true && viewed.finished !== true && viewed.startsAt && viewed.startsAt - Date.now() > 10 * 60_000;
+    if (!notYet) ids.add(state.liveRoundId);
   }
+  for (const t of state.tabs) {
+    if (t.liveMeta?.roundId && (t.liveMeta.lastResult ?? '*') === '*') ids.add(t.liveMeta.roundId);
+  }
+  return [...ids];
 }
 
-export async function discoverAndSyncLiveBroadcasts() {
-  const statusEl = document.getElementById('featuredStatus');
-  if (statusEl) statusEl.textContent = 'Syncing Lichess...';
-
-  try {
-    const [topRes, searchRes] = await Promise.allSettled([
-      fetchTopBroadcasts(),
-      searchBroadcasts('World Championship'),
-    ]);
-
-    const topData = topRes.status === 'fulfilled' ? topRes.value : null;
-    const searchData = searchRes.status === 'fulfilled' ? searchRes.value : null;
-    const broadcasts = mergeBroadcastLists(topData, searchData);
-
-    state.allBroadcasts = broadcasts;
-    renderAllBroadcastsList();
-
-    const picked = selectFeaturedBroadcast(broadcasts);
-
-    if (picked?.tourId) {
-      await selectFeaturedTournament(picked.tourId, picked.roundId || null, { userPicked: false });
-    } else if (statusEl) {
-      statusEl.textContent = 'No Active Broadcasts';
-      updateSpotlightBanner();
+function updateLiveTabs(roundId, games) {
+  let positionChanged = false;
+  let clocksChanged = false;
+  for (const tab of state.tabs) {
+    if (!tab.liveMeta || tab.liveMeta.roundId !== roundId) continue;
+    const matched =
+      games.find((g) => g.white === tab.liveMeta.white && g.black === tab.liveMeta.black) || games[tab.liveMeta.gameIdx];
+    if (!matched?.pgn) continue;
+    const { root: freshRoot, meta: freshMeta, invalidFen } = createTreeFromPgn(matched.pgn);
+    if (invalidFen) continue;
+    const { added, clockChanged, lastNode } = mergeMainline(tab.root, freshRoot);
+    const prevResult = tab.liveMeta.lastResult ?? tab.meta?.result ?? '*';
+    const resultChanged = matched.result !== prevResult;
+    tab.liveMeta.lastResult = matched.result;
+    const prevClocks = tab.liveClocks || { white: '', black: '' };
+    const liveClocksChanged = prevClocks.white !== matched.whiteClk || prevClocks.black !== matched.blackClk;
+    tab.meta = freshMeta ? { ...(tab.meta || {}), ...freshMeta } : tab.meta;
+    tab.liveClocks = { white: matched.whiteClk, black: matched.blackClk };
+    if (added > 0 && tab.autoFollow) tab.current = lastNode;
+    if (tab.id === state.activeTabId) {
+      if (added > 0 || resultChanged) positionChanged = true;
+      else if (clockChanged || liveClocksChanged) clocksChanged = true;
     }
-  } catch (_) {
-    if (statusEl) statusEl.textContent = 'Lichess Unreachable';
-    updateSpotlightBanner();
   }
+  return { positionChanged, clocksChanged };
 }
 
+async function pollRound(roundId) {
+  const pgnText = await fetchBroadcastRoundPgn(roundId);
+  const round = (state.featuredTour?.rounds || []).find((r) => r.id === roundId);
+  const games = parseBroadcastRoundPgn(pgnText, round?.name || 'Live Broadcast');
+  if (roundIsFinal(round, games)) finishedRoundGames.set(roundId, games);
+  return games;
+}
+
+/** Fetch the viewed round and the rounds of open live games; update the list and those tabs. */
 export async function pollActiveRoundPgn() {
-  if (!state.liveRoundId) return;
-  try {
-    const pgnText = await fetchBroadcastRoundPgn(state.liveRoundId);
-    const games = parseBroadcastRoundPgn(pgnText, state.liveRoundName || 'Live Broadcast');
-    const hadLiveGamesBefore = state.liveRoundGames.some((g) => g.result === '*');
-    state.liveRoundGames = games;
-    renderLiveRoundGamesStrip();
-    updateSpotlightBanner();
-
-    // Update any open LIVE board tabs matching this round non-destructively
-    let activeChangedPosition = false;
-    let activeChangedClocksOnly = false;
-    for (const tab of state.tabs) {
-      if (tab.liveMeta && tab.liveMeta.roundId === state.liveRoundId) {
-        const matched =
-          games.find((g) => g.white === tab.liveMeta.white && g.black === tab.liveMeta.black) ||
-          games[tab.liveMeta.gameIdx];
-        if (matched && matched.pgn) {
-          const { root: freshRoot, meta: freshMeta, invalidFen } = createTreeFromPgn(matched.pgn);
-          if (invalidFen) continue;
-
-          const { added, clockChanged, lastNode } = mergeMainline(tab.root, freshRoot);
-          const prevResult = tab.liveMeta.lastResult ?? tab.meta?.result ?? '*';
-          const resultChanged = matched.result !== prevResult;
-          tab.liveMeta.lastResult = matched.result;
-
-          const prevClocks = tab.liveClocks || { white: '', black: '' };
-          const liveClocksChanged =
-            prevClocks.white !== matched.whiteClk || prevClocks.black !== matched.blackClk;
-
-          tab.meta = freshMeta ? { ...(tab.meta || {}), ...freshMeta } : tab.meta;
-          tab.liveClocks = { white: matched.whiteClk, black: matched.blackClk };
-
-          if (added > 0 && tab.autoFollow) {
-            tab.current = lastNode;
-          }
-
-          if (tab.id === state.activeTabId) {
-            if (added > 0 || resultChanged) {
-              activeChangedPosition = true;
-            } else if (clockChanged || liveClocksChanged) {
-              activeChangedClocksOnly = true;
-            }
-          }
+  const ids = roundsToPoll();
+  if (!ids.length) {
+    state.liveRoundLoading = false;
+    renderLiveHub();
+    return;
+  }
+  let positionChanged = false;
+  let clocksChanged = false;
+  let viewedFinishedNow = false;
+  await Promise.all(
+    ids.map(async (rid) => {
+      try {
+        const games = await pollRound(rid);
+        if (rid === state.liveRoundId) {
+          const hadLive = state.liveRoundGames.some((g) => g.result === '*');
+          state.liveRoundGames = games;
+          state.liveRoundLoading = false;
+          if (hadLive && games.length && games.every((g) => g.result !== '*')) viewedFinishedNow = true;
+        }
+        const r = updateLiveTabs(rid, games);
+        positionChanged ||= r.positionChanged;
+        clocksChanged ||= r.clocksChanged;
+      } catch (err) {
+        if (rid === state.liveRoundId) state.liveRoundLoading = false;
+        if (err?.name === 'RateLimitError') {
+          state.liveCountdown = Math.max(60, Math.ceil((err.retryAfterMs || 60_000) / 1000));
+          showToast('Lichess rate limit: retrying in a minute', true);
         }
       }
-    }
-
-    if (activeChangedPosition) {
-      emitPositionChanged();
-    } else if (activeChangedClocksOnly) {
-      renderPlayerClockBars();
-      renderVariationTree();
-    }
-
-    const selectedRound = getSelectedRound();
-    const allGamesFinished = games.length > 0 && games.every((g) => g.result !== '*');
-    if (allGamesFinished && (hadLiveGamesBefore || selectedRound?.ongoing === true)) {
-      refreshFeaturedTournament({ silent: true });
-    }
-  } catch (err) {
-    if (err?.name === 'RateLimitError') {
-      state.liveCountdown = Math.max(60, Math.ceil((err.retryAfterMs || 60_000) / 1000));
-      const badge = document.getElementById('liveCountdownBadge');
-      if (badge) badge.textContent = `${state.liveCountdown}s`;
-      showToast('Lichess rate limit — retrying in 60s', true);
-    }
+    })
+  );
+  renderLiveHub();
+  if (positionChanged) emitPositionChanged();
+  else if (clocksChanged) {
+    renderPlayerClockBars();
+    renderVariationTree();
   }
+  if (viewedFinishedNow) refreshFeaturedTournament({ silent: true });
 }
 
 export function openBroadcastGameTab(g, roundId) {
   const existing = state.tabs.find(
-    (t) =>
-      t.liveMeta &&
-      t.liveMeta.roundId === roundId &&
-      t.liveMeta.white === g.white &&
-      t.liveMeta.black === g.black
+    (t) => t.liveMeta && t.liveMeta.roundId === roundId && t.liveMeta.white === g.white && t.liveMeta.black === g.black
   );
   if (existing) {
     state.activeTabId = existing.id;
     emitPositionChanged();
     return;
   }
-
   const tab = addBoardTab(
     `${g.white.split(',')[0]} - ${g.black.split(',')[0]}`,
     g.pgn,
@@ -287,95 +355,51 @@ export function openBroadcastGameTab(g, roundId) {
     },
     {
       jumpEnd: true,
-      liveMeta: {
-        roundId,
-        white: g.white,
-        black: g.black,
-        gameIdx: g.idx,
-        lastResult: g.result,
-      },
+      liveMeta: { roundId, white: g.white, black: g.black, gameIdx: g.idx, lastResult: g.result },
     }
   );
   if (!tab) return;
   tab.liveClocks = { white: g.whiteClk, black: g.blackClk };
   renderPlayerClockBars();
-  showToast(`Watching: ${g.white} vs ${g.black}`);
+  showToast(g.result === '*' ? `Watching live: ${g.white} vs ${g.black}` : `${g.white} vs ${g.black}`);
 }
 
-export function openFeaturedLiveGame() {
-  const ongoing = state.liveRoundGames.find((g) => g.result === '*') || state.liveRoundGames[0];
-  if (ongoing) {
-    openBroadcastGameTab(ongoing, state.liveRoundId);
+/** Header pill: straight to the event that is live now, or to the list. */
+export function openLiveFromHeader() {
+  const pick = state.liveSections.live[0] || selectFeaturedBroadcast(state.allBroadcasts);
+  if (pick?.tourId && pick.status === 'live') {
+    openEvent(pick.tourId, state.featuredTour?.tour?.id === pick.tourId ? null : pick.roundId || null);
   } else {
-    showToast('No games available in the current broadcast round yet', true);
+    backToEvents();
   }
 }
 
-export async function loadCustomBroadcastFromInput() {
-  const input = document.getElementById('customBroadcastInput');
-  const parsed = parseBroadcastInput(input?.value || '');
-  if (!parsed) return;
-
-  if (parsed.type === 'tour') {
-    showToast(`Loading broadcast tournament ${parsed.id}...`);
-    await selectFeaturedTournament(parsed.id, null, { userPicked: false });
-    return;
-  }
-
-  const roundId = parsed.id;
-  state.userPinnedRound = true;
-  showToast(`Connecting to broadcast round ${roundId}...`);
-
-  try {
-    const info = await fetchBroadcastRoundById(roundId);
-    if (info?.tour?.id) {
-      await selectFeaturedTournament(info.tour.id, roundId, { userPicked: true });
-      if (state.liveRoundGames.length) {
-        showToast(`Loaded ${state.liveRoundGames.length} game(s)`);
-      } else {
-        showToast(`Loaded ${info.tour.name} (${info.round?.name || roundId})`);
-      }
-      return;
-    }
-    if (info?.tour || info?.round) {
-      state.featuredTour = {
-        tour: info.tour || { id: '', name: `Custom Broadcast (${roundId})` },
-        rounds: info.round ? [info.round] : [],
-      };
-      state.lastTourRefreshAt = Date.now();
-      state.liveRoundId = roundId;
-      state.liveRoundName = `${info.tour?.name || 'Broadcast'} · ${info.round?.name || roundId}`;
-      renderTournamentRoundsTable();
-      updateSpotlightBanner();
-    }
-  } catch (_) {
-    state.liveRoundId = roundId;
-    state.liveRoundName = `Custom Broadcast (${roundId})`;
-  }
-
-  await pollActiveRoundPgn();
-  if (state.liveRoundGames.length) {
-    showToast(`Loaded ${state.liveRoundGames.length} game(s)`);
+/** Refresh button: whatever is on screen. */
+export function refreshLiveNow() {
+  if (state.liveView === 'event') {
+    state.liveCountdown = POLL_SECONDS;
+    refreshFeaturedTournament({ silent: false });
+    pollActiveRoundPgn();
   } else {
-    showToast('No games found for that Round ID (verify URL)', true);
+    discoverAndSyncLiveBroadcasts();
   }
 }
 
 export function startLivePollTimer() {
-  const updateBadge = (text) => {
-    const badge = document.getElementById('liveCountdownBadge');
-    if (badge) badge.textContent = text;
+  const badge = (text) => {
+    const el = document.getElementById('liveCountdownBadge');
+    if (el) el.textContent = text;
   };
 
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) return;
+      if (Date.now() - state.lastEventsRefreshAt >= EVENTS_REFRESH_INTERVAL_MS) discoverAndSyncLiveBroadcasts();
       if (state.featuredTour?.tour?.id && Date.now() - state.lastTourRefreshAt >= 30_000) {
         refreshFeaturedTournament({ silent: true });
       }
-      if (state.liveAutoPoll && state.liveRoundId && !isSelectedRoundFinished()) {
-        state.liveCountdown = 15;
-        updateBadge(`${state.liveCountdown}s`);
+      if (state.liveAutoPoll && roundsToPoll().length) {
+        state.liveCountdown = POLL_SECONDS;
         pollActiveRoundPgn();
       }
     });
@@ -383,29 +407,23 @@ export function startLivePollTimer() {
 
   setInterval(() => {
     if (typeof document !== 'undefined' && document.hidden) return;
-
-    if (
-      state.featuredTour?.tour?.id &&
-      Date.now() - state.lastTourRefreshAt >= TOUR_REFRESH_INTERVAL_MS
-    ) {
+    if (state.lastEventsRefreshAt && Date.now() - state.lastEventsRefreshAt >= EVENTS_REFRESH_INTERVAL_MS) {
+      discoverAndSyncLiveBroadcasts();
+    }
+    if (state.liveView === 'event' && state.featuredTour?.tour?.id && Date.now() - state.lastTourRefreshAt >= TOUR_REFRESH_INTERVAL_MS) {
       refreshFeaturedTournament({ silent: true });
     }
-
-    if (isSelectedRoundFinished()) {
-      updateBadge('Final');
-      return;
-    }
-
+    syncPollControls();
+    if (!roundsToPoll().length) return;
     if (!state.liveAutoPoll) {
-      updateBadge('Paused');
+      badge('Paused');
       return;
     }
-
     state.liveCountdown--;
     if (state.liveCountdown <= 0) {
-      state.liveCountdown = 15;
+      state.liveCountdown = POLL_SECONDS;
       pollActiveRoundPgn();
     }
-    updateBadge(`${state.liveCountdown}s`);
+    badge(`${state.liveCountdown}s`);
   }, 1000);
 }

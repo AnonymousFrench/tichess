@@ -124,12 +124,9 @@ function consumeSyncErrorFromUrl() {
   }
 }
 
+/** Sign-in URL that brings you back to the page you are on (the session works on every page). */
 export function getLoginUrl(returnTo = null) {
-  const path =
-    returnTo ||
-    (typeof window !== 'undefined' && window.location.pathname.endsWith('repertoire.html')
-      ? '/repertoire.html'
-      : '/');
+  const path = returnTo || (typeof window !== 'undefined' ? window.location.pathname || '/' : '/');
   return `/api/auth/login?returnTo=${encodeURIComponent(path)}`;
 }
 

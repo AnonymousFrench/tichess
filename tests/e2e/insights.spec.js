@@ -69,19 +69,33 @@ test('Insights downloads a Lichess account, explains it, and hands positions to 
   await expect(page.locator('#view')).toContainText('French Defense is costing you points as White');
 
   // Every tab renders.
-  for (const tab of ['games', 'explorer', 'openings', 'opponents', 'activity', 'rating']) {
+  for (const tab of ['openings', 'games', 'opponents', 'progress', 'overview']) {
     await page.click(`#toolbar [data-act=tab][data-v=${tab}]`);
     await expect(page.locator('#view')).not.toBeEmpty();
   }
 
+  // A finding leads straight to the games behind it.
+  const french = page.locator('[data-act=takeaway-games]').first();
+  await french.click();
+  await expect(page.locator('#toolbar [aria-current=page]')).toHaveText('Games');
+  await expect(page.locator('[data-act=games-clear]')).toHaveCount(1);
+  await expect(page.locator('#view')).toContainText('80 games');
+  await page.click('[data-act=games-clear]');
+
   // Filters narrow the data.
-  await page.selectOption('#flt-tc', 'bullet');
-  await page.click('#toolbar [data-act=tab][data-v=games]');
+  await page.click('#toolbar [data-act=set-filter][data-k=tc][data-v=bullet]');
   await expect(page.locator('#view')).toContainText('60 games');
+  await page.click('#btnMoreFilters');
+  await page.selectOption('#flt-rated', 'casual');
+  await expect(page.locator('#btnMoreFilters')).toContainText('1');
+  await expect(page.locator('#view')).toContainText('No games match');
+  await page.keyboard.press('Escape');
   await page.click('[data-act=clear-filters]');
 
-  // Explorer drills down and opens the line in the Studio.
-  await page.click('#toolbar [data-act=tab][data-v=explorer]');
+  // Openings: pick an opening, walk its moves, and open the line in the Studio.
+  await page.click('#toolbar [data-act=tab][data-v=openings]');
+  await page.click('[data-act=op-pick] >> nth=0');
+  await page.click('[data-act=ex-goto][data-i="0"] >> nth=0');
   await page.click('tr[data-act=ex-move] >> nth=0');
   await expect(page.locator('[data-act=ex-goto]')).toContainText(['Start', '1.e4']);
   const [studio] = await Promise.all([context.waitForEvent('page'), page.click('[data-act=ex-studio]')]);

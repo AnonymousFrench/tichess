@@ -15,6 +15,7 @@ import {
   lookupRepertoirePosition,
   summarizeRepertoire,
   buildMergedRepertoireTree,
+  bookStatus,
 } from '../src/repertoire/studioPanel.js';
 
 // A tiny synthetic repertoire (1.e4 e5 2.Nf3 for White). No real prep here:
@@ -222,5 +223,28 @@ describe('main studio repertoire lookup', () => {
     const mergedBlack = buildMergedRepertoireTree(rep, { colorFilter: 'b' });
     expect(mergedBlack.children.map((c) => c.san)).toEqual(['e4']);
     expect(mergedBlack.children[0].children.map((c) => c.san).sort()).toEqual(['e5', 'e6']);
+  });
+
+  it('tells whether the board is in the repertoire and where it left it', () => {
+    const rep = sampleRepertoire();
+    const idx = buildRepertoireFenIndex(rep);
+    const f = rep.pos.map((p) => p.f);
+    const node = (fen, san, moveNum, color) => ({ fen, san, moveNum, color });
+    const root = node(f[0]);
+    const e4 = node(f[1], 'e4', 1, 'w');
+    const e5 = node(f[2], 'e5', 1, 'b');
+    const nf3 = node(f[3], 'Nf3', 2, 'w');
+    expect(bookStatus(idx, rep, {}, [root, e4, e5, nf3])).toMatchObject({ inBook: true, ply: 3 });
+
+    // 2.Bc4 instead of the prepared 2.Nf3: out of book, expected move is yours.
+    const bc4 = node('rnbqkbnr/pppp1ppp/8/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR b KQkq - 1 2', 'Bc4', 2, 'w');
+    const out = bookStatus(idx, rep, {}, [root, e4, e5, bc4]);
+    expect(out).toMatchObject({ inBook: false, lastBookIndex: 2, yours: true });
+    expect(out.played.san).toBe('Bc4');
+    expect(out.expected.map((m) => m.san)).toEqual(['Nf3']);
+
+    // Past the end of a prepared line there is nothing to deviate from.
+    const nc6 = node('r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3', 'Nc6', 2, 'b');
+    expect(bookStatus(idx, rep, {}, [root, e4, e5, nf3, nc6])).toBeNull();
   });
 });

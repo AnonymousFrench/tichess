@@ -54,10 +54,11 @@ import {
 } from './engines/gameReview.js';
 import {
   discoverAndSyncLiveBroadcasts,
-  renderTournamentRoundsTable,
-  renderAllBroadcastsList,
+  renderLiveHub,
   loadCustomBroadcastFromInput,
-  openFeaturedLiveGame,
+  onLiveSearchInput,
+  openLiveFromHeader,
+  refreshLiveNow,
   startLivePollTimer,
 } from './live/liveEvents.js';
 import { refreshReferenceExplorer, renderMasterGamesTable } from './explorer/explorer.js';
@@ -88,6 +89,7 @@ import {
 } from './sync/cloudSync.js';
 import { mountModals } from './ui/modals.js';
 import { mountAppNav } from './shared/appNav.js';
+import { mountAccount } from './shared/account.js';
 import {
   initLayout,
   applyDockLayout,
@@ -133,19 +135,40 @@ function renderLayoutMenus() {
   }
   const themesEl = document.getElementById('boardThemeItems');
   if (themesEl) {
+    const paint = () =>
+      themesEl.querySelectorAll('[data-theme]').forEach((b) => b.classList.toggle('is-active', b.dataset.theme === layout.boardTheme));
     themesEl.innerHTML = Object.entries(BOARD_THEMES)
       .map(
         ([id, t]) =>
-          `<button class="menu-item" data-theme="${id}"><span class="flex items-center gap-2"><span class="inline-flex w-6 h-3 rounded-sm overflow-hidden"><i class="flex-1" style="background:${t.light}"></i><i class="flex-1" style="background:${t.dark}"></i></span>${t.label}</span><span data-theme-chk="${id}" class="text-em font-mono">${layout.boardTheme === id ? '✓' : ''}</span></button>`
+          `<button class="menu-swatch" data-theme="${id}" title="${t.label}" aria-label="${t.label} board"><i style="background:${t.light}"></i><i style="background:${t.dark}"></i></button>`
       )
       .join('');
     themesEl.querySelectorAll('[data-theme]').forEach((btn) => {
       btn.onclick = (e) => {
         e.stopPropagation();
         setBoardTheme(btn.dataset.theme);
+        paint();
       };
     });
+    paint();
   }
+}
+
+/** Start the current board over from the initial position (menu item and the `n` key). */
+function resetCurrentBoard() {
+  const t = getActiveTab();
+  cancelGameReview();
+  if (t.meta || t.liveMeta) t.title = `Analysis ${state.tabs.indexOf(t) + 1}`;
+  t.root = createNode({ fen: START_FEN });
+  t.current = t.root;
+  t.review = null;
+  t.meta = null;
+  t.liveMeta = null;
+  t.autoFollow = false;
+  state.selectedSq = null;
+  state.legalTargets = [];
+  emitPositionChanged();
+  showToast('New board');
 }
 
 function switchHub(hubName) {
@@ -164,7 +187,8 @@ function switchHub(hubName) {
   ['live', 'masters', 'scouted', 'repertoire'].forEach((k) =>
     document.getElementById(`hub-${k}`).classList.toggle('hidden', k !== hubName)
   );
-  document.getElementById('livePollBar').classList.toggle('hidden', hubName !== 'live');
+  if (hubName === 'live') renderLiveHub();
+  else document.getElementById('livePollBar').classList.add('hidden');
   if (hubName === 'masters') renderMasterGamesTable();
   if (hubName === 'scouted') renderScoutedGamesTable();
   if (hubName === 'repertoire') renderStudioRepertoirePanel();
@@ -187,8 +211,6 @@ function openModal(id) {
 }
 
 function renderCloudSyncUI(snap) {
-  const dot = document.getElementById('cloudSyncDot');
-  const lbl = document.getElementById('cloudSyncLabel');
   const badge = document.getElementById('settingsSyncStatusBadge');
   const desc = document.getElementById('settingsSyncDesc');
   const btnSignIn = document.getElementById('btnSettingsSignIn');
@@ -196,16 +218,6 @@ function renderCloudSyncUI(snap) {
   const btnSignOut = document.getElementById('btnSettingsSignOut');
 
   if (snap.authenticated && snap.user) {
-    if (dot) {
-      dot.className = `w-2 h-2 rounded-full ${
-        snap.status === 'syncing'
-          ? 'bg-cy live-dot'
-          : snap.status === 'error' || snap.status === 'offline'
-            ? 'bg-am'
-            : 'bg-em'
-      }`;
-    }
-    if (lbl) lbl.textContent = snap.status === 'syncing' ? 'Syncing…' : snap.user.username;
     if (badge) {
       badge.textContent =
         snap.status === 'syncing'
@@ -222,14 +234,12 @@ function renderCloudSyncUI(snap) {
     if (desc) {
       desc.textContent = snap.error
         ? snap.error
-        : `Signed in as ${snap.user.username}. Your repertoire, drill progress, and scouted player list sync automatically between phone and computer.`;
+        : `Signed in as ${snap.user.username} on every tichess page. Your repertoire, drill progress and scouted players sync across your devices.`;
     }
     if (btnSignIn) btnSignIn.classList.add('hidden');
     if (btnSyncNow) btnSyncNow.classList.remove('hidden');
     if (btnSignOut) btnSignOut.classList.remove('hidden');
   } else if (snap.configured) {
-    if (dot) dot.className = 'w-2 h-2 rounded-full bg-cy';
-    if (lbl) lbl.textContent = 'Sign in';
     if (badge) {
       badge.textContent = 'Ready';
       badge.className = 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel text-cy';
@@ -237,7 +247,7 @@ function renderCloudSyncUI(snap) {
     if (desc) {
       desc.textContent =
         snap.error ||
-        'Sign in with Lichess (zero scopes needed) to automatically sync your opening repertoire, spaced-repetition progress, and scouted player list between phone and desktop.';
+        'One sign-in for the whole site (no permissions requested): your games in Insights, your explorer here in the Studio, and your repertoire and drill progress on every device.';
     }
     if (btnSignIn) {
       btnSignIn.classList.remove('hidden');
@@ -246,8 +256,6 @@ function renderCloudSyncUI(snap) {
     if (btnSyncNow) btnSyncNow.classList.add('hidden');
     if (btnSignOut) btnSignOut.classList.add('hidden');
   } else {
-    if (dot) dot.className = 'w-2 h-2 rounded-full bg-txtMuted/50';
-    if (lbl) lbl.textContent = 'Sync';
     if (badge) {
       badge.textContent = 'Local Only';
       badge.className = 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel text-txtMuted';
@@ -284,16 +292,9 @@ function toggleSfCloud() {
   document.getElementById('btnSfCloud').className = state.sf.cloudEnabled
     ? 'px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 text-[10px] font-medium'
     : 'px-1.5 py-0.5 rounded bg-surface text-txtMuted border border-borderSubtle text-[10px] font-medium';
-  document.getElementById('chkCloudMenu').textContent = state.sf.cloudEnabled ? '✓' : '';
   triggerSfAnalysis();
 }
 
-function updateTokenDot() {
-  const d = document.getElementById('tokenDot');
-  if (!d) return;
-  d.classList.toggle('bg-em', !!state.lichessToken);
-  d.classList.toggle('bg-am', !state.lichessToken);
-}
 
 function bindEvents() {
   // Dropdowns
@@ -319,63 +320,37 @@ function bindEvents() {
     copyText(url, 'Shareable link copied');
   };
 
-  // Menu Actions
-  document.getElementById('actNewTab').onclick = () => addBoardTab(`Analysis ${state.tabs.length + 1}`);
+  // Settings menu
   document.getElementById('actLoadModal').onclick = () => openModal('loadModal');
   document.getElementById('actImportPgnMenu').onclick = () => document.getElementById('globalPgnInput').click();
-  document.getElementById('actExportPgn').onclick = () => copyText(exportTreeToPgn(getActiveTab()), 'Exported PGN');
-  document.getElementById('actShareLink').onclick = copyShareLink;
-  document.getElementById('actResetTab').onclick = () => {
-    const t = getActiveTab();
-    cancelGameReview();
-    t.root = createNode({ fen: START_FEN });
-    t.current = t.root;
-    t.review = null;
-    emitPositionChanged();
-  };
-  document.getElementById('actFlipBoard').onclick = flipBoard;
-  document.getElementById('actPromoteVar').onclick = promoteVar;
-  document.getElementById('actDeleteVar').onclick = deleteVar;
-  document.getElementById('actClearDrawings').onclick = () => {
-    state.userHighlights.clear();
-    state.userArrows = [];
-    renderBoard();
-  };
-  document.getElementById('actToggleCoords').onclick = () => {
+  document.getElementById('actExportPgn').onclick = () => copyText(exportTreeToPgn(getActiveTab()), 'PGN copied');
+  document.getElementById('actResetTab').onclick = resetCurrentBoard;
+  document.getElementById('actToggleCoords').onclick = (e) => {
+    e.stopPropagation();
     state.showCoords = !state.showCoords;
     document.getElementById('chkCoords').textContent = state.showCoords ? '✓' : '';
     renderBoard();
   };
-  document.getElementById('actToggleArrows').onclick = () => {
+  document.getElementById('actToggleArrows').onclick = (e) => {
+    e.stopPropagation();
     state.showEngineArrows = !state.showEngineArrows;
     document.getElementById('chkArrows').textContent = state.showEngineArrows ? '✓' : '';
     renderArrows();
   };
-  document.getElementById('actToggleEvalBar').onclick = () => {
+  document.getElementById('actToggleEvalBar').onclick = (e) => {
+    e.stopPropagation();
     state.showEvalBar = !state.showEvalBar;
     document.getElementById('evalBarContainer').classList.toggle('hidden', !state.showEvalBar);
     document.getElementById('chkEvalBar').textContent = state.showEvalBar ? '✓' : '';
   };
-  document.getElementById('actToggleBothEngines').onclick = toggleBothEngines;
-  document.getElementById('actToggleCloudMenu').onclick = toggleSfCloud;
-  document.getElementById('actOpenBridgeSettings').onclick = () => openModal('settingsModal');
-  document.getElementById('btnMenuSettings').onclick = () => openModal('settingsModal');
-  document.getElementById('btnTokenPill').onclick = () => openModal('settingsModal');
-  document.getElementById('btnCloudSyncPill').onclick = () => {
-    const snap = getCloudSyncState();
-    if (snap.configured && !snap.authenticated) {
-      window.location.href = getLoginUrl('/');
-    } else {
-      openModal('settingsModal');
-    }
-  };
+  document.getElementById('actOpenSettings').onclick = () => openModal('settingsModal');
   document.getElementById('btnSettingsSignIn').onclick = () => {
     const snap = getCloudSyncState();
     if (!snap.configured) {
       showToast('Connect Neon Postgres in Vercel Storage to enable cloud sync', true);
       return;
     }
-    window.location.href = getLoginUrl('/');
+    window.location.href = getLoginUrl();
   };
   document.getElementById('btnSettingsSyncNow').onclick = async () => {
     const r = await syncNow();
@@ -386,18 +361,11 @@ function bindEvents() {
     showToast('Signed out (local data kept in this browser)');
   };
 
-  // Quick-Jump & Left Rail
+  // Live quick jump: opens the live events list (or the event you are following)
   document.getElementById('btnLiveQuickJump').onclick = () => {
     switchHub('live');
-    if (state.liveRoundGames.length) openFeaturedLiveGame();
+    openLiveFromHeader();
   };
-  document.getElementById('railBoard').onclick = () =>
-    document.getElementById('chessboard').scrollIntoView({ behavior: 'smooth' });
-  document.getElementById('railLive').onclick = () => switchHub('live');
-  document.getElementById('railScout').onclick = () => openModal('scoutModal');
-  document.getElementById('railRepertoire').onclick = () => switchHub('repertoire');
-  document.getElementById('railImportPgn').onclick = () => document.getElementById('globalPgnInput').click();
-  document.getElementById('railSettings').onclick = () => openModal('settingsModal');
   document.getElementById('globalPgnInput').onchange = (e) => {
     if (e.target.files?.[0]) {
       handlePgnFileImport(e.target.files[0]);
@@ -488,29 +456,15 @@ function bindEvents() {
 
   // Top-Right Hub
   document.querySelectorAll('.hub-tab').forEach((b) => (b.onclick = () => switchHub(b.dataset.hub)));
-  document.getElementById('btnWatchFeatured').onclick = openFeaturedLiveGame;
-  document.getElementById('btnSyncLiveNow').onclick = () => {
-    state.liveCountdown = 15;
-    discoverAndSyncLiveBroadcasts();
-  };
+  document.getElementById('btnSyncLiveNow').onclick = refreshLiveNow;
   document.getElementById('chkLiveAutoPoll').onchange = (e) => {
     state.liveAutoPoll = e.target.checked;
   };
-  document.getElementById('btnLiveSubRounds').onclick = () => {
-    document.getElementById('btnLiveSubRounds').className = 'px-2 py-0.5 rounded bg-em/20 text-em font-semibold';
-    document.getElementById('btnLiveSubAll').className = 'px-2 py-0.5 rounded text-txtMuted hover:text-txt font-medium';
-    document.getElementById('liveScheduleWrap').classList.remove('hidden');
-    document.getElementById('liveAllBroadcastsWrap').classList.add('hidden');
+  document.getElementById('customBroadcastInput').oninput = onLiveSearchInput;
+  document.getElementById('liveSearchForm').onsubmit = (e) => {
+    e.preventDefault();
+    loadCustomBroadcastFromInput();
   };
-  document.getElementById('btnLiveSubAll').onclick = () => {
-    document.getElementById('btnLiveSubAll').className = 'px-2 py-0.5 rounded bg-cy/20 text-cy font-semibold';
-    document.getElementById('btnLiveSubRounds').className = 'px-2 py-0.5 rounded text-txtMuted hover:text-txt font-medium';
-    document.getElementById('liveAllBroadcastsWrap').classList.remove('hidden');
-    document.getElementById('liveScheduleWrap').classList.add('hidden');
-    renderAllBroadcastsList();
-  };
-  document.getElementById('broadcastSearchInput').oninput = renderAllBroadcastsList;
-  document.getElementById('btnLoadCustomBroadcast').onclick = loadCustomBroadcastFromInput;
 
   // Workspace Panels Configurator (close X buttons & Panels menu)
   const resetPanels = () => {
@@ -546,9 +500,14 @@ function bindEvents() {
       showToast('The board is as big as the screen allows. Hide or move the panel under it to go bigger.');
     }
   };
-  document.getElementById('actBoardLarger').onclick = largerBoard;
-  document.getElementById('actBoardSmaller').onclick = () => nudgeBoard(-48);
-  document.getElementById('actBoardFit').onclick = fitBoardToScreen;
+  // Size buttons keep the menu open so you can click a few times and watch the board.
+  const keepOpen = (fn) => (e) => {
+    e.stopPropagation();
+    fn();
+  };
+  document.getElementById('actBoardLarger').onclick = keepOpen(largerBoard);
+  document.getElementById('actBoardSmaller').onclick = keepOpen(() => nudgeBoard(-48));
+  document.getElementById('actBoardFit').onclick = keepOpen(fitBoardToScreen);
   document.getElementById('actShortcuts').onclick = () => openModal('shortcutsModal');
   const sfLines = document.getElementById('sfLinesSelect');
   const sfDepth = document.getElementById('sfDepthSelect');
@@ -703,16 +662,14 @@ function bindEvents() {
   document.getElementById('btnSaveToken').onclick = () => {
     state.lichessToken = document.getElementById('inputLichessToken').value.trim();
     localStorage.setItem('cms_lichess_token', state.lichessToken);
-    updateTokenDot();
-    showToast('Lichess token saved');
+      showToast('Lichess token saved');
     refreshReferenceExplorer();
   };
   document.getElementById('btnClearToken').onclick = () => {
     state.lichessToken = '';
     localStorage.removeItem('cms_lichess_token');
     document.getElementById('inputLichessToken').value = '';
-    updateTokenDot();
-    showToast('Token cleared');
+      showToast('Token cleared');
     refreshReferenceExplorer();
   };
   document.getElementById('btnConnectLc0Ws').onclick = () => {
@@ -770,6 +727,9 @@ function bindEvents() {
       emitPositionChanged();
     } else if (e.key === 'f' || e.key === 'F') {
       flipBoard();
+    } else if ((e.key === 'n' || e.key === 'N') && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      resetCurrentBoard();
     } else if (e.key === ']') {
       largerBoard();
     } else if (e.key === '[') {
@@ -827,15 +787,15 @@ function openSharedFromHash() {
 
 async function bootstrap() {
   mountAppNav('studio');
+  mountAccount();
   mountModals();
   setLc0SettingsHandler(() => openModal('settingsModal'));
-  updateTokenDot();
   initBoardInteractions();
   bindEvents();
   renderLayoutMenus();
   initLayout(applyPanelLayout);
   applyPanelLayout();
-  renderTournamentRoundsTable();
+  renderLiveHub();
 
   await reloadCollections();
   await initStudioRepertoire();

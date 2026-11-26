@@ -178,7 +178,8 @@ export function yearCalendar(year, dayMap, { maxN } = {}) {
     if (v && v.n) {
       const s = Math.max(4, Math.round(cell * Math.sqrt(Math.min(1, v.n / max))));
       const o = (cell - s) / 2;
-      rects += `<rect x="${x + o}" y="${y + o}" width="${s}" height="${s}" rx="1.5" fill="${scoreColor(v.pts / v.n)}"><title>${key}: ${v.n} game${v.n === 1 ? '' : 's'}, ${Math.round((v.pts / v.n) * 100)}% score</title></rect>`;
+      // The whole cell is the click target, so small days are easy to hit.
+      rects += `<g data-act="day-games" data-day="${key}" style="cursor:pointer"><rect x="${x}" y="${y}" width="${cell}" height="${cell}" fill="transparent"/><rect x="${x + o}" y="${y + o}" width="${s}" height="${s}" rx="1.5" fill="${scoreColor(v.pts / v.n)}"/><title>${key}: ${v.n} game${v.n === 1 ? '' : 's'}, ${Math.round((v.pts / v.n) * 100)}% score. Click to see them.</title></g>`;
     }
   }
   const dayLabels = ['Mon', 'Wed', 'Fri']

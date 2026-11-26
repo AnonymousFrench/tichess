@@ -479,6 +479,83 @@ export function explorerNode(games, prefix = [], { color } = {}) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Overview helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+/** The same filters one period earlier ([now - 2p, now - p)); null for "All time". */
+export function previousPeriodGames(games, f = {}, now = Date.now()) {
+  const ms = PERIODS[f.period || 'all']?.ms ?? Infinity;
+  if (!Number.isFinite(ms)) return null;
+  const base = filterGames(games, { ...f, period: 'all' }, now);
+  return base.filter((g) => g.t >= now - 2 * ms && g.t < now - ms);
+}
+
+/** Average own rating in rated games, and performance relative to it. */
+export function ratingContext(games) {
+  let sum = 0;
+  let n = 0;
+  for (const g of games) {
+    if (!g.me || !g.opR) continue;
+    sum += g.me;
+    n++;
+  }
+  const own = n ? Math.round(sum / n) : null;
+  const perf = performance(games);
+  return { own, perf, diff: own !== null && perf !== null ? perf - own : null };
+}
+
+/** Rating change across a series of points (first to last), or null. */
+export function seriesChange(series) {
+  if (!series || series.length < 2) return null;
+  return series[series.length - 1].r - series[0].r;
+}
+
+/** Newest `n` results, oldest first, for a form strip. */
+export function recentForm(games, n = 20) {
+  return [...games].sort((a, b) => b.t - a.t).slice(0, n).reverse();
+}
+
+/**
+ * Openings that stand out for one color, weighted by sample size so a 3-game
+ * fluke never beats a 60-game trend: z = (score - your average) * sqrt(games).
+ */
+export function openingExtremes(games, color, { k = 3 } = {}) {
+  const colorGames = games.filter((g) => g.color === color);
+  const base = wdl(colorGames).score;
+  const minGames = Math.max(5, Math.round(colorGames.length * 0.02));
+  const rows = openings(colorGames, { color, groupBy: 'family', minGames }).map((r) => ({ ...r, z: (r.score - base) * Math.sqrt(r.n) }));
+  const best = rows.filter((r) => r.z > 0.5 && r.score > base).sort((a, b) => b.z - a.z).slice(0, k);
+  const worst = rows.filter((r) => r.z < -0.5 && r.score < base).sort((a, b) => a.z - b.z).slice(0, k);
+  return { base, n: colorGames.length, best, worst, minGames };
+}
+
+/** Score vs what ratings predict, against stronger and weaker opponents (25+ points apart). */
+export function versusStrength(games) {
+  const out = { stronger: { games: [], exp: 0 }, weaker: { games: [], exp: 0 } };
+  for (const g of games) {
+    if (!g.me || !g.opR) continue;
+    const diff = g.opR - g.me;
+    const k = diff >= 25 ? 'stronger' : diff <= -25 ? 'weaker' : null;
+    if (!k) continue;
+    out[k].games.push(g);
+    out[k].exp += expectedScore(g.me, g.opR);
+  }
+  const fin = (b) => ({ ...wdl(b.games), expected: b.games.length ? b.exp / b.games.length : 0 });
+  return { stronger: fin(out.stronger), weaker: fin(out.weaker) };
+}
+
+/** Games whose moves start with `prefix` (SAN tokens, space separated). */
+export function gamesWithPrefix(games, prefix, color = null) {
+  const pre = (prefix || '').trim();
+  return games.filter((g) => {
+    if (color && g.color !== color) return false;
+    if (!pre) return true;
+    if (!g.moves.startsWith(pre)) return false;
+    return g.moves.length === pre.length || g.moves[pre.length] === ' ';
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* Takeaways                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -612,7 +689,7 @@ export function takeaways(games, now = Date.now()) {
       weight: timeLoss.share * 6,
       title: `${pct(timeLoss.share)} of your losses are on time`,
       detail: 'Spending less time in the opening, or a longer time control, would save some of these.',
-      link: { tab: 'activity' },
+      link: { tab: 'games', outcome: 'loss', term: 'time' },
     });
   }
 

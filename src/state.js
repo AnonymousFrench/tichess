@@ -52,10 +52,16 @@ export const state = {
   activeHub: 'live', // 'live' | 'masters' | 'scouted' | 'repertoire'
   liveAutoPoll: true,
   liveCountdown: 15,
-  featuredTour: null, // Full Lichess broadcast tournament object { tour, rounds }
+  liveView: 'events', // 'events' (list of events) | 'event' (one event: rounds and games)
+  liveStatus: 'loading', // events list: 'loading' | 'ok' | 'error'
+  liveSections: { live: [], ongoing: [], upcoming: [], recent: [] },
+  liveSearch: { q: '', results: [], loading: false },
+  lastEventsRefreshAt: 0,
+  featuredTour: null, // The event being viewed: Lichess broadcast tournament { tour, rounds }
   liveRoundId: null,
   liveRoundName: '',
   liveRoundGames: [],
+  liveRoundLoading: false,
   userPinnedRound: false,
   lastTourRefreshAt: 0,
   allBroadcasts: [],

@@ -58,6 +58,62 @@ export function mergeBroadcastLists(topData, searchData, now = Date.now()) {
 }
 
 /**
+ * Events grouped the way people look for them: what is live right now, what is
+ * running between rounds, what is coming, and what just ended (so finished
+ * rounds and games stay one click away). Each event appears once.
+ *   live / ongoing: `/api/broadcast/top` active tours, split by whether a round is on
+ *   upcoming:       `/api/broadcast/top` upcoming tours
+ *   recent:         `/api/broadcast/top` past tours (first page)
+ * A live result from `searchData` that the top list missed joins "live".
+ * Order within a group is Lichess's own ranking (tier, then recency).
+ */
+export function buildEventSections(topData, searchData = null, now = Date.now()) {
+  const seen = new Set();
+  const take = (items) => {
+    const out = [];
+    for (const it of items || []) {
+      const b = parseBroadcastItem(it, now);
+      const key = b.tourId || b.roundId;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ ...b, info: b.tour?.info || null, tier: b.tour?.tier || 0, dates: b.tour?.dates || null });
+    }
+    return out;
+  };
+  const active = take(topData?.active);
+  const upcoming = take(topData?.upcoming);
+  const recent = take(topData?.past?.currentPageResults);
+  const extraLive = take((searchData?.currentPageResults || []).filter((it) => it?.round?.ongoing === true));
+  const all = [...extraLive, ...active];
+  return {
+    live: all.filter((b) => b.status === 'live'),
+    ongoing: all.filter((b) => b.status !== 'live'),
+    upcoming,
+    recent,
+  };
+}
+
+/** True for text that is a Lichess broadcast link or an 8-character id (ids always contain a digit). */
+export function looksLikeBroadcastRef(raw) {
+  const s = (raw || '').trim();
+  if (/lichess\.org\/broadcast\//i.test(s)) return true;
+  return /^[a-zA-Z0-9]{8}$/.test(s) && /\d/.test(s);
+}
+
+/** Round to show when an event opens: the asked-for one, the live one, Lichess's default, the last finished, or the first. */
+export function pickRound(tourData, preferredRoundId = null) {
+  const rounds = tourData?.rounds || [];
+  return (
+    (preferredRoundId && rounds.find((r) => r.id === preferredRoundId)) ||
+    rounds.find((r) => r.ongoing === true) ||
+    (tourData?.defaultRoundId && rounds.find((r) => r.id === tourData.defaultRoundId)) ||
+    [...rounds].reverse().find((r) => r.finished === true) ||
+    rounds[0] ||
+    null
+  );
+}
+
+/**
  * Pick the featured broadcast: prefer a live World Championship, else first
  * genuinely live broadcast, else first available broadcast.
  */

@@ -14,7 +14,7 @@ export function renderBoardTabs() {
   bar.innerHTML = state.tabs
     .map((t) => {
       const active = t.id === state.activeTabId;
-      const liveBadge = t.liveMeta
+      const liveBadge = t.liveMeta && (t.liveMeta.lastResult ?? '*') === '*'
         ? `<span class="w-1.5 h-1.5 rounded-full bg-ro live-dot shrink-0"></span>`
         : '';
       return `
@@ -55,7 +55,7 @@ export function renderBoardTabs() {
   const tab = getActiveTab();
   const followBtn = document.getElementById('btnLiveFollow');
   if (followBtn) {
-    if (tab && tab.liveMeta) {
+    if (tab && tab.liveMeta && (tab.liveMeta.lastResult ?? '*') === '*') {
       followBtn.classList.remove('hidden');
       followBtn.classList.add('inline-flex');
       followBtn.classList.toggle('opacity-50', !tab.autoFollow);
@@ -76,10 +76,11 @@ export function addBoardTab(title, pgnOrFen = '', metaOverride = null, opts = {}
   const finalMeta = metaOverride
     ? { ...metaOverride, eco: metaOverride.eco || meta?.eco || '', opening: metaOverride.opening || meta?.opening || '' }
     : meta;
+  const named = (n) => n && n.trim() && n.trim() !== '?';
   const finalTitle =
     title ||
-    (finalMeta
-      ? `${finalMeta.white.split(',')[0]} - ${finalMeta.black.split(',')[0]}`
+    (finalMeta && (named(finalMeta.white) || named(finalMeta.black))
+      ? `${(finalMeta.white || '?').split(',')[0]} - ${(finalMeta.black || '?').split(',')[0]}`
       : `Analysis ${state.tabs.length + 1}`);
 
   let startNode = opts.jumpEnd ? current : root;

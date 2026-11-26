@@ -40,7 +40,7 @@ const MOCK_CLOUD_CASTLING = {
   pvs: [{ moves: 'e2e4 e7e5 g1f3', cp: 19 }],
 };
 
-test('Stockfish 19 WASM worker works, UI is honest, and rounds table is visible at 1280x720', async ({
+test('Stockfish 19 WASM worker works, UI is honest, and live events lead to rounds and games', async ({
   page,
 }) => {
   const pageErrors = [];
@@ -107,10 +107,18 @@ test('Stockfish 19 WASM worker works, UI is honest, and rounds table is visible 
   expect(sfNps).toContain('nodes');
   expect(sfNps).not.toContain('kn/s');
 
-  // 4. Rounds table has visible rows at 1280x720
-  await expect(page.locator('#roundsTableBody .round-row')).toHaveCount(4);
-  const tableWrapBox = await page.locator('#liveScheduleWrap').boundingBox();
-  expect(tableWrapBox.height).toBeGreaterThanOrEqual(150);
+  // 4. Live hub starts with the list of events; an event shows every round, then its games
+  await expect(page.locator('.live-event-row')).toHaveCount(1);
+  await expect(page.locator('#liveEventsList')).toContainText('Live now');
+  await expect(page.locator('#liveQuickJumpLabel')).toHaveText('FIDE World Chess Championship 2026');
+  await page.click('.live-event-row');
+  await expect(page.locator('.live-round-chip')).toHaveCount(4);
+  await expect(page.locator('.live-round-chip[aria-pressed="true"]')).toHaveText('Game 3');
+  await expect(page.locator('.live-game-row')).toHaveCount(1);
+  await page.click('.live-game-row');
+  await expect(page.locator('#boardTabsBar')).toContainText('Sindarov - Gukesh D');
+  await page.click('#btnLiveBack');
+  await expect(page.locator('.live-event-row')).toHaveCount(1);
 
   expect(pageErrors).toEqual([]);
 });
@@ -160,7 +168,7 @@ test('clicking a cloud PV line with king-to-rook castling (e1h1) plays O-O on th
   await page.goto('/');
 
   // Open Load FEN modal and load the castling position
-  await page.click('[data-menu="file"]');
+  await page.click('[data-menu="settings"]');
   await page.click('#actLoadModal');
   await page.fill('#loadPgnTextarea', CASTLE_FEN);
   await page.click('#btnConfirmLoad');
@@ -292,6 +300,31 @@ test('main site Repertoire hub shows prepared moves for current position and pla
   await page.locator('#hub-repertoire .rep-pos-move').first().click();
   await expect(page.locator('#variationTreeContainer')).toContainText('1.e4');
   await expect(page.locator('#hub-repertoire')).toContainText('e5');
+
+  // The tree follows the board: the current move is highlighted and the status says in book
+  await expect(page.locator('#hub-repertoire .rep-tree-move[data-active]')).toContainText('e4');
+  await expect(page.locator('#hub-repertoire .rep-book-status')).toContainText('In your repertoire');
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.locator('#hub-repertoire .rep-tree-move[data-active]')).toHaveCount(0);
+  await page.keyboard.press('ArrowRight');
+  await page.locator('#hub-repertoire .rep-pos-move').first().click(); // 1...e5
+  await expect(page.locator('#hub-repertoire .rep-tree-move[data-active]')).toContainText('e5');
+
+  // Leaving the prepared line says where, and "Back to book" returns to it
+  await page.click('[data-menu="settings"]');
+  await page.click('#actLoadModal');
+  await page.fill('#loadPgnTextarea', '1. e4 e5 2. Bc4');
+  await page.click('#btnConfirmLoad');
+  await expect(page.locator('#hub-repertoire .rep-book-status')).toContainText('Out of your repertoire at 2.Bc4');
+  await expect(page.locator('#hub-repertoire .rep-book-status')).toContainText('Nf3');
+  await page.click('.rep-back-to-book');
+  await expect(page.locator('#hub-repertoire .rep-tree-move[data-active]')).toContainText('e5');
+
+  // "n" starts the current board over
+  await page.locator('#chessboard').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('n');
+  await expect(page.locator('#variationTreeContainer')).not.toContainText('Bc4');
+  await expect(page.locator('#hub-repertoire .rep-book-status')).toHaveCount(0);
   expect(pageErrors).toEqual([]);
 });
 
@@ -343,7 +376,7 @@ test('Game Review evaluates a loaded game locally, renders eval graph, and jumps
   await page.goto('/');
 
   // Load Fool's Mate via Load PGN modal
-  await page.click('[data-menu="file"]');
+  await page.click('[data-menu="settings"]');
   await page.click('#actLoadModal');
   await page.fill('#loadPgnTextarea', '1. f3 e5 2. g4 Qh4#');
   await page.click('#btnConfirmLoad');
@@ -388,7 +421,7 @@ test('Repertoire hub imports a Lichess Study PGN, saves a board line, and opens 
   await expect(page.locator('#hub-repertoire')).toContainText('Center control');
 
   // Load a new board line 1. d4 d5 2. c4 and save it into the repertoire
-  await page.click('[data-menu="file"]');
+  await page.click('[data-menu="settings"]');
   await page.click('#actLoadModal');
   await page.fill('#loadPgnTextarea', '1. d4 d5 2. c4');
   await page.click('#btnConfirmLoad');
@@ -554,7 +587,8 @@ test('Cloud Sync pulls repertoire & scout targets on fresh device and pushes edi
 
   // 1. Fresh browser on main studio automatically pulls repertoire and displays signed-in username
   await page.goto('/');
-  await expect(page.locator('#cloudSyncLabel')).toContainText('PhoneSyncUser', { timeout: 10_000 });
+  await expect(page.locator('header [data-account] .ta-name')).toHaveText('PhoneSyncUser', { timeout: 10_000 });
+  await expect(page.locator('header [data-account] .ta-signin')).toHaveCount(0);
 
   // My Games tab appears next to Masters OTB & Lichess DB and switches W/B
   await expect(page.locator('#refSrcPlayer')).toBeVisible();
@@ -573,7 +607,7 @@ test('Cloud Sync pulls repertoire & scout targets on fresh device and pushes edi
   await page.click('#scoutModal .modal-close');
 
   // Adding a board line automatically pushes the updated repertoire to /api/sync
-  await page.click('[data-menu="file"]');
+  await page.click('[data-menu="settings"]');
   await page.click('#actLoadModal');
   await page.fill('#loadPgnTextarea', '1. d4 d5');
   await page.click('#btnConfirmLoad');
@@ -586,7 +620,14 @@ test('Cloud Sync pulls repertoire & scout targets on fresh device and pushes edi
   // 2. Opening repertoire.html automatically displays cloud sync status without empty importer
   await page.goto('/repertoire.html');
   await expect(page.locator('#v-train')).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator('#sync')).toContainText('PhoneSyncUser');
+  // Same account, no second sign-in: the shared header control shows it on every page.
+  await expect(page.locator('[data-account] .ta-name')).toHaveText('PhoneSyncUser');
+  await expect(page.locator('#sync')).toContainText('synced');
+
+  // 3. Insights picks up the same Lichess account by itself.
+  await page.goto('/insights.html');
+  await expect(page.locator('[data-account] .ta-name')).toHaveText('PhoneSyncUser');
+  await expect(page.locator('#hdrRight [data-act="accounts"]')).toHaveAttribute('aria-label', /PhoneSyncUser/, { timeout: 10_000 });
   expect(pageErrors).toEqual([]);
 });
 

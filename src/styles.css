@@ -1,0 +1,277 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+  --color-bg: #0b0f17;
+  --color-panel: #111827;
+  --color-surface: #192234;
+  --color-surfaceHover: #222f46;
+  --color-borderSubtle: #1e293b;
+  --color-borderBright: #334155;
+  --color-txt: #e2e8f0;
+  --color-txtMuted: #94a3b8;
+  --color-em: #10b981;
+  --color-cy: #06b6d4;
+  --color-vi: #8b5cf6;
+  --color-ro: #f43f5e;
+  --color-am: #f59e0b;
+}
+
+:root {
+  --bg: #0b0f17;
+  --panel: #111827;
+  --surface: #192234;
+  --border: #1e293b;
+  --sq-light: #d8dee6;
+  --sq-dark: #64748b;
+  --sq-last-light: #c8db8c;
+  --sq-last-dark: #7fa059;
+  --sq-select: rgba(16, 185, 129, 0.50);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg);
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+@media (min-width: 1024px) {
+  html, body {
+    height: 100vh;
+    overflow: hidden;
+  }
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #263449; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: #3b4f6e; }
+
+/* Chessboard */
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  user-select: none;
+  touch-action: none;
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
+.sq {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.sq.light { background-color: var(--sq-light); }
+.sq.dark  { background-color: var(--sq-dark); }
+.sq.last-light { background-color: var(--sq-last-light); }
+.sq.last-dark  { background-color: var(--sq-last-dark); }
+.sq.selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: var(--sq-select);
+  pointer-events: none;
+  z-index: 2;
+}
+.sq.hl-green::before { content: ''; position: absolute; inset: 0; background-color: rgba(16, 185, 129, 0.52); pointer-events: none; z-index: 2; }
+.sq.hl-red::before   { content: ''; position: absolute; inset: 0; background-color: rgba(244, 63, 94, 0.52); pointer-events: none; z-index: 2; }
+.sq.hl-amber::before { content: ''; position: absolute; inset: 0; background-color: rgba(245, 158, 11, 0.52); pointer-events: none; z-index: 2; }
+.sq.in-check {
+  background: radial-gradient(circle at center, rgba(244, 63, 94, 0.92) 0%, rgba(225, 29, 72, 0.45) 56%, transparent 80%);
+}
+
+.coord-rank {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace;
+  pointer-events: none;
+  line-height: 1;
+  z-index: 3;
+  opacity: 0.85;
+}
+.coord-file {
+  position: absolute;
+  bottom: 2px;
+  right: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace;
+  pointer-events: none;
+  line-height: 1;
+  z-index: 3;
+  opacity: 0.85;
+}
+.sq.light .coord-rank, .sq.light .coord-file { color: var(--sq-dark); }
+.sq.dark  .coord-rank, .sq.dark  .coord-file { color: var(--sq-light); }
+
+.legal-dot {
+  position: absolute;
+  width: 26%;
+  height: 26%;
+  border-radius: 9999px;
+  background-color: rgba(11, 15, 23, 0.28);
+  pointer-events: none;
+  z-index: 4;
+}
+.legal-ring {
+  position: absolute;
+  inset: 5%;
+  border-radius: 9999px;
+  border: 4px solid rgba(11, 15, 23, 0.30);
+  pointer-events: none;
+  z-index: 4;
+}
+.piece-svg {
+  width: 88%;
+  height: 88%;
+  z-index: 5;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.32));
+}
+
+#dragGhost {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9999;
+  transform: translate(-50%, -50%) scale(1.12);
+  display: none;
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.65));
+}
+
+#evalFillWhite {
+  transition: height 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Stacked bars */
+.stat-bar {
+  display: flex;
+  height: 15px;
+  border-radius: 3px;
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace;
+  line-height: 15px;
+  text-align: center;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+.sb-w { background-color: #dce4ec; color: #0f172a; }
+.sb-d { background-color: #64748b; color: #ffffff; }
+.sb-b { background-color: #1e293b; color: #e2e8f0; }
+.sb-win  { background-color: #10b981; color: #052e16; }
+.sb-draw { background-color: #64748b; color: #ffffff; }
+.sb-loss { background-color: #f43f5e; color: #fff1f2; }
+
+.wdl-bar {
+  display: flex;
+  height: 12px;
+  border-radius: 3px;
+  overflow: hidden;
+  font-size: 8px;
+  font-weight: 700;
+  font-family: 'IBM Plex Mono', monospace;
+  line-height: 12px;
+  text-align: center;
+  min-width: 82px;
+}
+
+/* Dropdown menus */
+.menu-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 210px;
+  background-color: #151e2e;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.7);
+  z-index: 60;
+}
+.menu-item {
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: #e2e8f0;
+  transition: background-color 0.1s;
+}
+.menu-item:hover {
+  background-color: #222f46;
+  color: #ffffff;
+}
+.menu-sep {
+  height: 1px;
+  background-color: #1e293b;
+  margin: 4px 0;
+}
+
+/* Compact Tables */
+.pro-table th {
+  position: sticky;
+  top: 0;
+  background-color: #111827;
+  z-index: 5;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  border-bottom: 1px solid #1e293b;
+  padding: 4px 6px;
+}
+.pro-table td {
+  padding: 3.5px 6px;
+  border-bottom: 1px solid rgba(30, 41, 59, 0.55);
+  white-space: nowrap;
+}
+.pro-table tbody tr:hover {
+  background-color: #1b2538;
+}
+
+/* Variation Tree */
+.tree-move {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.1s;
+}
+.tree-move:hover { background-color: #222f46; }
+.tree-move.active { background-color: #10b981; color: #041f15; font-weight: 700; }
+.tree-var { color: #94a3b8; font-size: 11px; }
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.85); }
+}
+.live-dot {
+  animation: pulseDot 1.4s infinite ease-in-out;
+}

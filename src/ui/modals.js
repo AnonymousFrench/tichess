@@ -74,6 +74,11 @@ const MODALS_HTML = `
         </div>
       </div>
 
+      <div id="scoutSyncedTargetsBox" class="hidden p-2.5 rounded bg-em/10 border border-em/30 flex flex-col gap-1.5">
+        <div class="text-[11px] font-semibold text-em">☁ Synced from your other devices</div>
+        <div id="scoutSyncedTargetsList" class="flex flex-wrap gap-1.5"></div>
+      </div>
+
       <div class="p-3 rounded bg-surface/60 border border-borderSubtle flex flex-col gap-2">
         <div class="text-xs font-semibold text-vi">Import Local .PGN Database</div>
         <input id="scPgnPlayerFilter" type="text" placeholder="Optional player name for W/D/L perspective..." class="w-full px-2.5 py-1.5 rounded bg-panel border border-borderSubtle text-xs focus:outline-none focus:border-vi" />
@@ -85,12 +90,28 @@ const MODALS_HTML = `
     </div>
   </div>
 
-  <!-- Settings Modal (Lichess Token + Local UCI WebSocket Bridge + Storage + Licenses) -->
+  <!-- Settings Modal (Cloud Sync + Lichess Token + Local UCI WebSocket Bridge + Storage + Licenses) -->
   <div id="settingsModal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
     <div class="bg-panel border border-borderBright rounded-lg w-full max-w-xl max-h-[90vh] overflow-y-auto p-4 shadow-2xl flex flex-col gap-3.5">
       <div class="flex items-center justify-between">
-        <h2 class="font-bold text-sm">Studio Settings &amp; Local UCI Bridge</h2>
+        <h2 class="font-bold text-sm">Studio Settings, Cloud Sync &amp; Local Bridge</h2>
         <button class="modal-close text-txtMuted hover:text-txt px-1.5" aria-label="Close modal">✕</button>
+      </div>
+
+      <!-- Cloud Sync (Neon Postgres + Sign in with Lichess) -->
+      <div class="p-3 rounded bg-surface/60 border border-cy/35 flex flex-col gap-2">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-xs font-semibold text-cy">☁ Phone ↔ Computer Cloud Sync (Lichess + Neon)</span>
+          <span id="settingsSyncStatusBadge" class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel text-txtMuted">Checking...</span>
+        </div>
+        <p id="settingsSyncDesc" class="text-[11px] text-txtMuted leading-relaxed">
+          Sign in with Lichess (zero scopes needed) to automatically sync your opening repertoire, spaced-repetition drill progress, and scouted player list between phone and desktop.
+        </p>
+        <div class="flex items-center gap-2 flex-wrap">
+          <button id="btnSettingsSignIn" class="px-3 py-1.5 rounded bg-em hover:bg-emerald-400 text-[#041f15] font-semibold text-xs">Sign in with Lichess</button>
+          <button id="btnSettingsSyncNow" class="hidden px-3 py-1.5 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/40 font-semibold text-xs">↻ Sync Now</button>
+          <button id="btnSettingsSignOut" class="hidden px-2.5 py-1.5 rounded bg-ro/15 hover:bg-ro/25 text-ro border border-ro/30 text-xs">Sign out</button>
+        </div>
       </div>
 
       <!-- Lichess Token -->

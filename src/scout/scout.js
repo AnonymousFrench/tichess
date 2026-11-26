@@ -19,6 +19,7 @@ import {
   getLoadedRepertoireState,
   lookupRepertoirePosition,
 } from '../repertoire/studioPanel.js';
+import { recordScoutTarget, getCloudSyncState } from '../sync/cloudSync.js';
 
 function renderWdlBar(w, d, l) {
   const tot = w + d + l || 1;
@@ -178,6 +179,55 @@ export async function reloadCollections(selectId = null) {
   const tot = state.collections.reduce((s, c) => s + (c.gameCount || 0), 0);
   const infoEl = document.getElementById('settingsDbInfo');
   if (infoEl) infoEl.textContent = `${state.collections.length} DB(s) · ${tot} games indexed.`;
+  renderSyncedScoutTargets();
+}
+
+export function renderSyncedScoutTargets() {
+  const box = document.getElementById('scoutSyncedTargetsBox');
+  const list = document.getElementById('scoutSyncedTargetsList');
+  if (!box || !list) return;
+
+  const { scoutTargets } = getCloudSyncState();
+  const existingIds = new Set(state.collections.map((c) => c.id));
+  const pending = (scoutTargets || []).filter((t) => {
+    const cid = `${t.source === 'lichess' ? 'li' : 'cc'}:${t.username.toLowerCase()}`;
+    return !existingIds.has(cid);
+  });
+
+  if (!pending.length) {
+    box.classList.add('hidden');
+    list.innerHTML = '';
+    return;
+  }
+
+  box.classList.remove('hidden');
+  list.innerHTML = pending
+    .map(
+      (t, idx) => `
+      <button class="synced-target-btn px-2 py-1 rounded bg-panel hover:bg-surfaceHover border border-em/40 text-[10.5px] font-mono text-txt flex items-center gap-1.5" data-tidx="${idx}">
+        <span>${escapeHtml(t.username)}</span>
+        <span class="text-[9.5px] ${t.source === 'lichess' ? 'text-cy' : 'text-em'}">${t.source === 'lichess' ? 'Lichess' : 'CC'}</span>
+        <span class="text-em font-bold">↓</span>
+      </button>
+    `
+    )
+    .join('');
+
+  list.querySelectorAll('.synced-target-btn').forEach((btn) => {
+    btn.onclick = () => {
+      const t = pending[parseInt(btn.dataset.tidx, 10)];
+      if (!t) return;
+      if (t.source === 'lichess') {
+        document.getElementById('scLichessUser').value = t.username;
+        if (t.max) document.getElementById('scLichessMax').value = String(t.max);
+        if (typeof t.perfType === 'string') document.getElementById('scLichessPerf').value = t.perfType;
+        runLichessSync();
+      } else {
+        document.getElementById('scChesscomUser').value = t.username;
+        runChessComSync();
+      }
+    };
+  });
 }
 
 export async function runLichessSync() {
@@ -217,6 +267,7 @@ export async function runLichessSync() {
     wrap.classList.add('hidden');
     document.getElementById('scoutModal').classList.add('hidden');
     await reloadCollections(cid);
+    recordScoutTarget({ source: 'lichess', username: user, max, perfType });
     showToast(`Synced ${raw.length} Lichess games for ${user}`);
   } catch (err) {
     wrap.classList.add('hidden');
@@ -272,6 +323,7 @@ export async function runChessComSync() {
     wrap.classList.add('hidden');
     document.getElementById('scoutModal').classList.add('hidden');
     await reloadCollections(cid);
+    recordScoutTarget({ source: 'chesscom', username: user, max: months });
     showToast(`Synced ${raw.length} games for ${user}`);
   } catch (err) {
     wrap.classList.add('hidden');

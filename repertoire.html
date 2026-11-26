@@ -17,6 +17,7 @@
   </nav>
   <span class="sync" id="sync">Loading…</span>
   <div class="toplinks">
+    <button type="button" id="b-sync-auth" hidden>Sign in</button>
     <button type="button" id="b-import" class="hide-sm" hidden>Import</button>
     <button type="button" id="b-export" hidden>Back up</button>
     <a href="./">Analysis ↗</a>
@@ -29,6 +30,10 @@
     <div class="eyebrow">Repertoire trainer</div>
     <h2>Load your repertoire</h2>
     <p class="muted" style="margin:0">Choose a <b>tichess-repertoire</b> JSON file or a <b>PGN / Lichess Study</b> export (variations &amp; comments supported).</p>
+    <div id="imp-cloud-row" class="row" style="gap:10px;align-items:center" hidden>
+      <button type="button" class="btn primary" id="imp-cloud-signin">☁ Sign in with Lichess to sync</button>
+      <span class="muted" style="font-size:13px">Loads your repertoire &amp; drill progress from your other devices</span>
+    </div>
     <div class="row" style="gap:10px;align-items:center;font-size:13px">
       <label class="muted" for="imp-pgn-color">For PGN files, play as:</label>
       <select id="imp-pgn-color" style="padding:4px 8px;border-radius:6px;border:1px solid var(--bd);background:var(--bg);color:var(--ink)">
@@ -41,7 +46,7 @@
       <b>Choose .json or .pgn file</b> or drop it here
     </label>
     <p class="err" id="imp-err" hidden></p>
-    <p class="privacy">Your repertoire stays in this browser. It is never uploaded and is not part of the public tichess site or its code. Use <b>Back up</b> to save your progress to a file, for example to move it to another device.</p>
+    <p class="privacy">Your repertoire stays private in this browser (and optionally syncs to your own account when signed in with Lichess). Use <b>Back up</b> anytime to export a local JSON copy.</p>
   </section>
 
   <!-- TRAIN -->

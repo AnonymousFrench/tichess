@@ -11,6 +11,15 @@ import { parseRepertoireFile, mergeProgress, buildExportFile } from './model.js'
 import { buildRepertoireFromPgn, mergeRepertoires } from './pgnImport.js';
 import { loadRepertoire, saveRepertoire, loadProgress, saveProgress } from './storage.js';
 import { startTrainer } from './app.js';
+import {
+  initCloudSync,
+  onCloudSyncState,
+  onCloudDataPulled,
+  getLoginUrl,
+  pushRepertoireToCloud,
+  scheduleProgressSync,
+  signOutCloudSync,
+} from '../sync/cloudSync.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -18,10 +27,50 @@ function showImporter(error) {
   $('v-import').hidden = false;
   document.querySelector('.tabs-top').hidden = true;
   document.querySelector('.tabbar').hidden = true;
-  $('sync').textContent = '';
   const err = $('imp-err');
   err.hidden = !error;
   err.textContent = error || '';
+}
+
+function renderSyncHeader(snap) {
+  const syncEl = $('sync');
+  const authBtn = $('b-sync-auth');
+  const cloudRow = $('imp-cloud-row');
+
+  if (snap.authenticated && snap.user) {
+    if (syncEl) {
+      syncEl.textContent =
+        snap.status === 'syncing'
+          ? '☁ Syncing…'
+          : snap.status === 'error'
+            ? '☁ Sync error'
+            : snap.status === 'offline'
+              ? '☁ Offline'
+              : `☁ ${snap.user.username}`;
+      syncEl.title = snap.error || 'Synced automatically across devices';
+    }
+    if (authBtn) {
+      authBtn.hidden = false;
+      authBtn.textContent = 'Sign out';
+      authBtn.onclick = async () => {
+        await signOutCloudSync();
+      };
+    }
+    if (cloudRow) cloudRow.hidden = true;
+  } else if (snap.configured) {
+    if (syncEl) syncEl.textContent = 'Local';
+    if (authBtn) {
+      authBtn.hidden = false;
+      authBtn.textContent = 'Sign in';
+      authBtn.onclick = () => {
+        window.location.href = getLoginUrl('/repertoire.html');
+      };
+    }
+    if (cloudRow) cloudRow.hidden = false;
+  } else {
+    if (authBtn) authBtn.hidden = true;
+    if (cloudRow) cloudRow.hidden = true;
+  }
 }
 
 async function importFile(file) {
@@ -36,6 +85,7 @@ async function importFile(file) {
 
   const trimmed = text.trim();
   const looksJson = file.name?.toLowerCase().endsWith('.json') || trimmed.startsWith('{');
+  const updatedAt = Date.now();
 
   if (looksJson) {
     const parsed = parseRepertoireFile(text);
@@ -49,11 +99,12 @@ async function importFile(file) {
       return;
     }
     try {
-      await saveRepertoire(parsed.repertoire, parsed.name);
+      await saveRepertoire(parsed.repertoire, parsed.name, updatedAt);
     } catch (_) {
       showImporter('This browser would not save the repertoire (storage is full or blocked, or this is a private window).');
       return;
     }
+    await pushRepertoireToCloud(parsed.repertoire, parsed.name, updatedAt, merged);
     location.reload();
     return;
   }
@@ -73,11 +124,12 @@ async function importFile(file) {
     : built.repertoire;
   const nextName = existing?.name || built.name;
   try {
-    await saveRepertoire(nextRep, nextName);
+    await saveRepertoire(nextRep, nextName, updatedAt);
   } catch (_) {
     showImporter('This browser would not save the repertoire (storage is full or blocked, or this is a private window).');
     return;
   }
+  await pushRepertoireToCloud(nextRep, nextName, updatedAt, loadProgress());
   location.reload();
 }
 
@@ -99,6 +151,12 @@ function bindImportControls() {
   const drop = $('imp-drop');
   $('imp-file').onchange = (e) => importFile(e.target.files[0]);
   $('imp-file2').onchange = (e) => importFile(e.target.files[0]);
+  const cloudSignIn = $('imp-cloud-signin');
+  if (cloudSignIn) {
+    cloudSignIn.onclick = () => {
+      window.location.href = getLoginUrl('/repertoire.html');
+    };
+  }
   drop.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
@@ -119,19 +177,46 @@ function bindImportControls() {
 
 async function boot() {
   bindImportControls();
+  onCloudSyncState(renderSyncHeader);
+
+  let trainerStarted = false;
+
+  // Check cloud auth + pull before deciding whether to show the empty import screen
+  const syncSnap = await initCloudSync();
+  renderSyncHeader(syncSnap);
+
   const rep = await loadRepertoire();
   if (!rep) {
-    showImporter(null);
+    showImporter(syncSnap?.error || null);
+    onCloudDataPulled((changes) => {
+      if (changes.repertoireUpdated && !trainerStarted) location.reload();
+    });
     return;
   }
+
   $('whoami').textContent = rep.name || '';
   $('b-export').hidden = false;
   $('b-export').onclick = () => exportBackup(rep);
   $('b-import').hidden = false;
   $('b-import').title = 'Load an updated repertoire file. Progress is merged, keeping the most recent result per move.';
   $('b-import').onclick = () => $('imp-file2').click();
+
+  const syncedSaveProgress = (p) => {
+    const ok = saveProgress(p);
+    if (ok) scheduleProgressSync(p);
+    return ok;
+  };
+
+  onCloudDataPulled((changes) => {
+    if (changes.repertoireUpdated) {
+      location.reload();
+    }
+  });
+
   try {
-    startTrainer({ data: rep.repertoire, progress: loadProgress(), saveProgress });
+    trainerStarted = true;
+    startTrainer({ data: rep.repertoire, progress: loadProgress(), saveProgress: syncedSaveProgress });
+    renderSyncHeader(syncSnap);
   } catch (err) {
     console.error(err);
     showImporter('The saved repertoire could not be opened. Import the file again.');

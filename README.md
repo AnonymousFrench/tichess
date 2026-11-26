@@ -62,7 +62,15 @@ Then open **Settings → 2. Local UCI WebSocket Bridge** and connect to `ws://lo
 
 `repertoire.html` (the **Repertoire** link in the menu bar) is a spaced-repetition opening trainer: learn new lines with explanations, review due moves, play through an opening against random replies from your repertoire, drill weak spots, browse the repertoire tree with stored engine lines, and play out positions against Stockfish 19 Lite. **Open in analysis** sends the current line to the main studio.
 
-The app ships **no repertoire data**. Load your own `tichess-repertoire` JSON file on the page; the repertoire is stored in IndexedDB and review progress in `localStorage`, both only in that browser. Use **Back up** to download the repertoire with current progress (for another device or a fresh browser); importing a file merges progress, keeping the most recent result per move. `*repertoire*.json` is git-ignored so a personal file can't be committed by accident.
+The app ships **no repertoire data**. Load your own `tichess-repertoire` JSON file or any PGN / Lichess Study export; the repertoire is stored in IndexedDB and review progress in `localStorage`. Use **Back up** to download a local JSON copy anytime. `*repertoire*.json` is git-ignored so a personal file can't be committed by accident.
+
+## Optional Phone ↔ Computer Cloud Sync (Neon Postgres + Lichess OAuth)
+
+To automatically sync your opening repertoire, spaced-repetition drill progress (conflict-free merge by timestamp), and scouted player list between phone and desktop:
+
+1. In your Vercel project dashboard, open **Storage → Connect Store → Neon Postgres** (free tier). Vercel injects `DATABASE_URL` automatically and redeploys.
+2. Tables (`users`, `user_repertoires`, `user_progress`, `user_scout_targets`) are created automatically on first request — no manual SQL migrations needed.
+3. Click **Sign in** (uses Lichess OAuth 2.0 PKCE with zero scopes — no Lichess app registration or client secret required). Optionally set `SESSION_SECRET` in Vercel Environment Variables for explicit cookie signing (otherwise derived from `DATABASE_URL`).
 
 ## Licenses & Attribution
 

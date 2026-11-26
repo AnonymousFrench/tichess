@@ -64,6 +64,7 @@ import {
   refreshPlayerScout,
   renderScoutedGamesTable,
   reloadCollections,
+  renderSyncedScoutTargets,
   runLichessSync,
   runChessComSync,
   handlePgnFileImport,
@@ -73,6 +74,15 @@ import {
   bindStudioRepertoireSync,
   renderStudioRepertoirePanel,
 } from './repertoire/studioPanel.js';
+import {
+  initCloudSync,
+  getCloudSyncState,
+  onCloudSyncState,
+  onCloudDataPulled,
+  getLoginUrl,
+  syncNow,
+  signOutCloudSync,
+} from './sync/cloudSync.js';
 import { mountModals } from './ui/modals.js';
 
 function switchHub(hubName) {
@@ -100,8 +110,89 @@ function openModal(id) {
     document.getElementById('inputLc0WsUrl').value = state.lc0.wsUrl;
     document.getElementById('inputSfWsUrl').value = state.sf.wsUrl;
     updateBridgeStatusBadge();
+    renderCloudSyncUI(getCloudSyncState());
+  }
+  if (id === 'scoutModal') {
+    renderSyncedScoutTargets();
   }
   document.getElementById(id).classList.remove('hidden');
+}
+
+function renderCloudSyncUI(snap) {
+  const dot = document.getElementById('cloudSyncDot');
+  const lbl = document.getElementById('cloudSyncLabel');
+  const badge = document.getElementById('settingsSyncStatusBadge');
+  const desc = document.getElementById('settingsSyncDesc');
+  const btnSignIn = document.getElementById('btnSettingsSignIn');
+  const btnSyncNow = document.getElementById('btnSettingsSyncNow');
+  const btnSignOut = document.getElementById('btnSettingsSignOut');
+
+  if (snap.authenticated && snap.user) {
+    if (dot) {
+      dot.className = `w-2 h-2 rounded-full ${
+        snap.status === 'syncing'
+          ? 'bg-cy live-dot'
+          : snap.status === 'error' || snap.status === 'offline'
+            ? 'bg-am'
+            : 'bg-em'
+      }`;
+    }
+    if (lbl) lbl.textContent = snap.status === 'syncing' ? 'Syncing…' : snap.user.username;
+    if (badge) {
+      badge.textContent =
+        snap.status === 'syncing'
+          ? 'Syncing...'
+          : snap.status === 'error'
+            ? 'Sync Error'
+            : snap.status === 'offline'
+              ? 'Offline'
+              : `Synced · ${snap.user.username}`;
+      badge.className = `font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel ${
+        snap.status === 'error' ? 'text-ro' : 'text-em'
+      }`;
+    }
+    if (desc) {
+      desc.textContent = snap.error
+        ? snap.error
+        : `Signed in as ${snap.user.username}. Your repertoire, drill progress, and scouted player list sync automatically between phone and computer.`;
+    }
+    if (btnSignIn) btnSignIn.classList.add('hidden');
+    if (btnSyncNow) btnSyncNow.classList.remove('hidden');
+    if (btnSignOut) btnSignOut.classList.remove('hidden');
+  } else if (snap.configured) {
+    if (dot) dot.className = 'w-2 h-2 rounded-full bg-cy';
+    if (lbl) lbl.textContent = 'Sign in';
+    if (badge) {
+      badge.textContent = 'Ready';
+      badge.className = 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel text-cy';
+    }
+    if (desc) {
+      desc.textContent =
+        snap.error ||
+        'Sign in with Lichess (zero scopes needed) to automatically sync your opening repertoire, spaced-repetition progress, and scouted player list between phone and desktop.';
+    }
+    if (btnSignIn) {
+      btnSignIn.classList.remove('hidden');
+      btnSignIn.disabled = false;
+    }
+    if (btnSyncNow) btnSyncNow.classList.add('hidden');
+    if (btnSignOut) btnSignOut.classList.add('hidden');
+  } else {
+    if (dot) dot.className = 'w-2 h-2 rounded-full bg-txtMuted/50';
+    if (lbl) lbl.textContent = 'Sync';
+    if (badge) {
+      badge.textContent = 'Local Only';
+      badge.className = 'font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel text-txtMuted';
+    }
+    if (desc) {
+      desc.textContent =
+        snap.error ||
+        'Cloud sync requires Neon Postgres connected in your Vercel project Storage tab (DATABASE_URL). Once connected, Sign in with Lichess syncs phone and desktop automatically.';
+    }
+    if (btnSignIn) btnSignIn.classList.remove('hidden');
+    if (btnSyncNow) btnSyncNow.classList.add('hidden');
+    if (btnSignOut) btnSignOut.classList.add('hidden');
+  }
 }
 
 function flipBoard() {
@@ -202,6 +293,30 @@ function bindEvents() {
   document.getElementById('actOpenBridgeSettings').onclick = () => openModal('settingsModal');
   document.getElementById('btnMenuSettings').onclick = () => openModal('settingsModal');
   document.getElementById('btnTokenPill').onclick = () => openModal('settingsModal');
+  document.getElementById('btnCloudSyncPill').onclick = () => {
+    const snap = getCloudSyncState();
+    if (snap.configured && !snap.authenticated) {
+      window.location.href = getLoginUrl('/');
+    } else {
+      openModal('settingsModal');
+    }
+  };
+  document.getElementById('btnSettingsSignIn').onclick = () => {
+    const snap = getCloudSyncState();
+    if (!snap.configured) {
+      showToast('Connect Neon Postgres in Vercel Storage to enable cloud sync', true);
+      return;
+    }
+    window.location.href = getLoginUrl('/');
+  };
+  document.getElementById('btnSettingsSyncNow').onclick = async () => {
+    const r = await syncNow();
+    showToast(r.ok ? 'Cloud sync up to date' : r.error || 'Sync failed', !r.ok);
+  };
+  document.getElementById('btnSettingsSignOut').onclick = async () => {
+    await signOutCloudSync();
+    showToast('Signed out (local data kept in this browser)');
+  };
 
   // Quick-Jump & Left Rail
   document.getElementById('btnLiveQuickJump').onclick = () => {
@@ -538,6 +653,24 @@ async function bootstrap() {
   await reloadCollections();
   await initStudioRepertoire();
   bindStudioRepertoireSync();
+
+  onCloudSyncState((snap) => {
+    renderCloudSyncUI(snap);
+    renderSyncedScoutTargets();
+  });
+  onCloudDataPulled(async (changes) => {
+    if (changes.repertoireUpdated || changes.progressUpdated) {
+      await initStudioRepertoire();
+      refreshPlayerScout();
+    }
+    if (changes.scoutTargetsUpdated) {
+      renderSyncedScoutTargets();
+    }
+  });
+  initCloudSync().then((snap) => {
+    if (snap?.error) showToast(snap.error, true);
+  });
+
   if (!openSharedFromHash()) {
     addBoardTab('Analysis 1');
   }

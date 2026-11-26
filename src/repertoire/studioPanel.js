@@ -30,6 +30,7 @@ import {
   analyzeOpponentAgainstRepertoire,
 } from './opponentPrep.js';
 import { dbLookupPositionsBatch } from '../db/indexedDb.js';
+import { pushRepertoireToCloud } from '../sync/cloudSync.js';
 import { playMoveOnTree, renderArrows } from '../board/board.js';
 import { addBoardTab } from '../board/tabs.js';
 
@@ -217,13 +218,15 @@ function updateRepertoireBadge() {
 }
 
 async function persistRepertoire(repertoire, name) {
+  const updatedAt = Date.now();
   try {
-    await saveRepertoire(repertoire, name);
+    await saveRepertoire(repertoire, name, updatedAt);
   } catch (_) {
     showToast('Browser blocked saving repertoire to IndexedDB', true);
     return false;
   }
   await initStudioRepertoire();
+  pushRepertoireToCloud(repertoire, name, updatedAt, loadProgress());
   return true;
 }
 

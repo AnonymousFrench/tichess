@@ -33,7 +33,7 @@ async function kv(mode, fn) {
   }
 }
 
-/** @returns {Promise<{repertoire: object, name: string} | null>} */
+/** @returns {Promise<{repertoire: object, name: string, updatedAt?: number} | null>} */
 export async function loadRepertoire() {
   try {
     const v = await kv('readonly', (s) => s.get('repertoire'));
@@ -43,8 +43,10 @@ export async function loadRepertoire() {
   }
 }
 
-export function saveRepertoire(repertoire, name) {
-  return kv('readwrite', (s) => s.put({ repertoire, name: name || '' }, 'repertoire'));
+export function saveRepertoire(repertoire, name, updatedAt = Date.now()) {
+  return kv('readwrite', (s) =>
+    s.put({ repertoire, name: name || '', updatedAt: Number(updatedAt) || Date.now() }, 'repertoire')
+  );
 }
 
 export function clearRepertoire() {

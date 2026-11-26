@@ -477,5 +477,86 @@ test('Scout x Repertoire Opponent Prep finds gaps, badges moves, preps gap, and 
   expect(pageErrors).toEqual([]);
 });
 
+test('Cloud Sync pulls repertoire & scout targets on fresh device and pushes edits to /api/sync', async ({
+  page,
+}) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  const putBodies = [];
+  await page.route('https://lichess.org/**', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+
+  await page.route('**/api/auth/me', (r) =>
+    r.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        configured: true,
+        authenticated: true,
+        user: { id: 'phonesyncuser', username: 'PhoneSyncUser' },
+      }),
+    })
+  );
+
+  await page.route('**/api/sync', async (r) => {
+    if (r.request().method() === 'GET') {
+      return r.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          user: { id: 'phonesyncuser', username: 'PhoneSyncUser' },
+          repertoire: SAMPLE_REPERTOIRE,
+          repertoireName: 'Cloud Italian',
+          repertoireUpdatedAt: 1_700_000_000_000,
+          progress: {},
+          progressUpdatedAt: 0,
+          scoutTargets: [
+            { source: 'lichess', username: 'DesktopRival', max: 100, perfType: '', updatedAt: 1000 },
+          ],
+          scoutTargetsUpdatedAt: 1000,
+        }),
+      });
+    }
+    if (r.request().method() === 'PUT') {
+      putBodies.push(r.request().postDataJSON());
+      return r.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, updatedAt: Date.now() }),
+      });
+    }
+    return r.continue();
+  });
+
+  // 1. Fresh browser on main studio automatically pulls repertoire and displays signed-in username
+  await page.goto('/');
+  await expect(page.locator('#cloudSyncLabel')).toContainText('PhoneSyncUser', { timeout: 10_000 });
+
+  await page.click('[data-hub="repertoire"]');
+  await expect(page.locator('#hub-repertoire')).toContainText('Cloud Italian');
+  await expect(page.locator('#hub-repertoire')).toContainText('Best by test');
+
+  // Synced opponent target from desktop shows up in Scout modal
+  await page.click('#btnOpenScoutModal');
+  await expect(page.locator('#scoutSyncedTargetsBox')).toContainText('DesktopRival');
+  await page.click('#scoutModal .modal-close');
+
+  // Adding a board line automatically pushes the updated repertoire to /api/sync
+  await page.click('[data-menu="file"]');
+  await page.click('#actLoadModal');
+  await page.fill('#loadPgnTextarea', '1. d4 d5');
+  await page.click('#btnConfirmLoad');
+  await page.click('#btnStudioRepAddLine');
+  await page.fill('#repAddSection', 'Queen Pawn');
+  await page.click('#btnConfirmAddLine');
+
+  await expect.poll(() => putBodies.some((b) => b?.type === 'repertoire')).toBe(true);
+
+  // 2. Opening repertoire.html automatically displays cloud sync status without empty importer
+  await page.goto('/repertoire.html');
+  await expect(page.locator('#v-train')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('#sync')).toContainText('PhoneSyncUser');
+  expect(pageErrors).toEqual([]);
+});
+
+
 
 

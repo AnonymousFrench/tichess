@@ -151,16 +151,38 @@ test('Insights downloads a Lichess account, explains it, and hands positions to 
   await studio.click('.ref-pcol-btn[data-pcol=white]');
   await expect(studio.locator('#refTotalGames')).toContainText('160 games');
 
-  // Mobile Insights header has zero nav overlap and Openings board pins cleanly while scrolling.
+  // Mobile Insights header has zero nav overlap, zero horizontal sliders, and Openings board pins cleanly.
   await page.setViewportSize({ width: 390, height: 700 });
   const mobileIns = await page.evaluate(() => {
     const nav = document.querySelector('header [data-app-nav]').getBoundingClientRect();
     const right = document.getElementById('hdrRight').getBoundingClientRect();
-    return { navRight: Math.round(nav.right), rightLeft: Math.round(right.left) };
+    const tbNav = document.querySelector('#toolbar nav');
+    const fltRow = document.getElementById('insFiltersRow');
+    return {
+      navRight: Math.round(nav.right),
+      rightLeft: Math.round(right.left),
+      tbNavOverflow: tbNav.scrollWidth - tbNav.clientWidth,
+      fltRowOverflow: fltRow.scrollWidth - fltRow.clientWidth,
+    };
   });
   expect(mobileIns.navRight).toBeLessThanOrEqual(mobileIns.rightLeft + 1);
+  expect(mobileIns.tbNavOverflow).toBeLessThanOrEqual(1);
+  expect(mobileIns.fltRowOverflow).toBeLessThanOrEqual(1);
   await expect(page.locator('[data-act=ex-pin]')).toBeVisible();
   await expect(page.locator('[data-act=ex-pin]')).toHaveAttribute('aria-pressed', 'true');
+
+  // Mobile More menu holds Games, Opponents, and Progress; selecting Games updates the More button label.
+  await expect(page.locator('#btnMoreTabs')).toBeVisible();
+  await page.click('#btnMoreTabs');
+  await expect(page.locator('#moreTabsMenu [data-act=tab]')).toHaveText(['Games', 'Opponents', 'Progress']);
+  await page.click('#moreTabsMenu [data-act=tab][data-v=games]');
+  await expect(page.locator('#btnMoreTabs')).toContainText('Games');
+
+  // Mobile compact filter dropdowns filter games without horizontal sliders.
+  await page.selectOption('#flt-tc', 'bullet');
+  await expect(page.locator('#view')).toContainText('60 games');
+  await page.selectOption('#flt-color', 'w');
+  await expect(page.locator('#view')).toContainText('40 games');
 
   expect(errors).toEqual([]);
 });

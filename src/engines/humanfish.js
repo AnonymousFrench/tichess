@@ -136,6 +136,12 @@ export function setEngineTab(tabName) {
         : next === 'maia'
           ? 'Start / Stop Maia 2'
           : 'Start / Stop Stockfish';
+    toggleBtn.className =
+      next === 'hf'
+        ? 'w-5 h-5 rounded bg-em/20 hover:bg-em/30 text-em border border-em/40 flex items-center justify-center text-[10px] shrink-0'
+        : next === 'maia'
+          ? 'w-5 h-5 rounded bg-vi/20 hover:bg-vi/30 text-vi border border-vi/40 flex items-center justify-center text-[10px] shrink-0'
+          : 'w-5 h-5 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/40 flex items-center justify-center text-[10px] shrink-0';
   }
 
   if (next === 'hf') {
@@ -836,5 +842,5 @@ export function renderHumanfishUI() {
 
 export function initHumanfish() {
   updateHumanfishServerBadge();
-  setEngineTab('sf');
+  setEngineTab('maia');
 }

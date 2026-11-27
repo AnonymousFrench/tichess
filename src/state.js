@@ -35,8 +35,8 @@ export const state = {
   showEngineArrows: true,
   showRepertoireArrows: true,
   showEvalBar: true,
-  evalBarSource: 'sf', // 'sf' | 'maia' | 'hf' | 'lc0'
-  engineTab: 'sf', // 'sf' | 'maia' | 'hf'
+  evalBarSource: 'maia', // 'maia' | 'sf' | 'hf' | 'lc0'
+  engineTab: 'maia', // 'maia' | 'sf' | 'hf'
 
   // Configurable workspace panels
   panels: safeGetJsonStorage('tichess_panels_v1', DEFAULT_PANELS),

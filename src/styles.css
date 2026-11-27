@@ -14,7 +14,7 @@ html, body {
   font-family: 'Inter', system-ui, sans-serif;
   font-size: 12px;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 @media (min-width: 1024px) {
@@ -353,6 +353,22 @@ html, body {
 .dock-row-below > [data-dock] { min-height: 180px; }
 .studio-splitter-v, .studio-splitter-h, .panel-grip, .dock-append { display: none; }
 .dock-row.hidden, [data-dock].hidden { display: none; }
+
+@media (max-width: 1023px) {
+  body.mobile-board-pinned #leftCol,
+  body.mobile-board-pinned #rightWorkspaceCol {
+    display: contents;
+  }
+  body.mobile-board-pinned #boardPanel {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.65);
+  }
+  body.mobile-board-pinned .studio-board-wrap {
+    max-width: min(100%, 44dvh);
+  }
+}
 
 @media (min-width: 768px) {
   .dock-row { flex-direction: row; }

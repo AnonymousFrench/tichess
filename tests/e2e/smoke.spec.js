@@ -755,6 +755,39 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
   await page.click('[data-hub="repertoire"]');
   await page.locator('#hub-repertoire .rep-tree-move', { hasText: 'Nf3' }).click();
   await expect(page.locator('#variationTreeContainer')).toContainText('Nf3');
+
+  // Verify pinned board stays fixed at top when scrolling down to tools, and toggles off cleanly
+  await expect(page.locator('#btnPinBoard')).toBeVisible();
+  await expect(page.locator('#btnPinBoard')).toHaveAttribute('aria-pressed', 'true');
+  await page.evaluate(() => window.scrollTo(0, 450));
+  const pinnedBoardTop = await page.evaluate(() => ({
+    scrollY: window.scrollY,
+    boardTop: Math.round(document.getElementById('boardPanel').getBoundingClientRect().top),
+  }));
+  expect(pinnedBoardTop.scrollY).toBeGreaterThanOrEqual(400);
+  expect(pinnedBoardTop.boardTop).toBeLessThanOrEqual(2);
+  await page.click('#btnPinBoard');
+  await expect(page.locator('#btnPinBoard')).toHaveAttribute('aria-pressed', 'false');
+  const unpinnedBoardTop = await page.evaluate(() =>
+    Math.round(document.getElementById('boardPanel').getBoundingClientRect().top)
+  );
+  expect(unpinnedBoardTop).toBeLessThan(-100);
+
+  // Verify /repertoire.html scrolls freely on mobile without body trapping scroll
+  await page.goto('/repertoire.html');
+  await expect(page.locator('#v-train')).toBeVisible({ timeout: 10_000 });
+  const repScroll = await page.evaluate(() => {
+    const bodyStyle = getComputedStyle(document.body);
+    window.scrollTo(0, 260);
+    return {
+      overflowY: bodyStyle.overflowY,
+      overscrollY: bodyStyle.overscrollBehaviorY,
+      scrollY: window.scrollY,
+    };
+  });
+  expect(repScroll.overflowY).toBe('visible');
+  expect(repScroll.overscrollY).toBe('auto');
+  expect(repScroll.scrollY).toBeGreaterThan(100);
   expect(pageErrors).toEqual([]);
 });
 

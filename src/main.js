@@ -788,10 +788,51 @@ function openSharedFromHash() {
   return true;
 }
 
+const MOBILE_PIN_KEY = 'tichess_mobile_pin_board_v1';
+
+function applyMobileBoardPin(pinned) {
+  document.body.classList.toggle('mobile-board-pinned', pinned);
+  const btn = document.getElementById('btnPinBoard');
+  const label = document.getElementById('btnPinBoardLabel');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(pinned));
+    btn.title = pinned
+      ? 'Board fixed at top while scrolling — tap to unpin'
+      : 'Fix board at top while scrolling tools';
+    btn.classList.toggle('bg-em/15', pinned);
+    btn.classList.toggle('text-em', pinned);
+    btn.classList.toggle('border-em/40', pinned);
+    btn.classList.toggle('bg-surface', !pinned);
+    btn.classList.toggle('text-txtMuted', !pinned);
+    btn.classList.toggle('border-borderSubtle', !pinned);
+  }
+  if (label) label.textContent = pinned ? 'Pinned' : 'Pin';
+}
+
+function initMobileBoardPin() {
+  let pinned = true;
+  try {
+    const saved = localStorage.getItem(MOBILE_PIN_KEY);
+    if (saved === '0' || saved === 'false') pinned = false;
+  } catch (_) {}
+  applyMobileBoardPin(pinned);
+  const btn = document.getElementById('btnPinBoard');
+  if (btn) {
+    btn.onclick = () => {
+      pinned = !pinned;
+      applyMobileBoardPin(pinned);
+      try {
+        localStorage.setItem(MOBILE_PIN_KEY, pinned ? '1' : '0');
+      } catch (_) {}
+    };
+  }
+}
+
 async function bootstrap() {
   mountAppNav('studio');
   mountAccount();
   mountModals();
+  initMobileBoardPin();
   setLc0SettingsHandler(() => openModal('settingsModal'));
   initBoardInteractions();
   bindEvents();

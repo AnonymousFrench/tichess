@@ -99,7 +99,7 @@
   <!-- ======================================================================= -->
   <!-- MAIN BODY: STUDIO WORKSPACE                                             -->
   <!-- ======================================================================= -->
-  <div class="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
+  <div class="flex-1 flex flex-col lg:flex-row min-h-0 lg:overflow-hidden">
 
     <!-- Hidden global PGN file input -->
     <input type="file" id="globalPgnInput" accept=".pgn,.txt" class="hidden" />
@@ -107,7 +107,7 @@
     <!-- ===================================================================== -->
     <!-- WORKSPACE GRID                                                        -->
     <!-- ===================================================================== -->
-    <main id="studioMain" class="flex-1 flex flex-col lg:flex-row min-h-0 min-w-0 p-1.5 gap-1.5 lg:gap-0 overflow-y-auto lg:overflow-hidden">
+    <main id="studioMain" class="flex-1 flex flex-col lg:flex-row min-h-0 min-w-0 p-1.5 gap-1.5 lg:gap-0 lg:overflow-hidden">
 
       <!-- =================================================================== -->
       <!-- LEFT COLUMN (~42%): MULTI-TAB BOARD + NAV + VARIATION TREE          -->
@@ -115,11 +115,17 @@
       <section id="leftCol" class="studio-left flex flex-col gap-1.5 min-h-0 shrink-0">
 
         <!-- Multi-Tab Board Panel -->
-        <div class="bg-panel border border-borderSubtle rounded-xl flex flex-col min-h-0 shrink-0 overflow-hidden">
+        <div id="boardPanel" class="bg-panel border border-borderSubtle rounded-xl flex flex-col min-h-0 shrink-0 overflow-hidden">
           <!-- Board Tabs Bar -->
-          <div class="flex items-center border-b border-borderSubtle bg-bg/55 px-1.5 pt-1 gap-0.5 overflow-x-auto">
-            <div id="boardTabsBar" role="tablist" aria-label="Analysis tabs" class="flex items-center gap-0.5 min-w-0"></div>
-            <button id="btnAddBoardTab" class="px-2 py-1 text-txtMuted hover:text-em hover:bg-surface rounded-t text-xs font-bold shrink-0" title="New Analysis Tab (Alt+N)" aria-label="New Analysis Tab">+</button>
+          <div class="flex items-center border-b border-borderSubtle bg-bg/55 px-1.5 pt-1 gap-1">
+            <div class="flex items-center gap-0.5 min-w-0 flex-1 overflow-x-auto">
+              <div id="boardTabsBar" role="tablist" aria-label="Analysis tabs" class="flex items-center gap-0.5 min-w-0"></div>
+              <button id="btnAddBoardTab" class="px-2 py-1 text-txtMuted hover:text-em hover:bg-surface rounded-t text-xs font-bold shrink-0" title="New Analysis Tab (Alt+N)" aria-label="New Analysis Tab">+</button>
+            </div>
+            <button id="btnPinBoard" type="button" aria-pressed="true" class="lg:hidden mb-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md border bg-em/15 text-em border-em/40 text-[10.5px] font-semibold shrink-0 transition-colors" title="Board fixed at top while scrolling — tap to unpin">
+              <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+              <span id="btnPinBoardLabel">Pinned</span>
+            </button>
           </div>
 
           <!-- Top Player Clock Bar -->

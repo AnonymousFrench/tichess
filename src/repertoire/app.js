@@ -231,6 +231,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   let tab="train";
   function setTab(t){
     tab=t;
+    if(!S) document.body.style.overflow="";
     document.querySelectorAll("[data-tab]").forEach(b=>b.setAttribute("aria-current",b.dataset.tab===t?"page":"false"));
     ["train","study","explore","stats"].forEach(v=>$("v-"+v).hidden=v!==t);
     if(t!=="explore") engStop(); else { engInit(); renderExplore(); }

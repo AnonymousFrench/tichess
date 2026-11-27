@@ -190,11 +190,155 @@ export function buildHumanfishCacheKey(params, endpoint = '') {
 }
 
 /**
- * Select the active W/D/L prediction block (`human` with clocks vs `human_no_clock` board-only).
+ * Analyze whether White and Black have mating material based on the FEN piece placement.
+ * - A bare King (`count === 0`) can NEVER win under any chess rules (even on timeout).
+ * - Dead-draw material combinations (`K vs K`, `K+B vs K`, `K+N vs K`, `K+B vs K+B` same-color)
+ *   cannot be won by either side.
+ */
+export function analyzeMatingMaterial(fen) {
+  const placement = String(fen || '').trim().split(/\s+/)[0] || '';
+  const ranks = placement.split('/');
+  if (ranks.length !== 8) {
+    return { whiteCanWin: true, blackCanWin: true, deadDraw: false, reason: '' };
+  }
+
+  let wNonKing = 0;
+  let bNonKing = 0;
+  const wMinors = [];
+  const bMinors = [];
+  let wMajorOrPawn = 0;
+  let bMajorOrPawn = 0;
+
+  for (let r = 0; r < 8; r++) {
+    let f = 0;
+    for (const ch of ranks[r]) {
+      if (ch >= '1' && ch <= '8') {
+        f += Number(ch);
+        continue;
+      }
+      const sqColor = (r + f) % 2;
+      if (ch === 'P' || ch === 'R' || ch === 'Q') {
+        wNonKing++;
+        wMajorOrPawn++;
+      } else if (ch === 'N' || ch === 'B') {
+        wNonKing++;
+        wMinors.push({ type: ch, color: sqColor });
+      } else if (ch === 'p' || ch === 'r' || ch === 'q') {
+        bNonKing++;
+        bMajorOrPawn++;
+      } else if (ch === 'n' || ch === 'b') {
+        bNonKing++;
+        bMinors.push({ type: ch, color: sqColor });
+      }
+      f++;
+    }
+  }
+
+  // Bare king can never win under any ruleset (including timeout)
+  let whiteCanWin = wNonKing > 0;
+  let blackCanWin = bNonKing > 0;
+  let deadDraw = false;
+  let reason = '';
+
+  if (wMajorOrPawn === 0 && bMajorOrPawn === 0) {
+    const wMinorCnt = wMinors.length;
+    const bMinorCnt = bMinors.length;
+    if (wMinorCnt === 0 && bMinorCnt === 0) {
+      deadDraw = true;
+      reason = 'Insufficient mating material (K vs K)';
+    } else if (wMinorCnt + bMinorCnt === 1) {
+      deadDraw = true;
+      reason = 'Insufficient mating material';
+    } else if (
+      wMinorCnt === 1 &&
+      bMinorCnt === 1 &&
+      wMinors[0].type === 'B' &&
+      bMinors[0].type === 'b' &&
+      wMinors[0].color === bMinors[0].color
+    ) {
+      deadDraw = true;
+      reason = 'Insufficient mating material (same-color bishops)';
+    }
+  }
+
+  if (deadDraw) {
+    whiteCanWin = false;
+    blackCanWin = false;
+  } else if (!whiteCanWin) {
+    reason = 'White has only a bare king';
+  } else if (!blackCanWin) {
+    reason = 'Black has only a bare king';
+  }
+
+  return { whiteCanWin, blackCanWin, deadDraw, reason };
+}
+
+/**
+ * Clamp impossible win probabilities when a side has no mating material.
+ * Any impossible win mass is moved to Draw so White + Draw + Black remains 1.0.
+ */
+export function enforceMatingMaterialConstraint(fen, outcome) {
+  if (!outcome || typeof outcome !== 'object') return outcome;
+  const mat = analyzeMatingMaterial(fen);
+  if (mat.whiteCanWin && mat.blackCanWin) {
+    return { ...outcome, materialAdjusted: false, materialReason: '' };
+  }
+
+  let w = Math.max(0, Number(outcome.white) || 0);
+  let d = Math.max(0, Number(outcome.draw) || 0);
+  let b = Math.max(0, Number(outcome.black) || 0);
+
+  if (mat.deadDraw || (!mat.whiteCanWin && !mat.blackCanWin)) {
+    return {
+      ...outcome,
+      white: 0,
+      draw: 1,
+      black: 0,
+      expected_score: 0.5,
+      materialAdjusted: true,
+      materialReason: mat.reason,
+    };
+  }
+
+  if (!mat.whiteCanWin) {
+    d += w;
+    w = 0;
+  }
+  if (!mat.blackCanWin) {
+    d += b;
+    b = 0;
+  }
+  const sum = w + d + b;
+  if (sum > 0) {
+    w /= sum;
+    d /= sum;
+    b /= sum;
+  } else {
+    w = 0;
+    d = 1;
+    b = 0;
+  }
+
+  return {
+    ...outcome,
+    white: Math.round(w * 10000) / 10000,
+    draw: Math.round(d * 10000) / 10000,
+    black: Math.round(b * 10000) / 10000,
+    expected_score: Math.round((w + 0.5 * d) * 10000) / 10000,
+    materialAdjusted: true,
+    materialReason: mat.reason,
+  };
+}
+
+/**
+ * Select the active W/D/L prediction block (`human` with clocks vs `human_no_clock` board-only),
+ * applying chess insufficient-material constraints so a bare king never gets nonzero win odds.
  */
 export function getActiveHumanOutcome(result, useClocks = true) {
   if (!result || typeof result !== 'object') return null;
-  return !useClocks && result.human_no_clock ? result.human_no_clock : result.human || null;
+  const raw = !useClocks && result.human_no_clock ? result.human_no_clock : result.human || null;
+  if (!raw) return null;
+  return result.fen ? enforceMatingMaterialConstraint(result.fen, raw) : raw;
 }
 
 /**

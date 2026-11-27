@@ -35,8 +35,8 @@ export const state = {
   showEngineArrows: true,
   showRepertoireArrows: true,
   showEvalBar: true,
-  evalBarSource: 'sf', // 'sf' | 'hf' | 'lc0'
-  engineTab: 'sf', // 'sf' | 'hf'
+  evalBarSource: 'sf', // 'sf' | 'maia' | 'hf' | 'lc0'
+  engineTab: 'sf', // 'sf' | 'maia' | 'hf'
 
   // Configurable workspace panels
   panels: safeGetJsonStorage('tichess_panels_v1', DEFAULT_PANELS),
@@ -129,6 +129,31 @@ export const state = {
     whatIfOverride: null, // null = auto from active game, or { white_elo, black_elo, clk_white_s, clk_black_s, tc_category, tc_initial_s, tc_increment_s, has_move40 }
     reqId: 0,
   },
+  maia: (() => {
+    const saved = safeGetJsonStorage('tichess_maia_opts_v1', {
+      eloWhite: 1500,
+      eloBlack: 1500,
+      syncElos: true,
+    });
+    const clampElo = (v) => Math.max(1000, Math.min(2200, Math.round((Number(v) || 1500) / 50) * 50));
+    const ew = clampElo(saved.eloWhite);
+    const eb = saved.syncElos !== false ? ew : clampElo(saved.eloBlack);
+    return {
+      enabled: false,
+      running: true,
+      status: 'idle', // 'idle' | 'downloading' | 'initializing' | 'ready' | 'error'
+      progressPct: 0,
+      eloWhite: ew,
+      eloBlack: eb,
+      syncElos: saved.syncElos !== false,
+      showArrows: true,
+      error: '',
+      currentFen: '',
+      result: null,
+      hoverCandidateUci: null,
+      reqId: 0,
+    };
+  })(),
 
   lichessToken: safeGetStorage('cms_lichess_token', ''),
 };

@@ -128,10 +128,11 @@ export function renderPlayerClockBars() {
     : 'w-2.5 h-2.5 rounded-sm bg-slate-200 border border-slate-400 shrink-0';
 }
 
-const HF_GRADE_COLOR = {
+const PROB_ARROW_COLOR = {
   best: '#16a34a',
   inaccuracy: '#d97706',
   blunder: '#dc2626',
+  unknown: '#8b5cf6',
 };
 
 export function renderArrows() {
@@ -139,16 +140,31 @@ export function renderArrows() {
   if (!svg) return;
 
   const arrows = [];
-  const hfCandidates =
-    state.showEngineArrows &&
-    state.engineTab === 'hf' &&
-    state.hf.enabled &&
-    state.hf.showArrows &&
-    state.hf.result?.fen === getCurrentFen()
-      ? state.hf.result?.explanation?.candidates || []
-      : [];
+  const curFen = getCurrentFen();
+  let probCandidates = [];
+  let hoveredProbUci = null;
 
-  if (state.showRepertoireArrows && state.repertoireArrows?.length && !hfCandidates.length) {
+  if (state.showEngineArrows) {
+    if (
+      state.engineTab === 'hf' &&
+      state.hf.enabled &&
+      state.hf.showArrows &&
+      state.hf.result?.fen === curFen
+    ) {
+      probCandidates = state.hf.result?.explanation?.candidates || [];
+      hoveredProbUci = state.hf.hoverCandidateUci;
+    } else if (
+      state.engineTab === 'maia' &&
+      state.maia.enabled &&
+      state.maia.showArrows &&
+      state.maia.result?.fen === curFen
+    ) {
+      probCandidates = state.maia.result?.graded?.candidates || [];
+      hoveredProbUci = state.maia.hoverCandidateUci;
+    }
+  }
+
+  if (state.showRepertoireArrows && state.repertoireArrows?.length && !probCandidates.length) {
     let mineSeen = 0;
     state.repertoireArrows.forEach((ra, i) => {
       let color;
@@ -166,9 +182,9 @@ export function renderArrows() {
     });
   }
   if (state.showEngineArrows) {
-    if (hfCandidates.length) {
-      const hovered = state.hf.hoverCandidateUci;
-      const ordered = [...hfCandidates].sort((a, b) => {
+    if (probCandidates.length) {
+      const hovered = hoveredProbUci;
+      const ordered = [...probCandidates].sort((a, b) => {
         if (a.uci === hovered) return 1;
         if (b.uci === hovered) return -1;
         return (a.prob || 0) - (b.prob || 0);
@@ -176,17 +192,17 @@ export function renderArrows() {
       ordered.forEach((c, idx) => {
         const prob = Math.max(0, Math.min(1, Number(c.prob) || 0));
         const pct = Math.round(prob * 100);
-        if (pct < 2 && !c.is_sf_best && c.uci !== hovered) return;
-        const grade = HF_GRADE_COLOR[c.grade] ? c.grade : 'best';
-        const color = HF_GRADE_COLOR[grade];
+        if (pct < 3 && !c.is_sf_best && c.uci !== hovered) return;
+        const grade = PROB_ARROW_COLOR[c.grade] ? c.grade : 'unknown';
+        const color = PROB_ARROW_COLOR[grade];
         const isHov = hovered && c.uci === hovered;
         const dashed = Boolean(c.is_sf_best && prob < 0.2);
-        const w = Math.max(8, Math.min(20, 7 + prob * 26)) + (isHov ? 2.5 : 0);
-        const opacity = hovered ? (isHov ? 0.98 : 0.35) : 0.88;
+        const w = Math.max(7.5, Math.min(19, 6.5 + prob * 24)) + (isHov ? 2.5 : 0);
+        const opacity = hovered ? (isHov ? 0.98 : 0.32) : 0.88;
         arrows.push({
           uci: c.uci,
           color,
-          id: `hf${idx}`,
+          id: `pb${idx}`,
           w,
           dashed,
           opacity,
@@ -233,17 +249,19 @@ export function renderArrows() {
     const uy = dy / len;
     const sx = a.badgeText ? x1 + ux * 16 : x1;
     const sy = a.badgeText ? y1 + uy * 16 : y1;
-    const ex = x2 - ux * (a.badgeText ? 26 : 22);
-    const ey = y2 - uy * (a.badgeText ? 26 : 22);
+    const ex = x2 - ux * (a.badgeText ? 24 : 22);
+    const ey = y2 - uy * (a.badgeText ? 24 : 22);
     const dashAttr = a.dashed ? ' stroke-dasharray="14,9"' : '';
     const opAttr = typeof a.opacity === 'number' ? ` opacity="${a.opacity.toFixed(2)}"` : '';
     defs += `<marker id="ah-${a.id}" markerWidth="4" markerHeight="4" refX="2.2" refY="2" orient="auto"><polygon points="0 0, 4 2, 0 4" fill="${a.color}"/></marker>`;
     lines += `<line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${ex.toFixed(1)}" y2="${ey.toFixed(1)}" stroke="${a.color}" stroke-width="${a.w.toFixed(1)}" stroke-linecap="round"${dashAttr}${opAttr} marker-end="url(#ah-${a.id})"/>`;
     if (a.badgeText) {
-      const bx = x1 + dx * 0.56;
-      const by = y1 + dy * 0.56;
-      const bw = a.badgeText.length >= 3 ? 62 : 50;
-      badges += `<g${opAttr}><rect x="${(bx - bw / 2).toFixed(1)}" y="${(by - 16).toFixed(1)}" width="${bw}" height="30" rx="8" fill="#0f1218" stroke="${a.color}" stroke-width="3.5" opacity="0.96"/><text x="${bx.toFixed(1)}" y="${(by + 7).toFixed(1)}" text-anchor="middle" font-size="21" font-weight="800" font-family="IBM Plex Mono,ui-monospace,monospace" fill="#f8fafc">${a.badgeText}</text></g>`;
+      // Push badges slightly closer to destination on short 1-square moves so they don't pile onto the origin piece
+      const tPos = len <= 155 ? 0.72 : 0.56;
+      const bx = x1 + dx * tPos;
+      const by = y1 + dy * tPos;
+      const bw = a.badgeText.length >= 3 ? 52 : 42;
+      badges += `<g${opAttr}><rect x="${(bx - bw / 2).toFixed(1)}" y="${(by - 13).toFixed(1)}" width="${bw}" height="24" rx="6" fill="#0f1218" stroke="${a.color}" stroke-width="3" opacity="0.96"/><text x="${bx.toFixed(1)}" y="${(by + 5).toFixed(1)}" text-anchor="middle" font-size="17.5" font-weight="800" font-family="IBM Plex Mono,ui-monospace,monospace" fill="#f8fafc">${a.badgeText}</text></g>`;
     }
   }
   svg.innerHTML = defs + '</defs>' + lines + badges;

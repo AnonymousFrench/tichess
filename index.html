@@ -245,12 +245,12 @@
 
           <!-- RIGHT: MAIA 2 + STOCKFISH 19 WASM / CLOUD / LOCAL UCI + HUMANFISH -->
           <div id="panel-sf" data-dock="sf" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
-            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
+            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex flex-wrap items-center justify-between gap-1">
               <div class="flex items-center gap-1 min-w-0">
                 <button id="btnSfToggle" class="w-5 h-5 rounded bg-vi/20 hover:bg-vi/30 text-vi border border-vi/40 flex items-center justify-center text-[10px] shrink-0" title="Start / Stop Maia 2" aria-label="Start or stop engine">⏸</button>
                 <div role="tablist" aria-label="Engine mode" class="flex items-center gap-0.5 bg-surface rounded p-0.5 border border-borderSubtle shrink-0">
                   <button id="btnEngineTabMaia" type="button" role="tab" aria-selected="true" class="px-1.5 py-0.5 rounded bg-vi/20 text-vi border border-vi/40 font-bold text-[11px] transition-colors" title="Maia 2 local human neural network (1000–2200 Elo, runs in browser WASM)">Maia 2</button>
-                  <button id="btnEngineTabSf" type="button" role="tab" aria-selected="false" class="px-1.5 py-0.5 rounded text-txtMuted hover:text-txt font-semibold text-[11px] transition-colors"><span class="sm:hidden">SF</span><span class="hidden sm:inline">Stockfish</span></button>
+                  <button id="btnEngineTabSf" type="button" role="tab" aria-selected="false" class="px-1.5 py-0.5 rounded text-txtMuted hover:text-txt font-semibold text-[11px] transition-colors">Stockfish</button>
                   <button id="btnEngineTabHf" type="button" role="tab" aria-selected="false" class="px-1.5 py-0.5 rounded text-txtMuted hover:text-txt font-semibold text-[11px] transition-colors" title="HumanFish master/GM W/D/L odds (2400–2900 Elo), Shapley attribution, and move probabilities"><span class="sm:hidden">HF</span><span class="hidden sm:inline">HumanFish</span></button>
                 </div>
                 <span class="hidden sm:inline-flex items-center min-w-0">

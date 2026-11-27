@@ -92,15 +92,26 @@ function findExistingRepMovesAtFen(repertoire, fen) {
   return found;
 }
 
+function triggerLabel(ctx) {
+  if (ctx.triggerType === 'opponent_reply') {
+    const oppColor = ctx.color === 'w' ? 'b' : 'w';
+    return formatMoveLabel(ctx.oppMove?.ply ?? Math.max(0, ctx.ply - 1), oppColor, ctx.oppMove?.san || ctx.flawedSan);
+  }
+  return formatMoveLabel(ctx.ply, ctx.color, ctx.flawedSan);
+}
+
 function defaultSectionTitle(ctx) {
   const shortOpening = (ctx.openingName || 'Opening').split(':')[0].trim().slice(0, 30);
-  const flawLbl = formatMoveLabel(ctx.ply, ctx.color, ctx.flawedSan);
+  const lbl = triggerLabel(ctx);
+  if (ctx.triggerType === 'opponent_reply' || ctx.mode === 'vs_opponent') {
+    return `Fix: ${shortOpening} (vs ${lbl})`.slice(0, 60);
+  }
   if (ctx.mode === 'repair') {
-    return `Fix: ${shortOpening} (${flawLbl} follow-ups)`.slice(0, 60);
+    return `Fix: ${shortOpening} (${lbl} follow-ups)`.slice(0, 60);
   }
   const cand = ctx.selectedCandidate;
-  const anchorLbl = cand ? formatMoveLabel(ctx.ply, ctx.color, cand.san) : flawLbl;
-  return `Fix: ${shortOpening} (${anchorLbl} vs ${flawLbl})`.slice(0, 60);
+  const anchorLbl = cand ? formatMoveLabel(ctx.ply, ctx.color, cand.san) : lbl;
+  return `Fix: ${shortOpening} (${anchorLbl} vs ${lbl})`.slice(0, 60);
 }
 
 function inferRatingFromGames(games, color) {
@@ -136,6 +147,8 @@ async function runDiagnosis(ctx) {
       flawedUci: ctx.flawedUci,
       flawedSan: ctx.flawedSan,
       flawedStats: ctx.flawedStats,
+      triggerType: ctx.triggerType,
+      oppMove: ctx.oppMove,
       pool: ctx.pool,
       rating: ctx.rating,
       tc: ctx.tc,
@@ -149,7 +162,10 @@ async function runDiagnosis(ctx) {
     if (!ctx.openingName && res.openingFromExplorer) {
       ctx.openingName = res.openingFromExplorer;
     }
-    ctx.mode = res.diagnosis.recommendedMode || 'replace';
+    ctx.mode =
+      ctx.triggerType === 'opponent_reply'
+        ? 'vs_opponent'
+        : res.diagnosis.recommendedMode || 'replace';
     ctx.selectedCandidate = res.diagnosis.candidates?.[0] || null;
     if (!ctx.sectionEdited) {
       ctx.sectionName = defaultSectionTitle(ctx);
@@ -201,6 +217,7 @@ async function runGeneration(ctx) {
       flawedSan: ctx.flawedSan,
       flawedStats: ctx.flawedStats,
       mode: ctx.mode,
+      oppMove: ctx.oppMove,
       anchorMove,
       diagnosis: ctx.diagnosis,
       presetKey: ctx.presetKey,
@@ -314,6 +331,13 @@ function toneClasses(tone) {
       text: 'text-em',
     };
   }
+  if (tone === 'cy') {
+    return {
+      box: 'bg-cy/10 border-cy/35',
+      pill: 'bg-cy/20 text-cy border-cy/40',
+      text: 'text-cy',
+    };
+  }
   return {
     box: 'bg-am/10 border-am/35',
     pill: 'bg-am/20 text-am border-am/40',
@@ -322,10 +346,15 @@ function toneClasses(tone) {
 }
 
 function renderDiagnosisBlock(ctx) {
+  const lbl = triggerLabel(ctx);
   if (ctx.stage === 'diagnosing') {
+    const msg =
+      ctx.triggerType === 'opponent_reply'
+        ? `Finding the strongest sound answers against <b class="font-mono text-txt">${escapeHtml(lbl)}</b> with Stockfish &amp; ${escapeHtml(ctx.pool === 'masters' ? 'Masters OTB' : '+100 Elo Explorer')}…`
+        : `Checking <b class="font-mono text-txt">${escapeHtml(lbl)}</b> with Stockfish &amp; ${escapeHtml(ctx.pool === 'masters' ? 'Masters OTB' : '+100 Elo Explorer')} to see if the move itself is weak or the leak is in the follow-ups…`;
     return `<div class="p-3 rounded-lg bg-surface/70 border border-borderSubtle flex items-center gap-2.5 text-xs text-txtMuted">
       <span class="w-2.5 h-2.5 rounded-full bg-em animate-pulse shrink-0"></span>
-      <span>Checking <b class="font-mono text-txt">${escapeHtml(formatMoveLabel(ctx.ply, ctx.color, ctx.flawedSan))}</b> with Stockfish &amp; ${escapeHtml(ctx.pool === 'masters' ? 'Masters OTB' : '+100 Elo Explorer')} to see if the move itself is weak or the leak is in the follow-ups…</span>
+      <span>${msg}</span>
     </div>`;
   }
 
@@ -334,6 +363,7 @@ function renderDiagnosisBlock(ctx) {
   const tc = toneClasses(d.tone);
   const fm = d.flawedMove;
   const bm = d.bestMove;
+  const isOppReply = ctx.triggerType === 'opponent_reply';
 
   return `<div class="p-3 rounded-lg border ${tc.box} flex flex-col gap-2">
     <div class="flex items-start justify-between gap-2 flex-wrap">
@@ -342,13 +372,19 @@ function renderDiagnosisBlock(ctx) {
         <span class="text-xs font-semibold text-txt">${escapeHtml(d.headline)}</span>
       </div>
       <div class="flex items-center gap-2 font-mono text-[11px] shrink-0">
-        <span class="text-txtMuted">Yours: <b class="text-txt">${escapeHtml(fm.label)}</b> <span class="text-txtMuted">(${escapeHtml(fm.evLabel)})</span></span>
-        ${bm && bm.uci.slice(0, 4) !== fm.uci.slice(0, 4) ? `<span class="text-txtMuted">· Best: <b class="text-em">${escapeHtml(bm.label)}</b> <span class="text-txtMuted">(${escapeHtml(bm.evLabel)})</span></span>` : ''}
+        ${
+          isOppReply
+            ? bm
+              ? `<span class="text-txtMuted">Best reply: <b class="text-em">${escapeHtml(bm.label)}</b> <span class="text-txtMuted">(${escapeHtml(bm.evLabel)})</span></span>`
+              : ''
+            : `<span class="text-txtMuted">Yours: <b class="text-txt">${escapeHtml(fm.label)}</b> <span class="text-txtMuted">(${escapeHtml(fm.evLabel)})</span></span>
+               ${bm && bm.uci.slice(0, 4) !== fm.uci.slice(0, 4) ? `<span class="text-txtMuted">· Best: <b class="text-em">${escapeHtml(bm.label)}</b> <span class="text-txtMuted">(${escapeHtml(bm.evLabel)})</span></span>` : ''}`
+        }
       </div>
     </div>
     <p class="text-[11.5px] text-txt/90 leading-relaxed">${escapeHtml(d.explanation)}</p>
     <div class="text-[11px] text-txtMuted leading-relaxed pt-1 border-t border-borderSubtle/50">
-      <b class="text-txt">Weak move vs. weak follow-up:</b> ${escapeHtml(d.whyDistinction)}
+      <b class="text-txt">${isOppReply ? 'Why this matters:' : 'Weak move vs. weak follow-up:'}</b> ${escapeHtml(d.whyDistinction)}
     </div>
     ${d.sampleNote ? `<div class="text-[10.5px] text-am bg-am/10 border border-am/25 rounded px-2 py-1">${escapeHtml(d.sampleNote)}</div>` : ''}
     ${
@@ -362,8 +398,9 @@ function renderDiagnosisBlock(ctx) {
 function renderConfigBlock(ctx) {
   if (ctx.stage === 'diagnosing' || !ctx.diagnosis) return '';
   const d = ctx.diagnosis;
-  const flawLbl = d.flawedMove.label;
+  const flawLbl = triggerLabel(ctx);
   const cands = d.candidates || [];
+  const isOppReply = ctx.triggerType === 'opponent_reply';
   const isReplace = ctx.mode === 'replace';
   const busy = ctx.stage === 'generating' || ctx.saving;
 
@@ -390,43 +427,49 @@ function renderConfigBlock(ctx) {
           </button>`;
         })
         .join('')}</div>`
-    : `<div class="text-[11px] text-txtMuted mt-1">No alternative candidate moves available.</div>`;
+    : `<div class="text-[11px] text-txtMuted mt-1">No candidate moves available.</div>`;
+
+  const modeAndCandidateHtml = isOppReply
+    ? `<div class="p-2.5 rounded-lg bg-surface/50 border border-borderSubtle">
+        <div class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted">Choose your reply against ${escapeHtml(flawLbl)}</div>
+        ${candidateChips}
+      </div>`
+    : `<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <button type="button" data-flaw-mode="replace" ${busy ? 'disabled' : ''} class="text-left p-2.5 rounded-lg border transition-colors ${
+          isReplace
+            ? 'bg-surface border-em/60'
+            : 'bg-surface/40 border-borderSubtle hover:border-borderBright'
+        }">
+          <div class="flex items-center justify-between gap-1.5">
+            <span class="text-xs font-semibold text-txt">Switch away from ${escapeHtml(flawLbl)}</span>
+            ${d.recommendedMode === 'replace' ? '<span class="px-1.5 py-[1px] rounded bg-em/20 text-em text-[9.5px] font-bold uppercase">Recommended</span>' : ''}
+          </div>
+          <div class="text-[10.5px] text-txtMuted mt-0.5">Replace ${escapeHtml(flawLbl)} with a stronger move and add a habit warning if you play ${escapeHtml(flawLbl)} in drills.</div>
+        </button>
+
+        <button type="button" data-flaw-mode="repair" ${busy ? 'disabled' : ''} class="text-left p-2.5 rounded-lg border transition-colors ${
+          !isReplace
+            ? 'bg-surface border-em/60'
+            : 'bg-surface/40 border-borderSubtle hover:border-borderBright'
+        }">
+          <div class="flex items-center justify-between gap-1.5">
+            <span class="text-xs font-semibold text-txt">Keep ${escapeHtml(flawLbl)} &amp; fix follow-ups</span>
+            ${d.recommendedMode === 'repair' ? '<span class="px-1.5 py-[1px] rounded bg-em/20 text-em text-[9.5px] font-bold uppercase">Recommended</span>' : ''}
+          </div>
+          <div class="text-[10.5px] text-txtMuted mt-0.5">Keep playing ${escapeHtml(flawLbl)} and build concrete answers to the opponent replies that beat you after it.</div>
+        </button>
+      </div>
+      ${
+        isReplace
+          ? `<div class="p-2.5 rounded-lg bg-surface/50 border border-borderSubtle">
+              <div class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted">Replacement move</div>
+              ${candidateChips}
+            </div>`
+          : ''
+      }`;
 
   return `<div class="flex flex-col gap-2.5">
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-      <button type="button" data-flaw-mode="replace" ${busy ? 'disabled' : ''} class="text-left p-2.5 rounded-lg border transition-colors ${
-        isReplace
-          ? 'bg-surface border-em/60'
-          : 'bg-surface/40 border-borderSubtle hover:border-borderBright'
-      }">
-        <div class="flex items-center justify-between gap-1.5">
-          <span class="text-xs font-semibold text-txt">Switch away from ${escapeHtml(flawLbl)}</span>
-          ${d.recommendedMode === 'replace' ? '<span class="px-1.5 py-[1px] rounded bg-em/20 text-em text-[9.5px] font-bold uppercase">Recommended</span>' : ''}
-        </div>
-        <div class="text-[10.5px] text-txtMuted mt-0.5">Replace ${escapeHtml(flawLbl)} with a stronger move and add a habit warning if you play ${escapeHtml(flawLbl)} in drills.</div>
-      </button>
-
-      <button type="button" data-flaw-mode="repair" ${busy ? 'disabled' : ''} class="text-left p-2.5 rounded-lg border transition-colors ${
-        !isReplace
-          ? 'bg-surface border-em/60'
-          : 'bg-surface/40 border-borderSubtle hover:border-borderBright'
-      }">
-        <div class="flex items-center justify-between gap-1.5">
-          <span class="text-xs font-semibold text-txt">Keep ${escapeHtml(flawLbl)} &amp; fix follow-ups</span>
-          ${d.recommendedMode === 'repair' ? '<span class="px-1.5 py-[1px] rounded bg-em/20 text-em text-[9.5px] font-bold uppercase">Recommended</span>' : ''}
-        </div>
-        <div class="text-[10.5px] text-txtMuted mt-0.5">Keep playing ${escapeHtml(flawLbl)} and build concrete answers to the opponent replies that beat you after it.</div>
-      </button>
-    </div>
-
-    ${
-      isReplace
-        ? `<div class="p-2.5 rounded-lg bg-surface/50 border border-borderSubtle">
-            <div class="text-[10.5px] font-semibold uppercase tracking-wider text-txtMuted">Replacement move</div>
-            ${candidateChips}
-          </div>`
-        : ''
-    }
+    ${modeAndCandidateHtml}
 
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
       <div>
@@ -534,7 +577,8 @@ function renderProgressOrPreview(ctx) {
 
 function renderModal(ctx) {
   const host = ensureModalMounted();
-  const flawLbl = formatMoveLabel(ctx.ply, ctx.color, ctx.flawedSan);
+  const isOppReply = ctx.triggerType === 'opponent_reply';
+  const flawLbl = triggerLabel(ctx);
   const sideLbl = ctx.color === 'b' ? 'Black' : 'White';
   const scorePct = Math.round(ctx.flawedStats?.scorePct ?? 0);
   const total = Number(ctx.flawedStats?.total) || 0;
@@ -543,9 +587,9 @@ function renderModal(ctx) {
   host.innerHTML = `<div class="bg-panel border border-borderBright rounded-xl w-full max-w-xl max-h-[92vh] overflow-y-auto p-4 shadow-2xl flex flex-col gap-3">
     <div class="flex items-start justify-between gap-2">
       <div class="min-w-0">
-        <h2 class="font-bold text-sm text-txt">Learn from Flaw → Generate Repertoire</h2>
+        <h2 class="font-bold text-sm text-txt">${isOppReply ? `Prepare vs ${escapeHtml(flawLbl)} → Generate Repertoire` : 'Learn from Flaw → Generate Repertoire'}</h2>
         <div class="text-[11px] text-txtMuted mt-0.5 truncate">
-          <span class="font-mono font-semibold text-ro">${escapeHtml(flawLbl)}</span>
+          ${isOppReply ? '<span>vs </span>' : ''}<span class="font-mono font-semibold text-ro">${escapeHtml(flawLbl)}</span>
           <span> as ${sideLbl}</span>
           ${total ? `<span> · ${scorePct}% over ${total} game${total === 1 ? '' : 's'}</span>` : ''}
           ${ctx.openingName ? `<span> · ${escapeHtml(ctx.openingName)}</span>` : ''}
@@ -656,6 +700,8 @@ export async function openFlawRepertoireModal({
   flawedUci = '',
   flawedSan = '',
   flawedStats = {},
+  triggerType = 'user_move',
+  oppMove = null,
   openingName = '',
   rating = null,
   tc = 'all',
@@ -703,12 +749,14 @@ export async function openFlawRepertoireModal({
     flawedUci,
     flawedSan,
     flawedStats,
+    triggerType: triggerType === 'opponent_reply' ? 'opponent_reply' : 'user_move',
+    oppMove,
     openingName: openingName && openingName !== '—' && openingName !== 'Starting Position' ? openingName : '',
     rating: Number(rating) || inferRatingFromGames(mergedPersonalGames, normColor),
     tc: tc || 'all',
     pool: 'peers',
     presetKey: 'standard',
-    mode: 'replace',
+    mode: triggerType === 'opponent_reply' ? 'vs_opponent' : 'replace',
     selectedCandidate: null,
     sectionName: '',
     sectionEdited: false,

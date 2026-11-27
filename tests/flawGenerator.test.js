@@ -363,4 +363,56 @@ describe('generateFlawRepertoire end-to-end compilation & merging', () => {
     const anchorCard = Object.values(result.repertoire.cards).find((c) => c.u === 'f2f3');
     expect(anchorCard?.n).toContain('objectively sound');
   });
+
+  it('diagnoses and builds a repertoire against an opponent-turn Flaw reply (e.g. 6...e5 after 6.f3)', async () => {
+    const { moves: prefixMoves, fen: afterE5 } = buildPrefix([...NAJDORF_PREFIX, 'f3', 'e5']);
+    const diag = diagnoseFlawMove({
+      fen: afterE5,
+      ply: prefixMoves.length,
+      color: 'w',
+      flawedSan: 'e5',
+      flawedStats: { total: 3, wins: 0, draws: 1, losses: 2, scorePct: 17 },
+      triggerType: 'opponent_reply',
+      oppMove: { uci: 'e7e5', san: 'e5', ply: prefixMoves.length - 1 },
+      engineLines: [
+        { uci: 'd4b3', san: 'Nb3', whiteCp: 22, mate: null, pvSan: ['Nb3', 'Be6', 'Be3'] },
+        { uci: 'd4e2', san: 'Nde2', whiteCp: 10, mate: null, pvSan: ['Nde2', 'Be7', 'Be3'] },
+      ],
+      peerMoves: [
+        { uci: 'd4b3', san: 'Nb3', games: 3000, share: 0.72, score: 0.55 },
+        { uci: 'd4e2', san: 'Nde2', games: 600, share: 0.14, score: 0.51 },
+      ],
+      peerBracketLabel: 'Lichess 1800–2000',
+    });
+
+    expect(diag.kind).toBe('opponent_reply');
+    expect(diag.recommendedMode).toBe('vs_opponent');
+    expect(diag.headline).toContain('6...e5');
+    expect(diag.candidates[0].san).toBe('Nb3');
+
+    const { evaluateFn, fetchExplorerFn } = makeMocks();
+    const result = await generateFlawRepertoire({
+      prefixMoves,
+      startFen: START_FEN,
+      fen: afterE5,
+      color: 'w',
+      openingName: 'Sicilian Defense: Najdorf Variation',
+      flawedStats: { total: 3, wins: 0, draws: 1, losses: 2, scorePct: 17 },
+      mode: 'vs_opponent',
+      oppMove: { uci: 'e7e5', san: 'e5', ply: prefixMoves.length - 1 },
+      anchorMove: { uci: 'd4b3', san: 'Nb3', evLabel: '+0.2', peerScore: 55 },
+      presetKey: 'quick',
+      evaluateFn,
+      fetchExplorerFn,
+    });
+
+    const validated = parseRepertoireFile(buildExportFile(result.repertoire, {}, 'Vs e5', Date.now()));
+    expect(validated.ok).toBe(true);
+    expect(result.sectionName).toContain('vs 6...e5');
+    expect(Object.values(result.repertoire.warn).some((w) => w.includes('6...e5') && w.includes('7.Nb3'))).toBe(true);
+    expect(result.drillCardIds.length).toBeGreaterThan(0);
+    // Drill cards start at 7.Nb3 (not 1.e4 or 6.f3)
+    const firstDrillCard = result.repertoire.cards[result.drillCardIds[0]];
+    expect(firstDrillCard.s).toBe('Nb3');
+  });
 });

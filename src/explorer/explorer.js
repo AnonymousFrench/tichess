@@ -1,3 +1,4 @@
+import { Chess } from 'chess.js';
 import {
   state,
   START_FEN,
@@ -314,10 +315,11 @@ export function renderRefTable(moves, meta = {}) {
           const perf = classifyPlayerMovePerformance(m, pCol);
           if (perf.badge === 'flaw') {
             badgeHtml = `<span class="ml-1 px-1 py-[0.5px] rounded bg-ro/20 text-ro border border-ro/35 font-sans text-[8.5px] font-bold uppercase tracking-wide" title="Low score (${perf.scorePct}% across ${perf.total} games)">Flaw</span>`;
-            if (isMyTurn) {
-              flawMetaByIdx.set(idx, { move: m, perf });
-              badgeHtml += `<button type="button" class="flaw-fix-btn ml-1 px-1.5 py-[0.5px] rounded bg-em/15 hover:bg-em/25 text-em border border-em/40 font-sans text-[8.5px] font-bold uppercase tracking-wide" data-flaw-idx="${idx}" title="Diagnose ${escapeHtml(m.san)} (weak move vs. weak follow-up) and generate a repertoire">Fix →</button>`;
-            }
+            flawMetaByIdx.set(idx, { move: m, perf, isMyTurn });
+            const tip = isMyTurn
+              ? `Diagnose ${m.san} (weak move vs. weak follow-up) and generate a repertoire`
+              : `Generate a repertoire response against opponent's ${m.san}`;
+            badgeHtml += `<button type="button" class="flaw-fix-btn ml-1 px-1.5 py-[0.5px] rounded bg-em/15 hover:bg-em/25 text-em border border-em/40 font-sans text-[8.5px] font-bold uppercase tracking-wide" data-flaw-idx="${idx}" title="${escapeHtml(tip)}">Fix →</button>`;
           } else if (perf.badge === 'strong') {
             badgeHtml = `<span class="ml-1 px-1 py-[0.5px] rounded bg-em/15 text-em border border-em/35 font-sans text-[8.5px] font-bold uppercase tracking-wide" title="Strong score (${perf.scorePct}% across ${perf.total} games)">Strong</span>`;
           }
@@ -334,14 +336,70 @@ export function renderRefTable(moves, meta = {}) {
       const tab = getActiveTab();
       const { startFen, moves: prefixMoves } = extractPathToNode(tab?.current);
       const openingName = document.getElementById('openingName')?.textContent || '';
+      const baseFen = getCurrentFen();
+
+      if (entry.isMyTurn) {
+        openFlawRepertoireModal({
+          prefixMoves,
+          startFen,
+          fen: baseFen,
+          color: pCol === 'black' ? 'b' : 'w',
+          flawedUci: entry.move.uci,
+          flawedSan: entry.move.san,
+          flawedStats: entry.perf,
+          triggerType: 'user_move',
+          openingName,
+          personalGames: state.mastersGamesCache || [],
+          notify: (msg, isErr) => showToast(msg, Boolean(isErr)),
+          onSaved: async () => {
+            try {
+              await initStudioRepertoire();
+            } catch (_) {}
+          },
+        });
+        return;
+      }
+
+      // Opponent's move is flagged as a flaw (e.g. Black's 6...e5 beats White):
+      // advance virtually by that opponent move so the modal generates White's reply repertoire.
+      let oppMv = null;
+      let fenAfterOpp = '';
+      try {
+        const chess = new Chess(baseFen);
+        const uci = String(entry.move.uci || '');
+        oppMv =
+          uci.length >= 4
+            ? chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] || undefined })
+            : chess.move(entry.move.san);
+        if (oppMv) fenAfterOpp = chess.fen();
+      } catch (_) {}
+
+      if (!oppMv || !fenAfterOpp) {
+        showToast('Could not build line from this position.', true);
+        return;
+      }
+
+      const oppUci = oppMv.from + oppMv.to + (oppMv.promotion || '');
+      const extendedPrefix = [
+        ...prefixMoves,
+        {
+          san: oppMv.san,
+          uci: oppUci,
+          fen: fenAfterOpp,
+          color: oppMv.color,
+        },
+      ];
+
       openFlawRepertoireModal({
-        prefixMoves,
+        prefixMoves: extendedPrefix,
         startFen,
-        fen: getCurrentFen(),
+        fen: fenAfterOpp,
         color: pCol === 'black' ? 'b' : 'w',
-        flawedUci: entry.move.uci,
-        flawedSan: entry.move.san,
+        flawedUci: '',
+        flawedSan: oppMv.san,
         flawedStats: entry.perf,
+        triggerType: 'opponent_reply',
+        oppMove: { uci: oppUci, san: oppMv.san, ply: prefixMoves.length },
         openingName,
         personalGames: state.mastersGamesCache || [],
         notify: (msg, isErr) => showToast(msg, Boolean(isErr)),

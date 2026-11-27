@@ -189,13 +189,19 @@ export function diagnoseFlawMove({
   flawedEval = null,
   peerMoves = [],
   peerBracketLabel = '',
+  triggerType = 'user_move',
+  oppMove = null,
 }) {
   const c = color === 'b' ? 'b' : 'w';
+  const oppColor = c === 'w' ? 'b' : 'w';
   const oppWord = c === 'w' ? 'Black' : 'White';
-  const resolvedFlaw = resolveMoveDetails(fen, flawedUci || flawedSan);
-  const fUci = resolvedFlaw?.uci || normalizeCastlingUci(fen, flawedUci || '');
-  const fSan = resolvedFlaw?.san || flawedSan || fUci;
-  const moveLabel = formatMoveLabel(ply, c, fSan);
+  const isOppReply = triggerType === 'opponent_reply';
+  const resolvedFlaw = isOppReply ? null : resolveMoveDetails(fen, flawedUci || flawedSan);
+  const fUci = isOppReply ? '' : resolvedFlaw?.uci || normalizeCastlingUci(fen, flawedUci || '');
+  const fSan = isOppReply ? '' : resolvedFlaw?.san || flawedSan || fUci;
+  const moveLabel = isOppReply
+    ? formatMoveLabel(oppMove?.ply ?? Math.max(0, ply - 1), oppColor, oppMove?.san || flawedSan)
+    : formatMoveLabel(ply, c, fSan);
 
   const total = Number(flawedStats?.total) || 0;
   const scorePct =
@@ -330,7 +336,17 @@ export function diagnoseFlawMove({
     (c === 'w' ? flawEngineLine.mate < 0 : flawEngineLine.mate > 0);
   const bestIsFlawed = bestLine && bestLine.uci.slice(0, 4) === fUci.slice(0, 4);
 
-  if (cpDrop !== null) {
+  if (isOppReply) {
+    kind = 'opponent_reply';
+    badge = 'Tough opponent reply';
+    tone = 'cy';
+    recommendedMode = 'vs_opponent';
+    headline = `How to meet ${moveLabel} (${scorePct}% across ${total} game${total === 1 ? '' : 's'})`;
+    explanation = `${moveLabel} is ${oppWord}'s move — you scored ${scorePct}% when facing it${
+      bestLine ? `, even though the position is ${bestEvLabel} after ${bestLabel}` : ''
+    }. Pick your main response below (such as ${altRefLabel}${altRefEv && altRefEv !== '—' ? ` · ${altRefEv}` : ''}) to build a focused repertoire against ${moveLabel}.`;
+    whyDistinction = `Because ${moveLabel} is ${oppWord}'s reply, this leak is about your follow-up preparation after ${moveLabel} (you can also step back 1 move in Explorer to check whether your previous move itself was weak or sound).`;
+  } else if (cpDrop !== null) {
     if (allowsMate || cpDrop >= 60) {
       kind = 'weak_move';
       badge = 'Weak move';
@@ -370,7 +386,9 @@ export function diagnoseFlawMove({
 
   const smallSample = total > 0 && total < 8;
   const sampleNote = smallSample
-    ? `Small sample (${total} game${total === 1 ? '' : 's'}): don't assume a move is bad from ${total} results alone — use the engine verdict above to decide whether to switch or repair.`
+    ? isOppReply
+      ? `Small sample (${total} game${total === 1 ? '' : 's'}): even with ${total} games, preparing a clean reply against ${moveLabel} takes 2 minutes and stops repeat surprises.`
+      : `Small sample (${total} game${total === 1 ? '' : 's'}): don't assume a move is bad from ${total} results alone — use the engine verdict above to decide whether to switch or repair.`
     : '';
 
   return {
@@ -1010,6 +1028,8 @@ export async function diagnoseFlawPosition({
   flawedUci = '',
   flawedSan = '',
   flawedStats = {},
+  triggerType = 'user_move',
+  oppMove = null,
   pool = 'peers',
   rating = 1500,
   tc = 'all',
@@ -1037,14 +1057,17 @@ export async function diagnoseFlawPosition({
       explorer.fetchPosition(fen, color, { signal }),
     ]);
 
-    const resolvedFlaw = resolveMoveDetails(fen, flawedUci || flawedSan);
-    const fUci = resolvedFlaw?.uci || normalizeCastlingUci(fen, flawedUci || '');
-    const alreadyInMultiPv = (engineLines || []).some(
-      (ln) => normalizeCastlingUci(fen, ln.uci).slice(0, 4) === fUci.slice(0, 4)
-    );
+    const isOppReply = triggerType === 'opponent_reply';
+    const resolvedFlaw = isOppReply ? null : resolveMoveDetails(fen, flawedUci || flawedSan);
+    const fUci = isOppReply ? '' : resolvedFlaw?.uci || normalizeCastlingUci(fen, flawedUci || '');
+    const alreadyInMultiPv =
+      !isOppReply &&
+      (engineLines || []).some(
+        (ln) => normalizeCastlingUci(fen, ln.uci).slice(0, 4) === fUci.slice(0, 4)
+      );
 
     let flawedEval = null;
-    if (!alreadyInMultiPv && fUci && evalOne) {
+    if (!isOppReply && !alreadyInMultiPv && fUci && evalOne) {
       flawedEval = await evalOne(fen, fUci, { depth: 10, signal });
     }
 
@@ -1053,12 +1076,14 @@ export async function diagnoseFlawPosition({
       ply,
       color,
       flawedUci: fUci,
-      flawedSan: resolvedFlaw?.san || flawedSan,
+      flawedSan: isOppReply ? oppMove?.san || flawedSan : resolvedFlaw?.san || flawedSan,
       flawedStats,
       engineLines,
       flawedEval,
       peerMoves: expRes?.moves || [],
       peerBracketLabel: expRes?.poolLabel || explorer.poolLabel,
+      triggerType,
+      oppMove,
     });
 
     return {
@@ -1087,6 +1112,7 @@ export function compileFlawRepertoire({
   flawedSan = '',
   flawedStats = {},
   mode = 'replace',
+  oppMove = null,
   anchorMove,
   diagnosis = null,
   branches = [],
@@ -1094,15 +1120,21 @@ export function compileFlawRepertoire({
   sectionName = '',
 }) {
   const c = color === 'b' ? 'b' : 'w';
+  const oppColor = c === 'w' ? 'b' : 'w';
   const flawPly = prefixMoves.length;
   const flawLabel = formatMoveLabel(flawPly, c, flawedSan);
+  const oppLabel = oppMove?.san
+    ? formatMoveLabel(oppMove.ply ?? Math.max(0, flawPly - 1), oppColor, oppMove.san)
+    : flawLabel;
   const anchorLabel = formatMoveLabel(flawPly, c, anchorMove.san);
   const shortOpening = (openingName || 'Opening').split(':')[0].trim().slice(0, 32);
   const cleanSection =
     (sectionName || '').trim().slice(0, 60) ||
-    (mode === 'repair'
-      ? `Fix: ${shortOpening} (${flawLabel} follow-ups)`
-      : `Fix: ${shortOpening} (${anchorLabel} vs ${flawLabel})`).slice(0, 60);
+    (mode === 'vs_opponent'
+      ? `Fix: ${shortOpening} (vs ${oppLabel})`
+      : mode === 'repair'
+        ? `Fix: ${shortOpening} (${flawLabel} follow-ups)`
+        : `Fix: ${shortOpening} (${anchorLabel} vs ${flawLabel})`).slice(0, 60);
 
   const total = Number(flawedStats?.total) || 0;
   const scorePct =
@@ -1115,11 +1147,15 @@ export function compileFlawRepertoire({
         : 0;
 
   const anchorNote =
-    mode === 'repair'
-      ? `${flawLabel} is objectively sound${diagnosis?.flawedMove?.evLabel ? ` (${diagnosis.flawedMove.evLabel})` : ''}. Your ${scorePct}% (${total}g) leak starts right after it — master the concrete follow-ups below.`
-      : `You scored ${scorePct}% (${total}g) with ${flawLabel}. Switch to ${anchorLabel}${
+    mode === 'vs_opponent'
+      ? `Against ${oppLabel} (where you scored ${scorePct}% over ${total}g), answer with ${anchorLabel}${
           anchorMove.evLabel ? ` (${anchorMove.evLabel})` : ''
-        }${anchorMove.peerScore !== null && anchorMove.peerScore !== undefined ? ` — scores ${anchorMove.peerScore}% among stronger peers` : ''}.`;
+        }${anchorMove.peerScore !== null && anchorMove.peerScore !== undefined ? ` — scores ${anchorMove.peerScore}% among stronger peers` : ''}.`
+      : mode === 'repair'
+        ? `${flawLabel} is objectively sound${diagnosis?.flawedMove?.evLabel ? ` (${diagnosis.flawedMove.evLabel})` : ''}. Your ${scorePct}% (${total}g) leak starts right after it — master the concrete follow-ups below.`
+        : `You scored ${scorePct}% (${total}g) with ${flawLabel}. Switch to ${anchorLabel}${
+            anchorMove.evLabel ? ` (${anchorMove.evLabel})` : ''
+          }${anchorMove.peerScore !== null && anchorMove.peerScore !== undefined ? ` — scores ${anchorMove.peerScore}% among stronger peers` : ''}.`;
 
   const linesSpec = branches.map((br, idx) => {
     const combined = [
@@ -1180,7 +1216,7 @@ export function compileFlawRepertoire({
     node.t = idx;
   }
 
-  // Attach habit warnings in `repertoire.warn`.
+  // Attach habit or opponent-reply warnings in `repertoire.warn`.
   if (mode === 'replace' && flawedUci && flawPly < (repertoire.lines[0]?.pos?.length || 0)) {
     const firstLn = repertoire.lines[0];
     const flawPosIdx = firstLn.pos[flawPly];
@@ -1196,6 +1232,14 @@ export function compileFlawRepertoire({
         repertoire.warn[`${prevPosIdx}|${prevOppUci}`] =
           `Watch out: avoid your old habit ${flawLabel} (${scorePct}% over ${total}g) — play ${anchorLabel}.`;
       }
+    }
+  } else if (mode === 'vs_opponent' && flawPly > 0 && flawPly < (repertoire.lines[0]?.pos?.length || 0)) {
+    const firstLn = repertoire.lines[0];
+    const prevPosIdx = firstLn.pos[flawPly - 1];
+    const prevOppUci = firstLn.uci[flawPly - 1];
+    if (prevOppUci) {
+      repertoire.warn[`${prevPosIdx}|${prevOppUci}`] =
+        `Watch out: ${oppLabel} has been tough (${scorePct}% over ${total}g) — answer with ${anchorLabel}.`;
     }
   }
 
@@ -1254,6 +1298,7 @@ export async function generateFlawRepertoire({
   flawedSan = '',
   flawedStats = {},
   mode = 'replace',
+  oppMove = null,
   anchorMove,
   diagnosis = null,
   presetKey = 'standard',
@@ -1555,6 +1600,7 @@ export async function generateFlawRepertoire({
       flawedSan,
       flawedStats,
       mode,
+      oppMove,
       anchorMove: {
         ...anchorMove,
         uci: anchorDet.uci,

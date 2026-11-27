@@ -16,6 +16,8 @@ function makeGames(n = 240) {
     const win = (i * 37) % 100 < line.win * 100;
     const me = { user: { name: 'Tester', id: 'tester' }, rating: 1800 + (i % 40) };
     const them = { user: { name: `opp${i % 17}`, id: `opp${i % 17}` }, rating: 1790 + ((i * 7) % 60) };
+    const isFrench = line.eco === 'C02';
+    const hasServerEval = isFrench && i < 30;
     games.push({
       id: `t${String(i).padStart(6, '0')}`,
       rated: true,
@@ -29,6 +31,21 @@ function makeGames(n = 240) {
       opening: { eco: line.eco, name: line.name, ply: line.ply },
       moves: line.moves,
       clock: { initial: 180, increment: 0, totalTime: 180 },
+      ...(hasServerEval
+        ? {
+            clocks: [17900, 17900, 17700, 17600, 17500, 17400, 17300, 17100],
+            analysis: [
+              { eval: 25 },
+              { eval: 20 },
+              { eval: 30 },
+              { eval: 25 },
+              { eval: 320 },
+              { eval: 310 },
+              { eval: -260, best: 'g1f3' },
+              { eval: -250 },
+            ],
+          }
+        : {}),
     });
   }
   return games;
@@ -68,11 +85,25 @@ test('Insights downloads a Lichess account, explains it, and hands positions to 
   await expect(page.locator('[data-act=takeaway]').first()).toBeVisible();
   await expect(page.locator('#view')).toContainText('French Defense is costing you points as White');
 
-  // Every tab renders.
-  for (const tab of ['openings', 'games', 'opponents', 'progress', 'overview']) {
+  // Every tab renders, including Coach (+100 Elo plan, Diagnostics, Benchmark & Drills).
+  for (const tab of ['coach', 'openings', 'games', 'opponents', 'progress', 'overview']) {
     await page.click(`#toolbar [data-act=tab][data-v=${tab}]`);
     await expect(page.locator('#view')).not.toBeEmpty();
   }
+
+  // Coach: Plan, Diagnostics (ingested from Lichess evals+clocks), and playable Blunder Drill.
+  await page.click('#toolbar [data-act=tab][data-v=coach]');
+  await expect(page.locator('#view')).toContainText('Where your +100 Elo comes from');
+  await page.click('[data-act=coach-sub][data-v=diagnostics]');
+  await expect(page.locator('#view')).toContainText('Accuracy by phase');
+  await expect(page.locator('#view')).toContainText('Conversion & resilience');
+  await page.click('[data-act=coach-sub][data-v=drills]');
+  await expect(page.locator('#view')).toContainText('Drill your mistakes');
+  // Solve the blunder puzzle by clicking g1 -> f3 (best move for 4.c3?? in the mocked French games).
+  await page.click('[data-act=drill-sq][data-sq=g1]');
+  await page.click('[data-act=drill-sq][data-sq=f3]');
+  await expect(page.locator('#view')).toContainText('✓ Nf3');
+  await page.click('#toolbar [data-act=tab][data-v=overview]');
 
   // A finding leads straight to the games behind it.
   const french = page.locator('[data-act=takeaway-games]').first();

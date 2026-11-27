@@ -94,7 +94,21 @@ export function normalizeLichessGame(g, account) {
   const clock = g.clock ? `${g.clock.initial}+${g.clock.increment}` : '';
   const opName = theirs?.user?.name || (theirs?.aiLevel ? `Stockfish level ${theirs.aiLevel}` : 'Anonymous');
 
-  return {
+  const clks = Array.isArray(g.clocks) && g.clocks.length
+    ? g.clocks.map((c) => (Number.isFinite(Number(c)) ? Math.round(Number(c) / 100) : null))
+    : null;
+  const acc = Number.isFinite(Number(mine?.analysis?.accuracy)) ? Number(mine.analysis.accuracy) : null;
+  const evals = Array.isArray(g.analysis) && g.analysis.length
+    ? g.analysis.map((a) => {
+        const o = {};
+        if (typeof a?.mate === 'number') o.m = a.mate;
+        else if (typeof a?.eval === 'number') o.c = a.eval;
+        if (typeof a?.best === 'string' && a.best) o.b = a.best;
+        return o;
+      })
+    : null;
+
+  const rec = {
     id: `li:${g.id}`,
     src: 'lichess',
     acct,
@@ -116,6 +130,10 @@ export function normalizeLichessGame(g, account) {
     plies,
     url: `https://lichess.org/${g.id}${color === 'b' ? '/black' : ''}`,
   };
+  if (clks) rec.clks = clks;
+  if (acc !== null) rec.acc = acc;
+  if (evals) rec.evals = evals;
+  return rec;
 }
 
 export function lichessTermination(status, res) {
@@ -196,7 +214,9 @@ export function normalizeChessComGame(g, account) {
 
   const openingUrl = headers.ECOUrl || (typeof g.eco === 'string' ? g.eco : '');
   const idMatch = String(g.url || '').match(/(\d+)\s*$/);
-  return {
+  const accRaw = g.accuracies?.[color === 'w' ? 'white' : 'black'];
+  const acc = Number.isFinite(Number(accRaw)) ? Number(accRaw) : null;
+  const rec = {
     id: `cc:${idMatch ? idMatch[1] : g.uuid || `${t}-${theirs.username}`}`,
     src: 'chesscom',
     acct,
@@ -218,6 +238,9 @@ export function normalizeChessComGame(g, account) {
     plies: sans.length,
     url: g.url || '',
   };
+  if (parsed?.clks) rec.clks = parsed.clks;
+  if (acc !== null) rec.acc = acc;
+  return rec;
 }
 
 /** "https://www.chess.com/openings/Sicilian-Defense-Open-2...Nc6" → "Sicilian Defense: Open 2...Nc6" */
@@ -273,46 +296,95 @@ export function parsePgnGames(text) {
       lastHeaderEnd = headerRe.lastIndex;
     }
     const movetext = chunk.slice(lastHeaderEnd);
-    const sans = extractSans(movetext);
+    const { sans, clks } = extractMovesAndClocks(movetext);
     if (!Object.keys(headers).length && !sans.length) continue;
-    out.push({ headers, sans });
+    const item = { headers, sans };
+    if (clks) item.clks = clks;
+    out.push(item);
   }
   return out;
 }
 
-function extractSans(movetext) {
-  let s = '';
+function parseClkTag(comment) {
+  const m = comment.match(/\[%clk\s+(\d+):(\d{1,2})(?::(\d{1,2}(?:\.\d+)?))?\]/);
+  if (!m) return null;
+  if (m[3] !== undefined) {
+    return Math.round(Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]));
+  }
+  return Math.round(Number(m[1]) * 60 + Number(m[2]));
+}
+
+function extractMovesAndClocks(movetext) {
+  const sans = [];
+  const clks = [];
+  let hasClk = false;
+  let token = '';
   let depth = 0;
   let inBrace = false;
+  let braceBuf = '';
+
+  const flushToken = () => {
+    if (!token) return;
+    const cleaned = token.replace(/^\d+\.+/, '').replace(/[!?]+$/, '');
+    token = '';
+    if (
+      cleaned &&
+      !/^\$\d+$/.test(cleaned) &&
+      !/^(1-0|0-1|1\/2-1\/2|\*)$/.test(cleaned) &&
+      !/^\d+\.+$/.test(cleaned)
+    ) {
+      sans.push(cleaned);
+      clks.push(null);
+    }
+  };
+
   for (let i = 0; i < movetext.length; i++) {
     const c = movetext[i];
     if (inBrace) {
-      if (c === '}') inBrace = false;
+      if (c === '}') {
+        inBrace = false;
+        if (depth === 0 && sans.length > 0) {
+          const sec = parseClkTag(braceBuf);
+          if (sec !== null) {
+            clks[sans.length - 1] = sec;
+            hasClk = true;
+          }
+        }
+        braceBuf = '';
+      } else if (depth === 0) {
+        braceBuf += c;
+      }
       continue;
     }
     if (c === '{') {
+      flushToken();
       inBrace = true;
+      braceBuf = '';
       continue;
     }
     if (c === ';') {
+      flushToken();
       const nl = movetext.indexOf('\n', i);
       i = nl === -1 ? movetext.length : nl;
       continue;
     }
     if (c === '(') {
+      flushToken();
       depth++;
       continue;
     }
     if (c === ')') {
+      flushToken();
       depth = Math.max(0, depth - 1);
       continue;
     }
-    if (depth === 0) s += c;
+    if (depth === 0) {
+      if (/\s/.test(c)) flushToken();
+      else token += c;
+    }
   }
-  return s
-    .split(/\s+/)
-    .map((tok) => tok.replace(/^\d+\.+/, '').replace(/[!?]+$/, ''))
-    .filter((tok) => tok && !/^\$\d+$/.test(tok) && !/^(1-0|0-1|1\/2-1\/2|\*)$/.test(tok) && !/^\d+\.+$/.test(tok));
+  flushToken();
+  return { sans, clks: hasClk ? clks : null };
 }
 
 /** Most frequent player name across PGN games (the likely owner of an uploaded file). */
@@ -383,7 +455,7 @@ export function normalizePgnGame(game, owner) {
   const t = parseHeaderDateTime(h.UTCDate || h.Date, h.UTCTime || h.Time) || 0;
   const moves = game.sans.join(' ');
   const site = /^https?:\/\//.test(h.Site || '') ? h.Site : '';
-  return {
+  const rec = {
     id: `pgn:${hashString(`${h.White}|${h.Black}|${h.Date}|${h.Round}|${moves}`)}`,
     src: 'pgn',
     acct: o,
@@ -405,4 +477,6 @@ export function normalizePgnGame(game, owner) {
     plies: game.sans.length,
     url: site,
   };
+  if (game.clks) rec.clks = game.clks;
+  return rec;
 }

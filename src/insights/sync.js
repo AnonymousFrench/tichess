@@ -105,8 +105,9 @@ async function streamLichess(account, params, { signal, onRecords, onTick }) {
   const qs = new URLSearchParams({
     moves: 'true',
     opening: 'true',
-    clocks: 'false',
-    evals: 'false',
+    clocks: 'true',
+    evals: 'true',
+    accuracy: 'true',
     tags: 'false',
     perfType: 'ultraBullet,bullet,blitz,rapid,classical,correspondence',
     ...params,

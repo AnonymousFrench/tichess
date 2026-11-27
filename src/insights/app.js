@@ -1,9 +1,19 @@
 /**
  * Insights page controller: accounts, syncing, filters, tabs and actions.
  */
+import { Chess } from 'chess.js';
 import { filterGames, PERIODS, previousPeriodGames } from './stats.js';
 import { TC_LABEL, TIME_CONTROLS, parsePgnGames, guessPgnOwner, normalizePgnGame, TERM_LABEL } from './normalize.js';
-import { loadAllGames, putGames, deleteAccountGames, loadAccounts, saveAccounts } from './store.js';
+import {
+  loadAllGames,
+  putGames,
+  deleteAccountGames,
+  loadAccounts,
+  saveAccounts,
+  loadAllAnalyses,
+  putAnalyses,
+  deleteAnalyses,
+} from './store.js';
 import { syncLichess, syncChessCom, RateLimitError } from './sync.js';
 import { esc, fmtInt } from './charts.js';
 import {
@@ -17,6 +27,12 @@ import {
   relTime,
   movesText,
 } from './views.js';
+import { renderCoach } from './coachView.js';
+import { buildLichessGameAnalysis, compareRepertoireToGames } from './coach.js';
+import { scanGamesWithStockfish } from './scanner.js';
+import { fetchPeerBenchmark, clearBenchmarkCache } from './benchmark.js';
+import { loadDrillProgress, saveDrillProgress, recordDrillOutcome, checkDrillAttempt } from './drills.js';
+import { loadRepertoire } from '../repertoire/storage.js';
 import { encodeMoveLine } from '../chess/shareUrl.js';
 import { initCloudSync, onCloudSyncState, getCloudSyncState, getLoginUrl } from '../sync/cloudSync.js';
 import { mountAccount } from '../shared/account.js';
@@ -27,6 +43,7 @@ const AUTO_SYNC_AFTER_MS = 10 * 60_000;
 
 const TABS = [
   ['overview', 'Overview'],
+  ['coach', 'Coach'],
   ['openings', 'Openings'],
   ['games', 'Games'],
   ['opponents', 'Opponents'],
@@ -46,6 +63,7 @@ const DEFAULT_UI = {
   openings: { sort: 'played', group: 'family', min: 5 },
   activity: { years: 3 },
   rating: { tc: '', range: '365' },
+  coach: { sub: 'plan', scanCount: 25, phase: '', benchIdx: 0, drillTag: 'all', excluded: [] },
 };
 
 function loadUi() {
@@ -76,6 +94,7 @@ function loadInsightsPin() {
 
 const S = {
   games: new Map(), // id → record
+  analyses: new Map(), // id → cached engine analysis
   list: [],
   accounts: [],
   ui: loadUi(),
@@ -90,6 +109,17 @@ const S = {
   moreOpen: false,
   exSel: null,
   exPinned: loadInsightsPin(),
+  repertoire: null,
+  repDiffKey: '',
+  repertoireDiff: null,
+  scan: null,
+  scanCtrl: null,
+  coachData: null,
+  coachDeck: null,
+  benchmark: null,
+  benchCtrl: null,
+  drillProgress: loadDrillProgress(),
+  drill: { cardId: '', selected: null, status: 'playing', hint: false, lastBad: null, solvedFen: '', nextBox: 0, failedOnce: false },
 };
 
 function saveUi() {
@@ -121,10 +151,24 @@ function toast(msg, isError = false) {
 /* Data                                                                */
 /* ------------------------------------------------------------------ */
 
+function ingestLichessEvals(records) {
+  const fresh = [];
+  for (const r of records) {
+    if (!r?.evals?.length || S.analyses.has(r.id)) continue;
+    const analysis = buildLichessGameAnalysis(r);
+    if (analysis) {
+      S.analyses.set(r.id, analysis);
+      fresh.push(analysis);
+    }
+  }
+  if (fresh.length) putAnalyses(fresh).catch(() => {});
+}
+
 function addRecords(records) {
   for (const r of records) S.games.set(r.id, r);
   S.list = [...S.games.values()];
   S.version++;
+  ingestLichessEvals(records);
 }
 
 const accountKey = (a) => `${a.src}:${a.name.toLowerCase()}`;
@@ -385,6 +429,10 @@ function render() {
     return;
   }
   document.body.classList.toggle('insights-board-pinned', S.exPinned);
+  if (S.ui.tab === 'coach' && S.repertoire && S.repDiffKey !== S.filteredKey) {
+    S.repertoireDiff = compareRepertoireToGames(S.repertoire, games);
+    S.repDiffKey = S.filteredKey;
+  }
   const ctx = {
     games,
     prevGames: S.prev,
@@ -394,12 +442,26 @@ function render() {
     exSel: S.exSel,
     exPinned: S.exPinned,
     profiles: S.accounts.map((a) => ({ name: a.name, src: a.src, perfs: a.perfs })),
+    analyses: S.analyses,
+    analysesCount: S.analyses.size,
+    repertoireDiff: S.repertoireDiff,
+    scan: S.scan,
+    benchmark: S.benchmark,
+    drill: S.drill,
+    drillProgress: S.drillProgress,
     setTakeaways: (t) => {
       S.takeaways = t;
+    },
+    setCoachData: (d) => {
+      S.coachData = d;
+    },
+    setCoachDeck: (deck) => {
+      S.coachDeck = deck;
     },
   };
   const renderers = {
     overview: renderOverview,
+    coach: renderCoach,
     openings: renderOpenings,
     games: renderGames,
     opponents: renderOpponents,
@@ -417,6 +479,9 @@ function render() {
     }
   }
   window.scrollTo(0, scrollY);
+  if (S.ui.tab === 'coach' && S.ui.coach.sub === 'drills') {
+    ensureBenchmarkLoaded();
+  }
 }
 
 let renderQueued = false;
@@ -469,14 +534,202 @@ async function removeAccount(key) {
   if (!a) return;
   if (!window.confirm(`Remove ${a.name} and delete its ${fmtInt(accountGamesCount(a))} downloaded games from this browser?`)) return;
   if (S.sync) stopSync();
+  if (S.scan) stopCoachScan();
   S.accounts = S.accounts.filter((x) => x !== a);
   await persistAccounts();
   await deleteAccountGames(a.src, a.name.toLowerCase());
-  for (const [id, g] of S.games) if (g.src === a.src && g.acct === a.name.toLowerCase()) S.games.delete(id);
+  const removedIds = [];
+  for (const [id, g] of S.games) {
+    if (g.src === a.src && g.acct === a.name.toLowerCase()) {
+      S.games.delete(id);
+      S.analyses.delete(id);
+      removedIds.push(id);
+    }
+  }
+  if (removedIds.length) deleteAnalyses(removedIds).catch(() => {});
   S.list = [...S.games.values()];
   S.version++;
   if (S.ui.filters.account === key) S.ui.filters.account = 'all';
   closePopover();
+  render();
+}
+
+/* ------------------------------------------------------------------ */
+/* Coach: Stockfish batch scan, +100 Elo benchmark, blunder drills     */
+/* ------------------------------------------------------------------ */
+
+function stopCoachScan() {
+  S.scanCtrl?.abort();
+}
+
+async function startCoachScan() {
+  if (S.scan) return;
+  const filtered = currentFiltered();
+  const limit = Number(S.ui.coach.scanCount) || 25;
+  const queue = [...filtered]
+    .sort((a, b) => b.t - a.t)
+    .filter((g) => g.moves && !S.analyses.has(g.id))
+    .slice(0, limit);
+  if (!queue.length) {
+    toast('All recent games in this selection are already analyzed.');
+    return;
+  }
+  const ctrl = new AbortController();
+  S.scanCtrl = ctrl;
+  S.scan = { gameIdx: 0, totalGames: queue.length, plyIdx: 0, totalPlies: 1, opp: queue[0].op };
+  render();
+  let scanned = 0;
+  try {
+    const res = await scanGamesWithStockfish(queue, {
+      depth: 10,
+      signal: ctrl.signal,
+      onProgress: (p) => {
+        S.scan = p;
+        scheduleRender();
+      },
+      onGameDone: async (analysis) => {
+        S.analyses.set(analysis.id, analysis);
+        await putAnalyses([analysis]).catch(() => {});
+        scanned++;
+        scheduleRender();
+      },
+    });
+    scanned = res.scanned;
+    if (!ctrl.signal.aborted) {
+      toast(`Analyzed ${fmtInt(scanned)} game${scanned === 1 ? '' : 's'} with Stockfish`);
+    }
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      toast(`Scan stopped (${fmtInt(scanned)} analyzed).`);
+    } else {
+      toast(`Stockfish scan failed: ${err?.message || err}`, true);
+    }
+  } finally {
+    S.scan = null;
+    S.scanCtrl = null;
+    render();
+  }
+}
+
+async function ensureBenchmarkLoaded(force = false) {
+  const cliffs = S.coachData?.cliffs;
+  if (!cliffs?.length) return;
+  const idx = Math.min(cliffs.length - 1, Math.max(0, S.ui.coach.benchIdx || 0));
+  const cliff = cliffs[idx];
+  const rating = S.coachData?.plan?.currentRating || 1500;
+  const tc = S.ui.filters.tc || 'all';
+  const key = `${cliff.fen}|${rating}|${tc}|${cliff.color}`;
+  if (!force && S.benchmark?.key === key) return;
+
+  S.benchCtrl?.abort();
+  const ctrl = new AbortController();
+  S.benchCtrl = ctrl;
+  S.benchmark = { key, loading: true };
+  if (force) {
+    clearBenchmarkCache();
+    render();
+  }
+  try {
+    const result = await fetchPeerBenchmark(cliff.fen, { rating, tc, color: cliff.color, signal: ctrl.signal });
+    if (ctrl.signal.aborted || S.benchCtrl !== ctrl) return;
+    S.benchmark = { key, loading: false, ...result };
+    if (S.ui.tab === 'coach' && S.ui.coach.sub === 'drills') render();
+  } catch (err) {
+    if (err?.name !== 'AbortError') {
+      S.benchmark = { key, loading: false, status: 'error', message: err?.message || 'Explorer failed.' };
+      if (S.ui.tab === 'coach' && S.ui.coach.sub === 'drills') render();
+    }
+  }
+}
+
+function resetDrill(cardId = '') {
+  S.drill = {
+    cardId,
+    selected: null,
+    status: 'playing',
+    hint: false,
+    lastBad: null,
+    solvedFen: '',
+    nextBox: 0,
+    failedOnce: false,
+  };
+}
+
+function activeDrillCard() {
+  const cards = S.coachDeck?.cards || [];
+  if (!cards.length) return null;
+  return cards.find((c) => c.id === S.drill.cardId) || cards[0];
+}
+
+function handleDrillSquare(sq) {
+  const card = activeDrillCard();
+  if (!card || S.drill.status === 'solved') return;
+  let chess;
+  try {
+    chess = new Chess(card.fenBefore);
+  } catch (_) {
+    return;
+  }
+  const turn = chess.turn();
+  const piece = chess.get(sq);
+  const isOwnPiece = Boolean(piece && piece.color === turn);
+
+  if (!S.drill.selected) {
+    if (isOwnPiece) {
+      S.drill.selected = sq;
+      S.drill.status = 'playing';
+      S.drill.lastBad = null;
+      render();
+    }
+    return;
+  }
+  if (S.drill.selected === sq) {
+    S.drill.selected = null;
+    render();
+    return;
+  }
+  if (isOwnPiece) {
+    S.drill.selected = sq;
+    S.drill.status = 'playing';
+    S.drill.lastBad = null;
+    render();
+    return;
+  }
+
+  const res = checkDrillAttempt(card, S.drill.selected, sq);
+  if (!res.legal) {
+    S.drill.selected = null;
+    render();
+    return;
+  }
+
+  if (res.correct) {
+    const cleanSolve = !S.drill.failedOnce && !S.drill.hint;
+    S.drillProgress = recordDrillOutcome(S.drillProgress, card.id, cleanSolve);
+    saveDrillProgress(S.drillProgress);
+    S.drill = {
+      ...S.drill,
+      cardId: card.id,
+      selected: null,
+      status: 'solved',
+      solvedFen: res.fenAfter,
+      nextBox: S.drillProgress[card.id]?.box || 0,
+      lastBad: null,
+    };
+  } else {
+    if (!S.drill.failedOnce) {
+      S.drillProgress = recordDrillOutcome(S.drillProgress, card.id, false);
+      saveDrillProgress(S.drillProgress);
+    }
+    S.drill = {
+      ...S.drill,
+      cardId: card.id,
+      selected: null,
+      status: 'wrong',
+      lastBad: sq,
+      failedOnce: true,
+    };
+  }
   render();
 }
 
@@ -945,6 +1198,101 @@ function onClick(e) {
       saveUi();
       render();
       break;
+    case 'coach-sub':
+      ui.coach.sub = el.dataset.v || 'plan';
+      saveUi();
+      render();
+      break;
+    case 'coach-scan':
+      startCoachScan();
+      break;
+    case 'coach-scan-stop':
+      stopCoachScan();
+      break;
+    case 'coach-phase':
+      ui.coach.phase = el.dataset.v || '';
+      saveUi();
+      render();
+      break;
+    case 'coach-bench-idx':
+      ui.coach.benchIdx = Number(el.dataset.i) || 0;
+      saveUi();
+      render();
+      break;
+    case 'coach-bench-jump': {
+      const cliffs = S.coachData?.cliffs || [];
+      const idx = cliffs.findIndex((c) => c.childPrefix === el.dataset.prefix);
+      ui.coach.benchIdx = idx >= 0 ? idx : 0;
+      ui.coach.sub = 'drills';
+      saveUi();
+      render();
+      break;
+    }
+    case 'coach-bench-retry':
+      ensureBenchmarkLoaded(true);
+      break;
+    case 'coach-bench-studio': {
+      const cliff = S.coachData?.cliffs?.[Number(el.dataset.i) || 0];
+      if (cliff) openInStudio(cliff.path, { flipped: cliff.color === 'b', title: cliff.opening || 'Opening benchmark' });
+      break;
+    }
+    case 'coach-drill-open':
+      ui.coach.drillTag = 'all';
+      ui.coach.sub = 'drills';
+      resetDrill(el.dataset.id || '');
+      saveUi();
+      render();
+      break;
+    case 'coach-drill-tag':
+      ui.coach.drillTag = el.dataset.tag || 'all';
+      ui.coach.sub = 'drills';
+      resetDrill('');
+      saveUi();
+      render();
+      break;
+    case 'coach-drill-hint': {
+      const card = activeDrillCard();
+      if (card) {
+        S.drill.cardId = card.id;
+        S.drill.hint = true;
+        render();
+      }
+      break;
+    }
+    case 'coach-drill-solve': {
+      const card = activeDrillCard();
+      if (card && card.bestUci?.length >= 4) {
+        const res = checkDrillAttempt(card, card.bestUci.slice(0, 2), card.bestUci.slice(2, 4));
+        S.drillProgress = recordDrillOutcome(S.drillProgress, card.id, false);
+        saveDrillProgress(S.drillProgress);
+        S.drill = {
+          cardId: card.id,
+          selected: null,
+          status: 'solved',
+          hint: true,
+          lastBad: null,
+          solvedFen: res.fenAfter || card.fenBefore,
+          nextBox: 0,
+          failedOnce: true,
+        };
+        render();
+      }
+      break;
+    }
+    case 'coach-drill-next': {
+      const cards = S.coachDeck?.cards || [];
+      if (cards.length > 1) {
+        const cur = activeDrillCard();
+        const i = cur ? cards.findIndex((c) => c.id === cur.id) : 0;
+        const next = cards[(i + 1) % cards.length];
+        resetDrill(next.id);
+        render();
+      }
+      break;
+    }
+    case 'drill-sq':
+      handleDrillSquare(el.dataset.sq);
+      break;
     default:
       break;
   }
@@ -965,6 +1313,23 @@ function onChange(e) {
     render();
   } else if (act === 'op-min') {
     S.ui.openings.min = Number(el.value) || 1;
+    saveUi();
+    render();
+  } else if (act === 'coach-scan-count') {
+    S.ui.coach.scanCount = Number(el.value) || 25;
+    saveUi();
+    render();
+  } else if (act === 'coach-toggle-item') {
+    const id = el.dataset.id;
+    const set = new Set(S.ui.coach.excluded || []);
+    if (el.checked) set.delete(id);
+    else set.add(id);
+    S.ui.coach.excluded = [...set];
+    saveUi();
+    render();
+  } else if (act === 'coach-drill-filter') {
+    S.ui.coach.drillTag = el.value || 'all';
+    resetDrill('');
     saveUi();
     render();
   } else if (el.id === 'pgnInput') {
@@ -1058,8 +1423,16 @@ export async function startInsights() {
   mountAccount();
 
   try {
-    S.accounts = await loadAccounts();
-    addRecords(await loadAllGames());
+    const [accounts, games, analyses, savedRep] = await Promise.all([
+      loadAccounts(),
+      loadAllGames(),
+      loadAllAnalyses().catch(() => []),
+      loadRepertoire().catch(() => null),
+    ]);
+    S.accounts = accounts;
+    for (const a of analyses || []) if (a?.id) S.analyses.set(a.id, a);
+    if (savedRep?.repertoire) S.repertoire = savedRep.repertoire;
+    addRecords(games);
   } catch (err) {
     console.error(err);
     toast('This browser blocked local storage, so games cannot be saved (private window?).', true);

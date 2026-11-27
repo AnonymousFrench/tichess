@@ -4,7 +4,7 @@
  */
 
 const DB_NAME = 'tichess-insights';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -16,6 +16,7 @@ function openDb() {
         s.createIndex('account', ['src', 'acct']);
       }
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
+      if (!db.objectStoreNames.contains('analyses')) db.createObjectStore('analyses', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -103,5 +104,25 @@ export async function loadPrefs() {
 export async function savePrefs(prefs) {
   await tx('meta', 'readwrite', (t) => {
     t.objectStore('meta').put(prefs, 'prefs');
+  });
+}
+
+export async function loadAllAnalyses() {
+  return tx('analyses', 'readonly', (t) => reqResult(t.objectStore('analyses').getAll()));
+}
+
+export async function putAnalyses(records) {
+  if (!records.length) return;
+  await tx('analyses', 'readwrite', (t) => {
+    const s = t.objectStore('analyses');
+    for (const r of records) s.put(r);
+  });
+}
+
+export async function deleteAnalyses(ids) {
+  if (!ids.length) return;
+  await tx('analyses', 'readwrite', (t) => {
+    const s = t.objectStore('analyses');
+    for (const id of ids) s.delete(id);
   });
 }

@@ -127,7 +127,19 @@ export default async function handler(req, res) {
     if (source === 'masters') {
       targetUrl = `https://explorer.lichess.org/masters?fen=${encodeURIComponent(fen)}&topGames=8&recentGames=4`;
     } else if (source === 'lichess') {
-      targetUrl = `https://explorer.lichess.org/lichess?fen=${encodeURIComponent(fen)}&ratings=2000,2200,2500&speeds=blitz,rapid,classical&topGames=4&recentGames=6`;
+      const allowedRatings = new Set(['0', '400', '1000', '1200', '1400', '1600', '1800', '2000', '2200', '2500']);
+      const allowedSpeeds = new Set(['ultraBullet', 'bullet', 'blitz', 'rapid', 'classical', 'correspondence']);
+      const rawRatings = String(req.query?.ratings || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => allowedRatings.has(s));
+      const rawSpeeds = String(req.query?.speeds || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => allowedSpeeds.has(s));
+      const ratingsParam = rawRatings.length ? rawRatings.join(',') : '2000,2200,2500';
+      const speedsParam = rawSpeeds.length ? rawSpeeds.join(',') : 'blitz,rapid,classical';
+      targetUrl = `https://explorer.lichess.org/lichess?fen=${encodeURIComponent(fen)}&ratings=${encodeURIComponent(ratingsParam)}&speeds=${encodeURIComponent(speedsParam)}&topGames=4&recentGames=6`;
     } else {
       // Lichess /player explorer caps recentGames at 4
       const sinceParam = since ? `&since=${encodeURIComponent(since)}` : '';

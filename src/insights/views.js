@@ -425,7 +425,17 @@ function explorerPanel(ctx) {
     }
   }
   const flipped = ui.flipped ?? ui.color === 'b';
-  const board = miniBoardHtml(fen, { flipped, last, arrows });
+  const selectedSq = ctx.exSel || null;
+  let dests = null;
+  if (selectedSq) {
+    try {
+      dests = chess.moves({ square: selectedSq, verbose: true }).map((m) => m.to);
+    } catch (_) {
+      dests = [];
+    }
+  }
+  const board = miniBoardHtml(fen, { flipped, last, arrows, interactive: true, selected: selectedSq, dests });
+  const pinned = ctx.exPinned !== false;
   const fullPath = Array.isArray(ui.fullPath) ? ui.fullPath : [];
   const hasFullFwd = fullPath.length > ui.path.length && ui.path.every((s, i) => fullPath[i] === s);
   const topSan = node.moves[0]?.san || '';
@@ -460,8 +470,17 @@ function explorerPanel(ctx) {
   const recentHere = [...node.reached].sort((a, b) => b.t - a.t).slice(0, 5);
   const side = ui.color === 'w' ? 'White' : 'Black';
   return `<div class="grid gap-3 xl:grid-cols-[minmax(240px,360px)_1fr] items-start min-w-0" id="insExplorer">
-    <div class="grid gap-1.5">
-      ${board}
+    <div id="insExplorerBoard" class="grid gap-1.5">
+      <div class="xl:hidden flex items-center justify-between gap-2 text-[10.5px] text-txtMuted">
+        <span>Tap pieces or moves to explore</span>
+        <button type="button" data-act="ex-pin" aria-pressed="${pinned}" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border font-semibold transition-colors ${
+          pinned ? 'bg-em/15 text-em border-em/40' : 'bg-surface text-txtMuted border-borderSubtle'
+        }" title="${pinned ? 'Board fixed while scrolling — tap to unpin' : 'Fix board while scrolling'}">
+          <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+          <span>${pinned ? 'Pinned' : 'Pin'}</span>
+        </button>
+      </div>
+      <div class="ins-board-frame w-full">${board}</div>
       <div class="board-controls board-controls-bare">
         <div class="board-nav" role="group" aria-label="Move navigation">
           <button data-act="ex-goto" data-i="0" class="board-btn board-btn-nav" title="First move" aria-label="Start position" ${atStart ? 'disabled' : ''}>${BOARD_ICONS.first}</button>

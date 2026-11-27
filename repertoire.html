@@ -10,6 +10,9 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
   <link rel="manifest" href="/site.webmanifest" />
   <meta name="theme-color" content="#0b0c0f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 <body>
 <header class="topbar"><div class="in gut">
@@ -96,17 +99,26 @@
     <div class="chips" id="s-secs" aria-label="Opening"></div>
     <div class="study">
       <div class="bcol">
-        <div class="bleed"><div class="cb" id="s-board"></div></div>
-        <div class="board-controls board-controls-bare">
-          <div class="board-nav" role="group" aria-label="Move navigation">
-            <button type="button" class="board-btn board-btn-nav" id="s-first" title="First move (Home)" aria-label="First move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6v12M18 6l-6 6 6 6"/></svg></button>
-            <button type="button" class="board-btn board-btn-nav" id="s-back" title="Previous move (←)" aria-label="Back one move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
-            <button type="button" class="board-btn board-btn-nav" id="s-fwd" title="Next move (→)" aria-label="Forward one move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
-            <button type="button" class="board-btn board-btn-nav" id="s-last" title="Last move (End)" aria-label="Last move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6v12M6 6l6 6-6 6"/></svg></button>
+        <div class="bcol-sticky">
+          <div class="rep-pin-bar">
+            <span class="rep-pin-hint">Study board</span>
+            <button type="button" class="rep-pin-btn is-on" data-rep-pin aria-pressed="true" title="Board fixed at top while scrolling — tap to unpin">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+              <span>Pinned</span>
+            </button>
           </div>
-          <div class="board-actions">
-            <button type="button" class="board-btn board-btn-ico" id="s-flip" title="Flip board (f)" aria-label="Flip board"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 20V4M4 7l3-3 3 3M17 4v16M14 17l3 3 3-3"/></svg></button>
-            <button type="button" class="board-btn board-btn-ico board-btn-em" id="s-tichess" title="Open this line in the tichess analysis studio, with Lichess explorer and live engines" aria-label="Open in Studio"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-9 9M19 14v4a1 1 0 01-1 1H6a1 1 0 01-1-1V6a1 1 0 011-1h4"/></svg></button>
+          <div class="bleed"><div class="cb" id="s-board"></div></div>
+          <div class="board-controls board-controls-bare">
+            <div class="board-nav" role="group" aria-label="Move navigation">
+              <button type="button" class="board-btn board-btn-nav" id="s-first" title="First move (Home)" aria-label="First move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6v12M18 6l-6 6 6 6"/></svg></button>
+              <button type="button" class="board-btn board-btn-nav" id="s-back" title="Previous move (←)" aria-label="Back one move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+              <button type="button" class="board-btn board-btn-nav" id="s-fwd" title="Next move (→)" aria-label="Forward one move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+              <button type="button" class="board-btn board-btn-nav" id="s-last" title="Last move (End)" aria-label="Last move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6v12M6 6l6 6-6 6"/></svg></button>
+            </div>
+            <div class="board-actions">
+              <button type="button" class="board-btn board-btn-ico" id="s-flip" title="Flip board (f)" aria-label="Flip board"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 20V4M4 7l3-3 3 3M17 4v16M14 17l3 3 3-3"/></svg></button>
+              <button type="button" class="board-btn board-btn-ico board-btn-em" id="s-tichess" title="Open this line in the tichess analysis studio, with Lichess explorer and live engines" aria-label="Open in Studio"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-9 9M19 14v4a1 1 0 01-1 1H6a1 1 0 01-1-1V6a1 1 0 011-1h4"/></svg></button>
+            </div>
           </div>
         </div>
         <div class="ctl">
@@ -121,6 +133,7 @@
           <h2 id="s-title"></h2>
         </div>
         <div id="s-notes" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div class="sibs" id="s-sibs" hidden></div>
         <div class="lchips" id="s-lines"></div>
         <div class="prefix" id="s-prefix"></div>
         <div class="tree" id="s-tree"></div>
@@ -137,17 +150,26 @@
   <section class="view" id="v-explore" hidden>
     <div class="study">
       <div class="bcol">
-        <div class="bleed"><div class="cb" id="x-board"></div></div>
-        <div class="board-controls board-controls-bare">
-          <div class="board-nav" role="group" aria-label="Move navigation">
-            <button type="button" class="board-btn board-btn-nav" id="x-start" title="First move (Home)" aria-label="Start position"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6v12M18 6l-6 6 6 6"/></svg></button>
-            <button type="button" class="board-btn board-btn-nav" id="x-prev" title="Previous move (←)" aria-label="Back one move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
-            <button type="button" class="board-btn board-btn-nav" id="x-next" title="Next move (→)" aria-label="Forward one move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
-            <button type="button" class="board-btn board-btn-nav" id="x-last" title="Last move (End)" aria-label="Last move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6v12M6 6l6 6-6 6"/></svg></button>
+        <div class="bcol-sticky">
+          <div class="rep-pin-bar">
+            <span class="rep-pin-hint">Analysis board</span>
+            <button type="button" class="rep-pin-btn is-on" data-rep-pin aria-pressed="true" title="Board fixed at top while scrolling — tap to unpin">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+              <span>Pinned</span>
+            </button>
           </div>
-          <div class="board-actions">
-            <button type="button" class="board-btn board-btn-ico" id="x-flip" title="Flip board (f)" aria-label="Flip board"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 20V4M4 7l3-3 3 3M17 4v16M14 17l3 3 3-3"/></svg></button>
-            <button type="button" class="board-btn board-btn-ico board-btn-em" id="x-tichess" title="Open this position in the tichess analysis studio" aria-label="Open in Studio"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-9 9M19 14v4a1 1 0 01-1 1H6a1 1 0 01-1-1V6a1 1 0 011-1h4"/></svg></button>
+          <div class="bleed"><div class="cb" id="x-board"></div></div>
+          <div class="board-controls board-controls-bare">
+            <div class="board-nav" role="group" aria-label="Move navigation">
+              <button type="button" class="board-btn board-btn-nav" id="x-start" title="First move (Home)" aria-label="Start position"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6v12M18 6l-6 6 6 6"/></svg></button>
+              <button type="button" class="board-btn board-btn-nav" id="x-prev" title="Previous move (←)" aria-label="Back one move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+              <button type="button" class="board-btn board-btn-nav" id="x-next" title="Next move (→)" aria-label="Forward one move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+              <button type="button" class="board-btn board-btn-nav" id="x-last" title="Last move (End)" aria-label="Last move"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6v12M6 6l6 6-6 6"/></svg></button>
+            </div>
+            <div class="board-actions">
+              <button type="button" class="board-btn board-btn-ico" id="x-flip" title="Flip board (f)" aria-label="Flip board"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 20V4M4 7l3-3 3 3M17 4v16M14 17l3 3 3-3"/></svg></button>
+              <button type="button" class="board-btn board-btn-ico board-btn-em" id="x-tichess" title="Open this position in the tichess analysis studio" aria-label="Open in Studio"><svg class="board-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-9 9M19 14v4a1 1 0 01-1 1H6a1 1 0 01-1-1V6a1 1 0 011-1h4"/></svg></button>
+            </div>
           </div>
         </div>
         <div class="ctl">
@@ -217,6 +239,7 @@
   <div class="s-head">
     <button class="x" id="se-x" aria-label="End session">×</button>
     <div class="t" id="se-title">Review</div>
+    <button type="button" class="s-auto" id="se-auto" aria-pressed="false" title="Auto-advance after playing a new move in Learn mode">Auto</button>
     <span class="sc" id="se-score"></span>
   </div>
   <div class="s-prog"><i id="se-prog" style="width:0"></i></div>
@@ -244,6 +267,7 @@
       <p class="warnbox" id="se-warn" hidden></p>
       <div class="notecard" id="se-note" hidden><span class="eyebrow" id="se-note-h">Why</span><span id="se-note-t"></span></div>
       <div class="minimoves" id="se-moves"></div>
+      <div class="sibs" id="se-sibs" hidden></div>
       <div id="se-sum" hidden></div>
     </div>
     <div class="c-act s-foot" id="se-act"></div>

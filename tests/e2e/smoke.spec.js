@@ -756,9 +756,12 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
   await page.locator('#hub-repertoire .rep-tree-move', { hasText: 'Nf3' }).click();
   await expect(page.locator('#variationTreeContainer')).toContainText('Nf3');
 
-  // Verify pinned board stays fixed at top when scrolling down to tools, and toggles off cleanly
+  // Verify pinned board stays fixed at top when scrolling down to tools, mobile tool jump tabs work, and unpin toggles cleanly
   await expect(page.locator('#btnPinBoard')).toBeVisible();
   await expect(page.locator('#btnPinBoard')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#mobileToolTabs [data-tool-jump="explorer"]')).toBeVisible();
+  await page.click('#mobileToolTabs [data-tool-jump="explorer"]');
+  await page.waitForTimeout(350);
   await page.evaluate(() => window.scrollTo(0, 450));
   const pinnedBoardTop = await page.evaluate(() => ({
     scrollY: window.scrollY,
@@ -789,9 +792,10 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
   expect(repScroll.overscrollY).toBe('auto');
   expect(repScroll.scrollY).toBeGreaterThan(100);
 
-  // Repertoire Study uses the same single-row board controls as Studio (first/prev/next/last/flip/studio)
+  // Repertoire Study uses the same single-row board controls as Studio (first/prev/next/last/flip/studio) and supports mobile board pinning
   await page.click('.tabbar button[data-tab="study"]');
   await expect(page.locator('#s-fwd')).toBeVisible();
+  await expect(page.locator('#v-study [data-rep-pin]')).toHaveAttribute('aria-pressed', 'true');
   const studyRowYs = await page.evaluate(() =>
     ['s-first', 's-back', 's-fwd', 's-last', 's-flip', 's-tichess'].map((id) =>
       Math.round(document.getElementById(id).getBoundingClientRect().y)
@@ -820,7 +824,7 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
   await expect(page.locator('#se-next')).toBeDisabled();
   await page.click('#se-x');
 
-  // Learn session: no Continue button; forward arrow is highlighted and clickable instead of greyed out
+  // Learn session: no Continue button; forward arrow is highlighted and clickable; Auto toggle auto-advances taught moves
   await page.click('.tabbar button[data-tab="train"]');
   await page.click('#b-learn');
   await expect(page.locator('#session')).toBeVisible();
@@ -833,8 +837,17 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
   await expect(page.locator('#se-cont')).toHaveCount(0);
   await expect(page.locator('#se-next')).toBeEnabled();
   await expect(page.locator('#se-next')).toHaveClass(/board-btn-primary/);
-  await page.click('#se-next');
+  // Enabling Auto immediately advances the pending taught move into the next move
+  await page.click('#se-auto');
+  await expect(page.locator('#se-auto')).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('#se-prompt')).toContainText('New move', { timeout: 5_000 });
+
+  // PWA assets (service worker + manifest) are served cleanly
+  const pwaRes = await page.evaluate(async () => {
+    const [sw, man] = await Promise.all([fetch('/sw.js'), fetch('/site.webmanifest')]);
+    return { swOk: sw.ok, manOk: man.ok };
+  });
+  expect(pwaRes).toEqual({ swOk: true, manOk: true });
   expect(pageErrors).toEqual([]);
 });
 

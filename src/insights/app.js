@@ -65,6 +65,15 @@ function loadUi() {
   }
 }
 
+const INSIGHTS_PIN_KEY = 'tichess_insights_pin_board_v1';
+function loadInsightsPin() {
+  try {
+    const v = localStorage.getItem(INSIGHTS_PIN_KEY);
+    if (v === '0' || v === 'false') return false;
+  } catch (_) {}
+  return true;
+}
+
 const S = {
   games: new Map(), // id → record
   list: [],
@@ -79,6 +88,8 @@ const S = {
   filtered: [],
   prev: null,
   moreOpen: false,
+  exSel: null,
+  exPinned: loadInsightsPin(),
 };
 
 function saveUi() {
@@ -156,8 +167,13 @@ const SECONDARY_FILTERS = ['opp', 'rated', 'account'];
 
 function renderHeader() {
   const right = $('hdrRight');
+  const banner = $('syncBanner');
   if (!S.accounts.length) {
     right.innerHTML = '';
+    if (banner) {
+      banner.hidden = true;
+      banner.innerHTML = '';
+    }
     $('syncBar').hidden = true;
     return;
   }
@@ -176,12 +192,21 @@ function renderHeader() {
       : fetched
         ? `${fmtInt(fetched)} games`
         : 'Connecting…';
-    status = `<span class="flex items-center gap-1.5 text-[11px] text-txtMuted min-w-0"><span class="w-2 h-2 rounded-full bg-em animate-pulse shrink-0"></span><span class="hidden sm:inline">${esc(S.sync.label)}</span> <span class="font-mono truncate">${amount}<span class="hidden sm:inline">${eta}</span></span></span>
-      <button data-act="stop-sync" class="px-2 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11px]">Stop</button>`;
+    status = `<span class="hidden sm:flex items-center gap-1.5 text-[11px] text-txtMuted min-w-0"><span class="w-2 h-2 rounded-full bg-em animate-pulse shrink-0"></span><span>${esc(S.sync.label)}</span> <span class="font-mono truncate">${amount}${eta}</span></span>
+      <button data-act="stop-sync" class="hidden sm:inline-flex px-2 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11px]">Stop</button>`;
+    if (banner) {
+      banner.hidden = false;
+      banner.innerHTML = `<span class="flex items-center gap-1.5 text-txtMuted min-w-0"><span class="w-2 h-2 rounded-full bg-em animate-pulse shrink-0"></span><span class="truncate">${esc(S.sync.label)}</span> <span class="font-mono shrink-0 text-txt">${amount}</span></span>
+        <button data-act="stop-sync" class="px-2 py-0.5 rounded-md bg-surface hover:bg-surfaceHover border border-borderSubtle text-[10.5px] font-semibold shrink-0">Stop</button>`;
+    }
   } else {
     const last = Math.max(0, ...S.accounts.map((a) => a.lastSync || 0));
     status = `<span class="hidden sm:inline text-[11px] text-txtMuted">${last ? `Updated ${esc(relTime(last))}` : 'Not synced yet'}</span>
-      <button data-act="sync" class="px-2.5 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11px] font-semibold whitespace-nowrap" title="Download new games" aria-label="Sync">↻<span class="hidden sm:inline"> Sync</span></button>`;
+      <button data-act="sync" class="px-2 py-1 sm:px-2.5 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11px] font-semibold whitespace-nowrap" title="Download new games" aria-label="Sync">↻<span class="hidden sm:inline"> Sync</span></button>`;
+    if (banner) {
+      banner.hidden = true;
+      banner.innerHTML = '';
+    }
   }
   // What is being analyzed (games and where they come from), not who is signed in:
   // the account itself is the shared control next to this.
@@ -189,7 +214,7 @@ function renderHeader() {
   const n = S.list.length;
   const short = n >= 10_000 ? `${Math.round(n / 1000)}k` : fmtInt(n);
   right.innerHTML = `${status}
-    <button data-act="accounts" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11.5px] font-semibold min-w-0" aria-haspopup="dialog" aria-label="Game sources: ${esc(names.join(', '))}" title="Games from ${esc(names.join(', '))}. Add or remove accounts and files.">
+    <button data-act="accounts" class="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle text-[11.5px] font-semibold min-w-0 shrink-0" aria-haspopup="dialog" aria-label="Game sources: ${esc(names.join(', '))}" title="Games from ${esc(names.join(', '))}. Add or remove accounts and files.">
       <svg class="w-3.5 h-3.5 shrink-0 text-txtMuted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
       <span class="font-mono">${short}</span><span class="hidden sm:inline">games</span><span class="text-txtMuted text-[10px]">▾</span>
     </button>`;
@@ -359,12 +384,15 @@ function render() {
     }
     return;
   }
+  document.body.classList.toggle('insights-board-pinned', S.exPinned);
   const ctx = {
     games,
     prevGames: S.prev,
     all: S.list,
     now: Date.now(),
     ui: S.ui,
+    exSel: S.exSel,
+    exPinned: S.exPinned,
     profiles: S.accounts.map((a) => ({ name: a.name, src: a.src, perfs: a.perfs })),
     setTakeaways: (t) => {
       S.takeaways = t;
@@ -769,6 +797,7 @@ function onClick(e) {
       render();
       break;
     case 'ex-move': {
+      S.exSel = null;
       const next = [...ui.explorer.path, el.dataset.san];
       const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
       const matchesFp = fp.length >= next.length && next.every((s, i) => fp[i] === s);
@@ -778,7 +807,46 @@ function onClick(e) {
       render();
       break;
     }
+    case 'ex-sq': {
+      const sq = el.dataset.sq;
+      if (!sq) break;
+      const { chess } = replay(ui.explorer.path);
+      if (S.exSel && S.exSel !== sq) {
+        try {
+          const mv = chess.move({ from: S.exSel, to: sq, promotion: 'q' });
+          if (mv) {
+            S.exSel = null;
+            const next = [...ui.explorer.path, mv.san];
+            const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
+            const matchesFp = fp.length >= next.length && next.every((s, i) => fp[i] === s);
+            ui.explorer.path = next;
+            if (!matchesFp) ui.explorer.fullPath = [...next];
+            saveUi();
+            render();
+            break;
+          }
+        } catch (_) {
+          /* not a legal destination from S.exSel */
+        }
+      }
+      if (S.exSel === sq) {
+        S.exSel = null;
+      } else {
+        const legal = chess.moves({ square: sq, verbose: true });
+        S.exSel = legal.length ? sq : null;
+      }
+      render();
+      break;
+    }
+    case 'ex-pin':
+      S.exPinned = !S.exPinned;
+      try {
+        localStorage.setItem(INSIGHTS_PIN_KEY, S.exPinned ? '1' : '0');
+      } catch (_) {}
+      render();
+      break;
     case 'ex-back': {
+      S.exSel = null;
       const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
       if (fp.length < ui.explorer.path.length) ui.explorer.fullPath = [...ui.explorer.path];
       ui.explorer.path = ui.explorer.path.slice(0, -1);
@@ -787,6 +855,7 @@ function onClick(e) {
       break;
     }
     case 'ex-fwd': {
+      S.exSel = null;
       const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
       const hasFullFwd = fp.length > ui.explorer.path.length && ui.explorer.path.every((s, i) => fp[i] === s);
       if (hasFullFwd) {
@@ -800,6 +869,7 @@ function onClick(e) {
       break;
     }
     case 'ex-last': {
+      S.exSel = null;
       const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
       const hasFullFwd = fp.length > ui.explorer.path.length && ui.explorer.path.every((s, i) => fp[i] === s);
       if (hasFullFwd) {
@@ -810,6 +880,7 @@ function onClick(e) {
       break;
     }
     case 'ex-goto': {
+      S.exSel = null;
       const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
       if (fp.length < ui.explorer.path.length) ui.explorer.fullPath = [...ui.explorer.path];
       ui.explorer.path = ui.explorer.path.slice(0, Number(el.dataset.i));
@@ -823,6 +894,7 @@ function onClick(e) {
       render();
       break;
     case 'ex-color':
+      S.exSel = null;
       ui.explorer.color = el.dataset.v;
       ui.explorer.flipped = null;
       saveUi();

@@ -227,11 +227,29 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     return cands.find(l=>l.cards.some(x=>status(x.c)==="new")) || null;
   }
 
+  /* ---------- mobile board pin ---------- */
+  let repBoardPinned=true;
+  try{ const p=localStorage.getItem("rt2-pin-board"); if(p==="0"||p==="false") repBoardPinned=false; }catch(_){}
+  function applyRepPin(){
+    document.body.classList.toggle("rep-board-pinned",repBoardPinned);
+    document.querySelectorAll("[data-rep-pin]").forEach(btn=>{
+      btn.setAttribute("aria-pressed",String(repBoardPinned));
+      btn.classList.toggle("is-on",repBoardPinned);
+      btn.title=repBoardPinned?"Board fixed at top while scrolling — tap to unpin":"Fix board at top while scrolling";
+      const sp=btn.querySelector("span"); if(sp) sp.textContent=repBoardPinned?"Pinned":"Pin";
+    });
+  }
+  document.querySelectorAll("[data-rep-pin]").forEach(btn=>{
+    btn.onclick=()=>{ repBoardPinned=!repBoardPinned; applyRepPin(); try{ localStorage.setItem("rt2-pin-board",repBoardPinned?"1":"0"); }catch(_){} };
+  });
+  applyRepPin();
+
   /* ---------- tabs ---------- */
   let tab="train";
   function setTab(t){
     tab=t;
     if(!S) document.body.style.overflow="";
+    document.body.classList.toggle("rep-has-board",t==="study"||t==="explore");
     document.querySelectorAll("[data-tab]").forEach(b=>b.setAttribute("aria-current",b.dataset.tab===t?"page":"false"));
     ["train","study","explore","stats"].forEach(v=>$("v-"+v).hidden=v!==t);
     if(t!=="explore") engStop(); else { engInit(); renderExplore(); }
@@ -315,7 +333,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     $("se-title").textContent=title; $("se-sum").hidden=true; $("se-coach").querySelectorAll(".ln,.prompt,.fb,.minimoves,.c-act").forEach(e=>e.hidden=false);
     startRun();
   }
-  function endSession(){ flushDays(); S=null; $("session").hidden=true; document.body.style.overflow=""; refreshAll(); if(tab==="train") renderTrain(); }
+  function endSession(){ clearAutoTimer(); flushDays(); S=null; $("session").hidden=true; document.body.style.overflow=""; refreshAll(); if(tab==="train") renderTrain(); }
   $("se-x").onclick=()=>{ if(S && S.stats.asked && !S.done){ showSummary(true); } else endSession(); };
   document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&S) $("se-x").click(); });
 
@@ -351,6 +369,77 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     }
     return out;
   }
+  let fastLearn=false;
+  try{ const f=localStorage.getItem("rt2-fast-learn"); if(f==="1"||f==="true") fastLearn=true; }catch(_){}
+  let autoTimer=0;
+  function clearAutoTimer(){ if(autoTimer){ clearTimeout(autoTimer); autoTimer=0; } }
+  function applyFastLearn(){
+    const b=$("se-auto"); if(!b) return;
+    b.setAttribute("aria-pressed",String(fastLearn));
+    b.title=fastLearn?"Auto-advance ON: plays through learned moves in one tap":"Auto-advance OFF: pause after each learned move";
+  }
+  const autoBtn=$("se-auto");
+  if(autoBtn){
+    applyFastLearn();
+    autoBtn.onclick=()=>{
+      fastLearn=!fastLearn;
+      applyFastLearn();
+      try{ localStorage.setItem("rt2-fast-learn",fastLearn?"1":"0"); }catch(_){}
+      if(fastLearn && S && S.run && S.run.pendingAdvance && S.run.teach){
+        const fn=S.run.pendingAdvance; S.run.pendingAdvance=null; clearAutoTimer(); fn();
+      }
+    };
+  }
+  function renderSessionSibs(pi, excludeUci){
+    const box=$("se-sibs"); if(!box) return;
+    box.innerHTML="";
+    if(pi===null||pi===undefined||!POS[pi]){ box.hidden=true; return; }
+    const node=POS[pi];
+    const ex4=excludeUci?excludeUci.slice(0,4):"";
+    const sibEdges=node.e.filter(e=>e[0].slice(0,4)!==ex4);
+    const transLines=[];
+    const curSec=S&&S.run?(S.run.tree?S.run.sec:LINES[S.run.line]?.sec):null;
+    if(curSec){
+      const seenSec=new Set([curSec]);
+      for(const l of LINES){
+        if(!seenSec.has(l.sec) && l.pos.includes(pi)){ seenSec.add(l.sec); transLines.push(l); }
+      }
+    }
+    if(!sibEdges.length && !transLines.length){ box.hidden=true; return; }
+    box.hidden=false;
+    const lbl=document.createElement("span");
+    lbl.className="sib-lbl";
+    lbl.textContent=sibEdges.length?"Also here":"Transposes";
+    box.appendChild(lbl);
+    sibEdges.slice(0,5).forEach(e=>{
+      const li=e[4][0];
+      const b=document.createElement("button");
+      b.type="button"; b.className="sib-chip";
+      b.textContent=e[1];
+      b.title="Inspect "+e[1]+" in Study";
+      b.onclick=()=>{
+        if(li===undefined) return;
+        const ln=LINES[li];
+        const idx=ln.pos.indexOf(e[2]);
+        endSession();
+        openStudyAt(li,idx>=0?idx:ln.pos.length-1);
+      };
+      box.appendChild(b);
+    });
+    transLines.slice(0,3).forEach(l=>{
+      const sec=SECBY[l.sec];
+      const b=document.createElement("button");
+      b.type="button"; b.className="sib-chip";
+      b.textContent="⇄ "+(sec?sec.name:l.name);
+      b.title="Open transposition in Study";
+      b.onclick=()=>{
+        const idx=l.pos.indexOf(pi);
+        endSession();
+        openStudyAt(l.i,idx>=0?idx:0);
+      };
+      box.appendChild(b);
+    });
+  }
   function syncSessionNav(){
     const run=S&&S.run;
     const frames=sessionFrames(run);
@@ -368,6 +457,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   function goSessionView(targetIdx){
     if(!S||!S.run) return;
+    clearAutoTimer();
     const run=S.run, frames=sessionFrames(run), tip=frames.length-1;
     if(tip<0) return;
     const idx=Math.max(0,Math.min(tip,targetIdx));
@@ -390,6 +480,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   function sessionNextAction(){
     const run=S&&S.run; if(!run) return;
+    clearAutoTimer();
     const frames=sessionFrames(run), tip=frames.length-1;
     const cur=run.viewIdx!==null&&run.viewIdx!==undefined?Math.min(run.viewIdx,tip):tip;
     if(cur<tip){ goSessionView(cur+1); return; }
@@ -410,6 +501,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   $("se-next").onclick=sessionNextAction;
   $("se-last").onclick=()=>{
     const run=S&&S.run; if(!run) return;
+    clearAutoTimer();
     const frames=sessionFrames(run), tip=frames.length-1;
     const cur=run.viewIdx!==null&&run.viewIdx!==undefined?Math.min(run.viewIdx,tip):tip;
     if(cur<tip){ goSessionView(tip); return; }
@@ -418,10 +510,12 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   $("se-flip").onclick=()=>{ sb.setOrient(sb.orient==="w"?"b":"w"); };
 
   function startRun(){
+    clearAutoTimer();
     updHead();
     if(S.ri>=S.runs.length){ showSummary(false); return; }
     const run=S.runs[S.ri];
     run.viewIdx=null; run.justPlayed=false; run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
+    renderSessionSibs(null);
     if(run.tree){
       const sec=SECBY[run.sec];
       run.pos = run.startPos!==undefined ? run.startPos : sec.start;
@@ -483,7 +577,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   function lineStep(){
     if(!S) return; const run=S.run, ln=LINES[run.line];
     run.viewIdx=null; run.justPlayed=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
-    if(run.p>=ln.uci.length){ run.awaitingMove=false; syncSessionNav(); finishRun(); return; }
+    if(run.p>=ln.uci.length){ run.awaitingMove=false; renderSessionSibs(ln.pos[ln.pos.length-1],null); syncSessionNav(); finishRun(); return; }
     const fen=POS[ln.pos[run.p]].f;
     if(run.p%2!==meIdx(ln)){
       // opponent move
@@ -515,6 +609,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
         {label:"Hint",fn:()=>giveHint(1)},{label:"Show move",fn:()=>giveHint(2)} ]});
     }
     run.warn=null;
+    renderSessionSibs(ln.pos[run.p],card.u);
     sb.dests=chessDests(fen); sb.movable=ownPiece(fen,sb);
     sb.onMove=(from,to)=>onUserMove(fen,from,to);
     syncSessionNav();
@@ -561,6 +656,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   function correct(fen,r){
     const run=S.run, c=run.cur, card=CARDS[c];
+    clearAutoTimer();
     run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.viewIdx=null; run.pendingAdvance=null;
     sb.movable=()=>false; sb.clearArrows(); sb.clearMarks();
     const last=[card.u.slice(0,2),card.u.slice(2,4)];
@@ -583,6 +679,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     updHead();
     const wasMiss=run.missed; run.missed=false;
     const advance=()=>{
+      clearAutoTimer();
       if(!S||S.run!==run) return;
       run.justPlayed=false; run.pendingSan=null; run.viewIdx=null; run.pendingAdvance=null;
       if(run.tree){
@@ -607,14 +704,16 @@ export function startTrainer({ data: D, progress, saveProgress }) {
       run.pendingAdvance=advance;
       setCoach({prompt:"✓ "+card.s,cls:"ok",fb:"",note:card.n,noteHead:"Why "+card.s,acts:[]});
       syncSessionNav();
+      if(fastLearn) autoTimer=setTimeout(advance,550);
     } else {
       Snd.play("ok");
       setCoach({prompt:"✓ "+card.s,cls:"ok",fb:"",note:SET.notes?card.n:null,noteHead:"Why "+card.s,acts:[]});
       syncSessionNav();
-      setTimeout(advance,SET.notes?300:150);
+      autoTimer=setTimeout(advance,SET.notes?300:150);
     }
   }
   function finishRun(){
+    clearAutoTimer();
     const run=S.run;
     run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
     syncSessionNav();
@@ -649,7 +748,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const mine = stm===run.me;
     const inSec = e => !run.sec || e[4].some(li=>LINES[li].sec===run.sec);
     const edges = node.e.filter(e=> (mine ? (e[3]&1)&&!(e[3]&2) : true) && inSec(e));
-    if(!edges.length){ const ln=LINES.find(l=>l.pos[l.pos.length-1]===run.pos); run.endName=ln?"End of "+lineLabel(ln)+".":""; finishRun(); return; }
+    if(!edges.length){ const ln=LINES.find(l=>l.pos[l.pos.length-1]===run.pos); run.endName=ln?"End of "+lineLabel(ln)+".":""; renderSessionSibs(run.pos,null); finishRun(); return; }
     if(!mine){
       run.awaitingMove=false;
       sb.movable=()=>false;
@@ -673,6 +772,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
       setCoach({prompt:"Your move",cls:"",fb:"",note:null,warn:run.warn,acts:[{label:"Hint",fn:()=>giveHint(1)},{label:"Show move",fn:()=>giveHint(2)}]});
     }
     run.warn=null;
+    renderSessionSibs(run.pos,card.u);
     sb.dests=chessDests(fen); sb.movable=ownPiece(fen,sb); sb.onMove=(from,to)=>onUserMove(fen,from,to);
     syncSessionNav();
   }
@@ -750,6 +850,36 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(mine.length){ mine.forEach(e=>notes.insertAdjacentHTML("beforeend",'<div class="notecard"><span class="eyebrow">Your move here'+((e[3]&2)?" · Schliemann":"")+'</span><b style="font-family:var(--f-mono)">'+esc(moveNo(ply)+e[1])+'</b> '+esc(CARDS[e[5]].n)+'</div>')); }
     else if(node.e.length) notes.insertAdjacentHTML("beforeend",'<p class="note muted" style="font-size:14px">'+(sideToMove(fen)==="w"?"White":"Black")+' to move. Your repertoire covers '+node.e.map(e=>esc(e[1])).join(", ")+'.</p>');
     else notes.insertAdjacentHTML("beforeend",'<p class="note muted" style="font-size:14px">End of the prepared line. Use Analyze to keep going with the engine.</p>');
+    // branch & transposition quick-switch chips
+    const sbBox=$("s-sibs");
+    if(sbBox){
+      sbBox.innerHTML="";
+      const branchEdges=node.e.length>1?node.e:[];
+      const trans=[];
+      const seenSec=new Set([study.sec]);
+      for(const l of LINES){ if(!seenSec.has(l.sec) && l.pos.includes(pi)){ seenSec.add(l.sec); trans.push(l); } }
+      if(branchEdges.length || trans.length){
+        sbBox.hidden=false;
+        const lbl=document.createElement("span"); lbl.className="sib-lbl";
+        lbl.textContent=branchEdges.length?"Branches":"Transposes";
+        sbBox.appendChild(lbl);
+        branchEdges.forEach(e=>{
+          const b=document.createElement("button"); b.type="button"; b.className="sib-chip";
+          b.textContent=moveNo(ply)+e[1];
+          b.onclick=()=>{ study.path=study.path.concat([e[0]]); syncStudyFullPath(study.path); saveStudy(); study.instant=true; renderStudyTree(); };
+          sbBox.appendChild(b);
+        });
+        trans.forEach(l=>{
+          const s2=SECBY[l.sec];
+          const b=document.createElement("button"); b.type="button"; b.className="sib-chip";
+          b.textContent="⇄ "+(s2?s2.name:l.name);
+          b.onclick=()=>{ const idx=l.pos.indexOf(pi); openStudyAt(l.i,idx>=0?idx:0); };
+          sbBox.appendChild(b);
+        });
+      } else {
+        sbBox.hidden=true;
+      }
+    }
     // lines through this node
     const lc=$("s-lines"); lc.innerHTML=""; const ids=new Set(); LINES.forEach(l=>{ if(l.pos.includes(pi)&&l.sec===study.sec) ids.add(l.i); });
     [...ids].forEach(i=>{ const s=document.createElement("span"); s.className="lchip"; s.textContent=LINES[i].id+" "+LINES[i].name; lc.appendChild(s); });

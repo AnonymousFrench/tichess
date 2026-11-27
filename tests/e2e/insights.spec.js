@@ -92,11 +92,13 @@ test('Insights downloads a Lichess account, explains it, and hands positions to 
   await page.keyboard.press('Escape');
   await page.click('[data-act=clear-filters]');
 
-  // Openings: pick an opening, walk its moves (including back/forward/last/flip), and open in Studio.
+  // Openings: pick an opening, walk its moves (including tap-to-move on the board and back/forward/last/flip), and open in Studio.
   await page.click('#toolbar [data-act=tab][data-v=openings]');
   await page.click('[data-act=op-pick] >> nth=0');
   await page.click('[data-act=ex-goto][data-i="0"] >> nth=0');
-  await page.click('tr[data-act=ex-move] >> nth=0');
+  // Interactive tap-to-move directly on the Insights Openings board: play 1.e4
+  await page.click('[data-act=ex-sq][data-sq="e2"]');
+  await page.click('[data-act=ex-sq][data-sq="e4"]');
   await expect(page.locator('[data-act=ex-goto]')).toContainText(['Start', '1.e4']);
   await page.click('[data-act=ex-back]');
   await expect(page.locator('[data-act=ex-fwd]')).toBeEnabled();
@@ -117,6 +119,17 @@ test('Insights downloads a Lichess account, explains it, and hands positions to 
   await studio.click('#refSrcMine');
   await studio.click('.ref-pcol-btn[data-pcol=white]');
   await expect(studio.locator('#refTotalGames')).toContainText('160 games');
+
+  // Mobile Insights header has zero nav overlap and Openings board pins cleanly while scrolling.
+  await page.setViewportSize({ width: 390, height: 700 });
+  const mobileIns = await page.evaluate(() => {
+    const nav = document.querySelector('header [data-app-nav]').getBoundingClientRect();
+    const right = document.getElementById('hdrRight').getBoundingClientRect();
+    return { navRight: Math.round(nav.right), rightLeft: Math.round(right.left) };
+  });
+  expect(mobileIns.navRight).toBeLessThanOrEqual(mobileIns.rightLeft + 1);
+  await expect(page.locator('[data-act=ex-pin]')).toBeVisible();
+  await expect(page.locator('[data-act=ex-pin]')).toHaveAttribute('aria-pressed', 'true');
 
   expect(errors).toEqual([]);
 });

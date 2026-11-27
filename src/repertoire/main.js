@@ -9,6 +9,7 @@ import './repertoire.css';
 import '../shared/boardControls.css';
 import { mountAppNav } from '../shared/appNav.js';
 import { mountAccount } from '../shared/account.js';
+import { registerPwa } from '../shared/pwa.js';
 
 import { parseRepertoireFile, mergeProgress, buildExportFile } from './model.js';
 import { buildRepertoireFromPgn, mergeRepertoires } from './pgnImport.js';
@@ -205,4 +206,5 @@ async function boot() {
   }
 }
 
+registerPwa();
 boot();

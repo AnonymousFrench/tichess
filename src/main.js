@@ -90,6 +90,7 @@ import {
 import { mountModals } from './ui/modals.js';
 import { mountAppNav } from './shared/appNav.js';
 import { mountAccount } from './shared/account.js';
+import { registerPwa } from './shared/pwa.js';
 import {
   initLayout,
   applyDockLayout,
@@ -828,17 +829,83 @@ function initMobileBoardPin() {
   }
 }
 
+function syncMobileToolTabs() {
+  document.querySelectorAll('#mobileToolTabs [data-tool-jump]').forEach((btn) => {
+    const key = btn.dataset.toolJump;
+    const panel = document.getElementById(`panel-${key}`);
+    const visible = Boolean(panel && !panel.classList.contains('hidden'));
+    btn.classList.toggle('hidden', !visible);
+  });
+}
+
+function setActiveMobileToolTab(key) {
+  document.querySelectorAll('#mobileToolTabs [data-tool-jump]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.toolJump === key);
+  });
+}
+
+function initMobileToolTabs() {
+  const nav = document.getElementById('mobileToolTabs');
+  if (!nav) return;
+  nav.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-tool-jump]');
+    if (!btn) return;
+    const key = btn.dataset.toolJump;
+    const panel = document.getElementById(`panel-${key}`);
+    if (!panel) return;
+    setActiveMobileToolTab(key);
+    const boardPanel = document.getElementById('boardPanel');
+    const pinned = document.body.classList.contains('mobile-board-pinned');
+    const offset = pinned && boardPanel ? boardPanel.getBoundingClientRect().height + 6 : 6;
+    const targetTop = panel.getBoundingClientRect().top + window.scrollY - offset;
+    window.scrollTo({ top: Math.max(0, Math.round(targetTop)), behavior: 'smooth' });
+  });
+  let scrollTick = 0;
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (window.innerWidth >= 1024 || scrollTick) return;
+      scrollTick = requestAnimationFrame(() => {
+        scrollTick = 0;
+        const boardPanel = document.getElementById('boardPanel');
+        const pinned = document.body.classList.contains('mobile-board-pinned');
+        const anchor = (pinned && boardPanel ? boardPanel.getBoundingClientRect().bottom : 48) + 24;
+        let bestKey = null;
+        let bestDist = Infinity;
+        document.querySelectorAll('#mobileToolTabs [data-tool-jump]:not(.hidden)').forEach((btn) => {
+          const panel = document.getElementById(`panel-${btn.dataset.toolJump}`);
+          if (!panel) return;
+          const dist = Math.abs(panel.getBoundingClientRect().top - anchor);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestKey = btn.dataset.toolJump;
+          }
+        });
+        if (bestKey) setActiveMobileToolTab(bestKey);
+      });
+    },
+    { passive: true }
+  );
+  syncMobileToolTabs();
+}
+
 async function bootstrap() {
   mountAppNav('studio');
   mountAccount();
+  registerPwa();
   mountModals();
   initMobileBoardPin();
+  initMobileToolTabs();
   setLc0SettingsHandler(() => openModal('settingsModal'));
   initBoardInteractions();
   bindEvents();
   renderLayoutMenus();
-  initLayout(applyPanelLayout);
-  applyPanelLayout();
+  const applyLayoutAndTabs = () => {
+    applyPanelLayout();
+    syncMobileToolTabs();
+  };
+  initLayout(applyLayoutAndTabs);
+  applyLayoutAndTabs();
   renderLiveHub();
 
   await reloadCollections();

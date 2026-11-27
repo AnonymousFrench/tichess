@@ -8,8 +8,25 @@ body {
   color: #e5e7eb;
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
 }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-thumb { background: #2c313f; border-radius: 99px; }
 select { color-scheme: dark; }
 .tabular-nums { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 1279px) {
+  body.insights-board-pinned #insExplorerBoard {
+    position: sticky;
+    top: 48px;
+    z-index: 20;
+    background: var(--bg);
+    padding: 6px 0 6px;
+    margin-top: -6px;
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.55);
+  }
+  body.insights-board-pinned #insExplorerBoard .ins-board-frame {
+    max-width: min(100%, 42dvh);
+    margin: 0 auto;
+  }
+}

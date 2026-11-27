@@ -1,6 +1,6 @@
 /**
- * A read-only board for the Insights explorer: pieces from tichess's own set,
- * optional last-move highlight and frequency arrows.
+ * Board for the Insights explorer: pieces from tichess's own set,
+ * optional last-move highlight, frequency arrows, and tap-to-move interaction.
  */
 import { PIECE_SVG } from '../chess/pieces.js';
 
@@ -15,9 +15,13 @@ const FILES = 'abcdefgh';
 
 /**
  * @param {string} fen
- * @param {{flipped?: boolean, last?: {from: string, to: string}, arrows?: {from: string, to: string, weight: number}[]}} opts
+ * @param {{flipped?: boolean, last?: {from: string, to: string}, arrows?: {from: string, to: string, weight: number}[], interactive?: boolean, selected?: string|null, dests?: Set<string>|string[]}} opts
  */
-export function miniBoardHtml(fen, { flipped = false, last = null, arrows = [] } = {}) {
+export function miniBoardHtml(
+  fen,
+  { flipped = false, last = null, arrows = [], interactive = false, selected = null, dests = null } = {}
+) {
+  const destSet = dests instanceof Set ? dests : new Set(dests || []);
   const rows = fen.split(' ')[0].split('/');
   const sq = [];
   for (let r = 0; r < 8; r++) {
@@ -37,15 +41,25 @@ export function miniBoardHtml(fen, { flipped = false, last = null, arrows = [] }
       const rank = +s.name[1];
       const light = (file + rank) % 2 === 1;
       const isLast = last && (s.name === last.from || s.name === last.to);
+      const isSel = selected === s.name;
+      const isDest = destSet.has(s.name);
       const bg = isLast ? (light ? 'var(--sq-last-light)' : 'var(--sq-last-dark)') : light ? 'var(--sq-light)' : 'var(--sq-dark)';
       const key = s.piece ? (s.piece === s.piece.toUpperCase() ? 'w' : 'b') + s.piece.toUpperCase() : '';
-      const img = key ? `<img src="${PIECE_URL[key]}" alt="" draggable="false" class="w-[88%] h-[88%] pointer-events-none select-none">` : '';
+      const img = key ? `<img src="${PIECE_URL[key]}" alt="" draggable="false" class="w-[88%] h-[88%] pointer-events-none select-none relative z-[2]">` : '';
+      const selOverlay = isSel ? '<span class="absolute inset-0 pointer-events-none z-[1]" style="background:var(--sq-select)"></span>' : '';
+      const destMark = isDest
+        ? key
+          ? '<span class="absolute inset-[6%] rounded-full border-[4px] border-black/30 pointer-events-none z-[3]"></span>'
+          : '<span class="absolute w-[28%] h-[28%] rounded-full bg-black/28 pointer-events-none z-[3]"></span>'
+        : '';
       const col = i % 8;
       const row = Math.floor(i / 8);
       const coordColor = light ? 'var(--sq-dark)' : 'var(--sq-light)';
-      const fileLbl = row === 7 ? `<span class="absolute right-[3px] bottom-[1px] text-[9px] font-semibold" style="color:${coordColor}">${s.name[0]}</span>` : '';
-      const rankLbl = col === 0 ? `<span class="absolute left-[3px] top-[1px] text-[9px] font-semibold" style="color:${coordColor}">${s.name[1]}</span>` : '';
-      return `<div class="relative flex items-center justify-center" style="background:${bg}">${img}${fileLbl}${rankLbl}</div>`;
+      const fileLbl = row === 7 ? `<span class="absolute right-[3px] bottom-[1px] text-[9px] font-semibold pointer-events-none" style="color:${coordColor}">${s.name[0]}</span>` : '';
+      const rankLbl = col === 0 ? `<span class="absolute left-[3px] top-[1px] text-[9px] font-semibold pointer-events-none" style="color:${coordColor}">${s.name[1]}</span>` : '';
+      const actAttrs = interactive ? ` data-act="ex-sq" data-sq="${s.name}"` : '';
+      const curCls = interactive ? ' cursor-pointer select-none' : '';
+      return `<div class="relative flex items-center justify-center${curCls}" style="background:${bg}"${actAttrs}>${selOverlay}${img}${destMark}${fileLbl}${rankLbl}</div>`;
     })
     .join('');
 
@@ -75,6 +89,6 @@ export function miniBoardHtml(fen, { flipped = false, last = null, arrows = [] }
 
   return `<div class="relative w-full aspect-square rounded-lg overflow-hidden shadow-xl">
     <div class="absolute inset-0 grid grid-cols-8 grid-rows-8">${cells}</div>
-    <svg viewBox="0 0 800 800" class="absolute inset-0 w-full h-full pointer-events-none">${arrowSvg}</svg>
+    <svg viewBox="0 0 800 800" class="absolute inset-0 w-full h-full pointer-events-none z-[4]">${arrowSvg}</svg>
   </div>`;
 }

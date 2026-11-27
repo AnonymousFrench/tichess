@@ -8,6 +8,7 @@ import {
   pickBestUserMove,
   pickOpponentReplies,
   buildPersonalOppMap,
+  buildPersonalUserMoveMap,
   generateFlawRepertoire,
 } from '../src/repertoire/flawGenerator.js';
 
@@ -414,5 +415,86 @@ describe('generateFlawRepertoire end-to-end compilation & merging', () => {
     // Drill cards start at 7.Nb3 (not 1.e4 or 6.f3)
     const firstDrillCard = result.repertoire.cards[result.drillCardIds[0]];
     expect(firstDrillCard.s).toBe('Nb3');
+  });
+
+  it('inserts what the player used to play wrong into notes, warnings, and previews at deeper moves', async () => {
+    const { moves: prefixMoves, fen: najdorfFen } = buildPrefix(NAJDORF_PREFIX);
+    const afterF3 = buildPrefix([...NAJDORF_PREFIX, 'f3']).fen;
+    const afterF3E5 = buildPrefix([...NAJDORF_PREFIX, 'f3', 'e5']).fen;
+
+    // Duplicate IDs should be deduplicated cleanly
+    const personalGames = [
+      { id: 'g1', color: 'w', res: 0, moves: 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 f3 e5 Nde2 Be7' },
+      { id: 'g1', color: 'w', res: 0, moves: 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 f3 e5 Nde2 Be7' },
+      { id: 'g2', color: 'w', res: 0, moves: 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 f3 e5 Nde2 Be6' },
+    ];
+
+    const userMap = buildPersonalUserMoveMap(personalGames, 'w');
+    const playedAfterE5 = userMap.get(normalizeFen(afterF3E5)) || [];
+    expect(playedAfterE5.length).toBe(1);
+    expect(playedAfterE5[0].san).toBe('Nde2');
+    expect(playedAfterE5[0].games).toBe(2);
+    expect(playedAfterE5[0].losses).toBe(2);
+    expect(playedAfterE5[0].scorePct).toBe(0);
+
+    const script = new Map([
+      [
+        normalizeFen(afterF3),
+        {
+          explorer: {
+            totalGames: 800,
+            moves: [{ uci: 'e7e5', san: 'e5', games: 500, share: 0.62, score: 0.52 }],
+          },
+        },
+      ],
+      [
+        normalizeFen(afterF3E5),
+        {
+          engine: [
+            { uci: 'd4b3', san: 'Nb3', whiteCp: 32, mate: null, pvSan: ['Nb3', 'Be6', 'Be3'] },
+            { uci: 'd4e2', san: 'Nde2', whiteCp: -25, mate: null, pvSan: ['Nde2', 'Be7', 'Be3'] },
+          ],
+          explorer: {
+            totalGames: 600,
+            moves: [{ uci: 'd4b3', san: 'Nb3', games: 420, share: 0.7, score: 0.56 }],
+          },
+        },
+      ],
+    ]);
+
+    const { evaluateFn, fetchExplorerFn } = makeMocks(script);
+    const result = await generateFlawRepertoire({
+      prefixMoves,
+      startFen: START_FEN,
+      fen: najdorfFen,
+      color: 'w',
+      openingName: 'Sicilian Defense: Najdorf Variation',
+      flawedUci: 'f2f3',
+      flawedSan: 'f3',
+      flawedStats: { total: 3, wins: 0, draws: 1, losses: 2, scorePct: 17 },
+      mode: 'repair',
+      anchorMove: { uci: 'f2f3', san: 'f3', evLabel: '+0.2', peerScore: 52 },
+      presetKey: 'quick',
+      personalGames,
+      evaluateFn,
+      fetchExplorerFn,
+    });
+
+    const validated = parseRepertoireFile(buildExportFile(result.repertoire, {}, 'Habits Fix', Date.now()));
+    expect(validated.ok).toBe(true);
+
+    // 7.Nb3 card note must explicitly explain what the player used to play wrong (7.Nde2)
+    const nb3Card = Object.values(result.repertoire.cards).find((c) => c.u === 'd4b3');
+    expect(nb3Card?.n).toContain('You used to play 7.Nde2');
+    expect(nb3Card?.n).toContain('0%, 2g, 2L');
+    expect(nb3Card?.n).toContain('Play 7.Nb3');
+
+    // Warning map must include both the old habit 7.Nde2 (for red arrow + wrong-move catch) and the heads-up on 6...e5
+    const warnValues = Object.values(result.repertoire.warn);
+    expect(warnValues.some((w) => w.includes('Old habit') && w.includes('7.Nde2') && w.includes('7.Nb3'))).toBe(true);
+    expect(warnValues.some((w) => w.includes('You used to play 7.Nde2') && w.includes('7.Nb3'))).toBe(true);
+
+    // Line preview exposes fixedHabits for the modal UI
+    expect(result.linesPreview.some((ln) => ln.fixedHabits.some((h) => h.label === '7.Nde2'))).toBe(true);
   });
 });

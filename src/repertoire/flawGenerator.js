@@ -635,6 +635,46 @@ export function pickOpponentReplies({
 /* Personal game indexing (extract replies that actually beat the user)*/
 /* ------------------------------------------------------------------ */
 
+function iterPersonalGameMoves(games, userColor, maxPlies = 28) {
+  const color = userColor === 'b' ? 'b' : 'w';
+  const seen = new Set();
+  const parsed = [];
+
+  for (const g of games || []) {
+    let sans = null;
+    let res = 0.5; // 1 = user win, 0.5 = draw, 0 = user loss
+    let gameColor = color;
+    let key = '';
+
+    if (typeof g?.moves === 'string' && g.moves.trim()) {
+      if (g.color && g.color !== color) continue;
+      gameColor = g.color || color;
+      sans = g.moves.split(' ').filter(Boolean).slice(0, maxPlies);
+      res = g.res === 1 ? 1 : g.res === 0 ? 0 : 0.5;
+      key = g.id ? `id:${g.id}` : `m:${gameColor}|${res}|${g.moves.slice(0, 120)}`;
+    } else if (typeof g?.pgn === 'string' && g.pgn.trim()) {
+      try {
+        const p = new Chess();
+        p.loadPgn(g.pgn, { strict: false });
+        sans = p.history().slice(0, maxPlies);
+        if (g.winner === 'white') res = color === 'w' ? 1 : 0;
+        else if (g.winner === 'black') res = color === 'b' ? 1 : 0;
+        else res = 0.5;
+        key = g.id ? `id:${g.id}` : `p:${color}|${res}|${sans.join(' ').slice(0, 120)}`;
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (!sans?.length || gameColor !== color) continue;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    parsed.push({ sans, res });
+  }
+
+  return parsed;
+}
+
 /**
  * Index opponent replies from the user's own games (`Insights` records or
  * Studio Explorer `recentGames`) into `Map<normFen, Array<{uci, san, games, losses}>>`.
@@ -644,31 +684,8 @@ export function buildPersonalOppMap(games, userColor = 'w', maxPlies = 28) {
   const oppTurn = color === 'w' ? 'b' : 'w';
   const map = new Map();
 
-  for (const g of games || []) {
-    let sans = null;
-    let userLost = false;
-    let gameColor = color;
-
-    if (typeof g?.moves === 'string' && g.moves.trim()) {
-      // Insights game record
-      if (g.color && g.color !== color) continue;
-      gameColor = g.color || color;
-      sans = g.moves.split(' ').filter(Boolean).slice(0, maxPlies);
-      userLost = g.res === 0;
-    } else if (typeof g?.pgn === 'string' && g.pgn.trim()) {
-      // Studio Explorer recentGame record
-      try {
-        const p = new Chess();
-        p.loadPgn(g.pgn, { strict: false });
-        sans = p.history().slice(0, maxPlies);
-        if (g.winner === 'white') userLost = color === 'b';
-        else if (g.winner === 'black') userLost = color === 'w';
-      } catch (_) {
-        continue;
-      }
-    }
-
-    if (!sans?.length || gameColor !== color) continue;
+  for (const { sans, res } of iterPersonalGameMoves(games, color, maxPlies)) {
+    const userLost = res === 0;
     const chess = new Chess();
     for (let ply = 0; ply < sans.length; ply++) {
       const turn = chess.turn();
@@ -701,6 +718,60 @@ export function buildPersonalOppMap(games, userColor = 'w', maxPlies = 28) {
   const out = new Map();
   for (const [nf, byUci] of map) {
     out.set(nf, [...byUci.values()]);
+  }
+  return out;
+}
+
+/**
+ * Index the user's OWN moves across their games into
+ * `Map<normFen, Array<{uci, san, games, wins, draws, losses, scorePct}>>`
+ * so generated repertoires can explicitly point out what the player used to play wrong.
+ */
+export function buildPersonalUserMoveMap(games, userColor = 'w', maxPlies = 28) {
+  const color = userColor === 'b' ? 'b' : 'w';
+  const map = new Map();
+
+  for (const { sans, res } of iterPersonalGameMoves(games, color, maxPlies)) {
+    const chess = new Chess();
+    for (let ply = 0; ply < sans.length; ply++) {
+      const turn = chess.turn();
+      const nf = normalizeFen(chess.fen());
+      let mv;
+      try {
+        mv = chess.move(sans[ply]);
+      } catch (_) {
+        break;
+      }
+      if (!mv) break;
+      if (turn === color) {
+        const uci = mv.from + mv.to + (mv.promotion || '');
+        let byUci = map.get(nf);
+        if (!byUci) {
+          byUci = new Map();
+          map.set(nf, byUci);
+        }
+        let rec = byUci.get(uci);
+        if (!rec) {
+          rec = { uci, san: mv.san, games: 0, wins: 0, draws: 0, losses: 0 };
+          byUci.set(uci, rec);
+        }
+        rec.games += 1;
+        if (res === 1) rec.wins += 1;
+        else if (res === 0) rec.losses += 1;
+        else rec.draws += 1;
+      }
+    }
+  }
+
+  const out = new Map();
+  for (const [nf, byUci] of map) {
+    const list = [...byUci.values()]
+      .map((r) => ({
+        ...r,
+        scorePct: r.games ? Math.round(((r.wins + 0.5 * r.draws) / r.games) * 100) : 0,
+      }))
+      .sort((a, b) => b.losses - a.losses || b.games - a.games || a.scorePct - b.scorePct);
+    out.set(nf, list);
   }
   return out;
 }
@@ -1103,6 +1174,24 @@ export async function diagnoseFlawPosition({
  * Compile a set of generated branches into a validated `tichess-repertoire` v1
  * snippet with coaching notes, `theory.alts`, and `warn` habit alerts.
  */
+function formatHabitsSummary(habits) {
+  if (!Array.isArray(habits) || !habits.length) return '';
+  return habits
+    .slice(0, 2)
+    .map((h) => {
+      const stats = [
+        `${h.scorePct}%`,
+        `${h.games}g`,
+        h.losses > 0 ? `${h.losses}L` : '',
+        h.evLabel ? `eval ${h.evLabel}` : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
+      return `${h.label} (${stats})`;
+    })
+    .join(' / ');
+}
+
 export function compileFlawRepertoire({
   prefixMoves = [],
   startFen = START_FEN,
@@ -1114,9 +1203,11 @@ export function compileFlawRepertoire({
   mode = 'replace',
   oppMove = null,
   anchorMove,
+  anchorHabits = [],
   diagnosis = null,
   branches = [],
   theoryByNormFen = new Map(),
+  positionHabitsByNormFen = new Map(),
   sectionName = '',
 }) {
   const c = color === 'b' ? 'b' : 'w';
@@ -1146,14 +1237,15 @@ export function compileFlawRepertoire({
           )
         : 0;
 
+  const anchorHabitStr = formatHabitsSummary(anchorHabits);
   const anchorNote =
     mode === 'vs_opponent'
-      ? `Against ${oppLabel} (where you scored ${scorePct}% over ${total}g), answer with ${anchorLabel}${
+      ? `${anchorHabitStr ? `Against ${oppLabel}, you used to play ${anchorHabitStr}. ` : `Against ${oppLabel} (where you scored ${scorePct}% over ${total}g), `}Answer with ${anchorLabel}${
           anchorMove.evLabel ? ` (${anchorMove.evLabel})` : ''
         }${anchorMove.peerScore !== null && anchorMove.peerScore !== undefined ? ` — scores ${anchorMove.peerScore}% among stronger peers` : ''}.`
       : mode === 'repair'
         ? `${flawLabel} is objectively sound${diagnosis?.flawedMove?.evLabel ? ` (${diagnosis.flawedMove.evLabel})` : ''}. Your ${scorePct}% (${total}g) leak starts right after it — master the concrete follow-ups below.`
-        : `You scored ${scorePct}% (${total}g) with ${flawLabel}. Switch to ${anchorLabel}${
+        : `You used to play ${flawLabel} here (${scorePct}% over ${total}g). Switch to ${anchorLabel}${
             anchorMove.evLabel ? ` (${anchorMove.evLabel})` : ''
           }${anchorMove.peerScore !== null && anchorMove.peerScore !== undefined ? ` — scores ${anchorMove.peerScore}% among stronger peers` : ''}.`;
 
@@ -1223,14 +1315,14 @@ export function compileFlawRepertoire({
     const normFlawUci = normalizeCastlingUci(repertoire.pos[flawPosIdx]?.f || startFen, flawedUci);
     if (normFlawUci) {
       repertoire.warn[`${flawPosIdx}|${normFlawUci}`] =
-        `Old habit: you scored ${scorePct}% (${total}g) with ${flawLabel}. Play ${anchorLabel} instead.`;
+        `Old habit: you played ${flawLabel} (${scorePct}% over ${total}g). Play ${anchorLabel} instead.`;
     }
     if (flawPly > 0) {
       const prevPosIdx = firstLn.pos[flawPly - 1];
       const prevOppUci = firstLn.uci[flawPly - 1];
       if (prevOppUci) {
         repertoire.warn[`${prevPosIdx}|${prevOppUci}`] =
-          `Watch out: avoid your old habit ${flawLabel} (${scorePct}% over ${total}g) — play ${anchorLabel}.`;
+          `Watch out: you used to play ${flawLabel} here (${scorePct}% over ${total}g) — play ${anchorLabel} instead.`;
       }
     }
   } else if (mode === 'vs_opponent' && flawPly > 0 && flawPly < (repertoire.lines[0]?.pos?.length || 0)) {
@@ -1238,8 +1330,47 @@ export function compileFlawRepertoire({
     const prevPosIdx = firstLn.pos[flawPly - 1];
     const prevOppUci = firstLn.uci[flawPly - 1];
     if (prevOppUci) {
-      repertoire.warn[`${prevPosIdx}|${prevOppUci}`] =
-        `Watch out: ${oppLabel} has been tough (${scorePct}% over ${total}g) — answer with ${anchorLabel}.`;
+      repertoire.warn[`${prevPosIdx}|${prevOppUci}`] = anchorHabitStr
+        ? `Watch out: vs ${oppLabel} you used to play ${anchorHabitStr} — answer with ${anchorLabel}.`
+        : `Watch out: ${oppLabel} has been tough (${scorePct}% over ${total}g) — answer with ${anchorLabel}.`;
+    }
+  }
+
+  // Attach warnings for every wrong habit the player actually played along the generated lines.
+  if (positionHabitsByNormFen?.size) {
+    for (const ln of repertoire.lines) {
+      for (let p = flawPly; p < ln.uci.length; p++) {
+        const posIdx = ln.pos[p];
+        const posNode = repertoire.pos[posIdx];
+        if (!posNode?.f) continue;
+        const entry = positionHabitsByNormFen.get(normalizeFen(posNode.f));
+        if (!entry?.habits?.length) continue;
+
+        const expectedUci = ln.uci[p];
+        const expectedLabel = entry.expectedLabel || formatMoveLabel(p, c, ln.san[p]);
+
+        for (const h of entry.habits.slice(0, 2)) {
+          const normH = normalizeCastlingUci(posNode.f, h.uci);
+          if (!normH || normH.slice(0, 4) === expectedUci.slice(0, 4)) continue;
+          const key = `${posIdx}|${normH}`;
+          if (!repertoire.warn[key]) {
+            const lossTxt = h.losses > 0 ? `, ${h.losses}L` : '';
+            repertoire.warn[key] =
+              `Old habit: you played ${h.label} (${h.scorePct}% over ${h.games}g${lossTxt}). Play ${expectedLabel} instead.`;
+          }
+        }
+
+        if (p > 0) {
+          const prevPosIdx = ln.pos[p - 1];
+          const prevOppUci = ln.uci[p - 1];
+          const prevKey = `${prevPosIdx}|${prevOppUci}`;
+          if (prevOppUci && !repertoire.warn[prevKey]) {
+            const top = entry.habits[0];
+            repertoire.warn[prevKey] =
+              `You used to play ${top.label} here (${top.scorePct}% over ${top.games}g) — play ${expectedLabel} instead.`;
+          }
+        }
+      }
     }
   }
 
@@ -1268,6 +1399,7 @@ export function compileFlawRepertoire({
     oppSharePct: br.firstOppShare ? Math.round(br.firstOppShare * 100) : null,
     personalLosses: br.personalLosses || 0,
     personalGames: br.personalGames || 0,
+    fixedHabits: Array.isArray(br.fixedHabits) ? br.fixedHabits : [],
     stoppedBy: br.stoppedBy || 'depth',
   }));
 
@@ -1333,6 +1465,7 @@ export async function generateFlawRepertoire({
   existingRepFenSet.delete(normalizeFen(rootFen));
 
   const personalOppMap = buildPersonalOppMap(personalGames, c);
+  const personalUserMap = buildPersonalUserMoveMap(personalGames, c);
 
   let sfSession = null;
   let evalPos = evaluateFn;
@@ -1341,9 +1474,42 @@ export async function generateFlawRepertoire({
     : createExplorerFetcher({ pool, rating, tc });
 
   const theoryByNormFen = new Map();
+  const positionHabitsByNormFen = new Map();
   let explorerCalls = 0;
   let engineCalls = 0;
   let explorerFallbackNote = '';
+
+  const findWrongHabitsAt = (posFen, absPly, expectedUci, engineLines = []) => {
+    const nf = normalizeFen(posFen);
+    const played = personalUserMap.get(nf) || [];
+    if (!played.length) return [];
+    const exp4 = normalizeCastlingUci(posFen, expectedUci).slice(0, 4);
+    const bestEngCp = engineLines?.length ? userPovCp(engineLines[0].whiteCp, c) : null;
+    const engBy4 = new Map();
+    for (const ln of engineLines || []) {
+      if (ln?.uci) engBy4.set(normalizeCastlingUci(posFen, ln.uci).slice(0, 4), ln);
+    }
+    return played
+      .filter((m) => {
+        const u4 = normalizeCastlingUci(posFen, m.uci).slice(0, 4);
+        if (u4 === exp4) return false;
+        return m.losses > 0 || m.scorePct < 50 || m.games >= 2;
+      })
+      .slice(0, 2)
+      .map((m) => {
+        const u4 = normalizeCastlingUci(posFen, m.uci).slice(0, 4);
+        const eng = engBy4.get(u4);
+        let evLabel = '';
+        if (eng && bestEngCp !== null && bestEngCp - userPovCp(eng.whiteCp, c) >= 40) {
+          evLabel = formatEvalPawns(eng.whiteCp, eng.mate);
+        }
+        return {
+          ...m,
+          label: formatMoveLabel(absPly, c, m.san),
+          evLabel,
+        };
+      });
+  };
 
   const recordTheory = (posFen, lines, nameHint = openingName) => {
     if (!Array.isArray(lines) || !lines.length) return;
@@ -1397,6 +1563,17 @@ export async function generateFlawRepertoire({
     const rootLines = await queryEngine(rootFen, 4);
     recordTheory(rootFen, rootLines, openingName);
 
+    const anchorHabits =
+      mode === 'repair'
+        ? []
+        : findWrongHabitsAt(rootFen, prefixMoves.length, anchorDet.uci, rootLines);
+    if (anchorHabits.length) {
+      positionHabitsByNormFen.set(normalizeFen(rootFen), {
+        expectedLabel: formatMoveLabel(prefixMoves.length, c, anchorDet.san),
+        habits: anchorHabits,
+      });
+    }
+
     const anchorStep = {
       san: anchorDet.san,
       uci: anchorDet.uci,
@@ -1417,6 +1594,7 @@ export async function generateFlawRepertoire({
           firstOppShare: meta.firstOppShare,
           personalLosses: meta.personalLosses,
           personalGames: meta.personalGames,
+          fixedHabits: meta.fixedHabits || [],
           summaryNote: meta.summaryNote,
           stoppedBy: chess.isGameOver() ? 'gameover' : 'depth',
         });
@@ -1456,6 +1634,7 @@ export async function generateFlawRepertoire({
           firstOppShare: meta.firstOppShare,
           personalLosses: meta.personalLosses,
           personalGames: meta.personalGames,
+          fixedHabits: meta.fixedHabits || [],
           summaryNote: meta.summaryNote,
           stoppedBy: 'leaf',
         });
@@ -1492,6 +1671,7 @@ export async function generateFlawRepertoire({
             firstOppShare: meta.firstOppShare ?? opp.share,
             personalLosses: branchPersonalLosses,
             personalGames: branchPersonalGames,
+            fixedHabits: meta.fixedHabits || [],
             summaryNote: meta.summaryNote,
             stoppedBy: 'gameover',
           });
@@ -1505,6 +1685,7 @@ export async function generateFlawRepertoire({
             firstOppShare: meta.firstOppShare ?? opp.share,
             personalLosses: branchPersonalLosses,
             personalGames: branchPersonalGames,
+            fixedHabits: meta.fixedHabits || [],
             summaryNote: meta.summaryNote || 'Transposes into your existing repertoire.',
             stoppedBy: 'repertoire',
           });
@@ -1530,6 +1711,7 @@ export async function generateFlawRepertoire({
             firstOppShare: meta.firstOppShare ?? opp.share,
             personalLosses: branchPersonalLosses,
             personalGames: branchPersonalGames,
+            fixedHabits: meta.fixedHabits || [],
             summaryNote: meta.summaryNote,
             stoppedBy: 'leaf',
           });
@@ -1539,6 +1721,16 @@ export async function generateFlawRepertoire({
         const replyDet = resolveMoveDetails(oppDet.fenAfter, bestReply.uci);
         if (!replyDet) continue;
 
+        const userPly = nextPly + 1;
+        const replyLabel = formatMoveLabel(userPly, c, replyDet.san);
+        const wrongHabits = findWrongHabitsAt(oppDet.fenAfter, userPly, replyDet.uci, userEng);
+        if (wrongHabits.length && !positionHabitsByNormFen.has(afterOppNf)) {
+          positionHabitsByNormFen.set(afterOppNf, {
+            expectedLabel: replyLabel,
+            habits: wrongHabits,
+          });
+        }
+
         const oppRateStr = opp.share ? `${Math.round(opp.share * 100)}% of games` : '';
         const personalStr =
           opp.personalLosses > 0
@@ -1546,10 +1738,24 @@ export async function generateFlawRepertoire({
             : opp.personalGames > 0
               ? `faced ${opp.personalGames}×`
               : '';
-        const whyParts = [
-          personalStr ? `Opponent played ${oppDet.san} (${personalStr}${oppRateStr ? `, ${oppRateStr}` : ''}).` : oppRateStr ? `Common reply (${oppRateStr}).` : '',
-          `Answer with ${replyDet.san}${bestReply.whiteCp !== null ? ` (${formatEvalPawns(bestReply.whiteCp, bestReply.mate)})` : ''}${bestReply.peerScore !== null ? ` · ${bestReply.peerScore}% peer score` : ''}.`,
-        ].filter(Boolean);
+        const evalBit = bestReply.whiteCp !== null ? ` (${formatEvalPawns(bestReply.whiteCp, bestReply.mate)})` : '';
+        const peerBit =
+          bestReply.peerScore !== null && bestReply.peerGames >= 10
+            ? ` · ${bestReply.peerScore}% peer score`
+            : '';
+        const habitStr = formatHabitsSummary(wrongHabits);
+
+        const whyParts = habitStr
+          ? [
+              `You used to play ${habitStr} here.`,
+              `Play ${replyLabel}${evalBit}${peerBit} instead${
+                personalStr ? ` — after ${oppDet.san} (${personalStr}${oppRateStr ? `, ${oppRateStr}` : ''})` : oppRateStr ? ` — after ${oppDet.san} (${oppRateStr})` : ''
+              }.`,
+            ]
+          : [
+              personalStr ? `Opponent played ${oppDet.san} (${personalStr}${oppRateStr ? `, ${oppRateStr}` : ''}).` : oppRateStr ? `Common reply (${oppRateStr}).` : '',
+              `Answer with ${replyDet.san}${evalBit}${peerBit}.`,
+            ].filter(Boolean);
 
         const userStep = {
           san: replyDet.san,
@@ -1559,6 +1765,20 @@ export async function generateFlawRepertoire({
           comment: whyParts.join(' '),
         };
 
+        const nextFixedHabits = [...(meta.fixedHabits || [])];
+        if (wrongHabits.length) {
+          const topH = wrongHabits[0];
+          if (!nextFixedHabits.some((x) => x.label === topH.label)) {
+            nextFixedHabits.push({
+              label: topH.label,
+              san: topH.san,
+              scorePct: topH.scorePct,
+              games: topH.games,
+              losses: topH.losses,
+            });
+          }
+        }
+
         await expandFromOpponentTurn(
           replyDet.fenAfter,
           [...pathMoves, oppStep, userStep],
@@ -1567,16 +1787,30 @@ export async function generateFlawRepertoire({
             firstOppShare: meta.firstOppShare ?? opp.share,
             personalLosses: branchPersonalLosses,
             personalGames: branchPersonalGames,
+            fixedHabits: nextFixedHabits,
             summaryNote: meta.summaryNote || whyParts.join(' '),
           }
         );
       }
     }
 
+    const initialFixedHabits = anchorHabits.length
+      ? [
+          {
+            label: anchorHabits[0].label,
+            san: anchorHabits[0].san,
+            scorePct: anchorHabits[0].scorePct,
+            games: anchorHabits[0].games,
+            losses: anchorHabits[0].losses,
+          },
+        ]
+      : [];
+
     await expandFromOpponentTurn(anchorDet.fenAfter, [anchorStep], 1, {
       firstOppShare: null,
       personalLosses: 0,
       personalGames: 0,
+      fixedHabits: initialFixedHabits,
       summaryNote: '',
     });
 
@@ -1586,6 +1820,7 @@ export async function generateFlawRepertoire({
         firstOppShare: null,
         personalLosses: 0,
         personalGames: 0,
+        fixedHabits: initialFixedHabits,
         summaryNote: '',
         stoppedBy: 'leaf',
       });
@@ -1606,9 +1841,11 @@ export async function generateFlawRepertoire({
         uci: anchorDet.uci,
         san: anchorDet.san,
       },
+      anchorHabits,
       diagnosis,
       branches,
       theoryByNormFen,
+      positionHabitsByNormFen,
       sectionName,
     });
 

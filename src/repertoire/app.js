@@ -148,13 +148,25 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     }
     mark(sq,cls){ if(cls) this.marks[sq]=cls; else delete this.marks[sq]; this.paint(); }
     clearMarks(){ this.marks={}; this.paint(); }
-    arrow(from,to,color){
-      const g=this.el.querySelector("svg g"), c=xy=>[xy[0]*100+50,xy[1]*100+50];
-      const a=c(this.xy(from)), b=c(this.xy(to)), dx=b[0]-a[0], dy=b[1]-a[1], len=Math.hypot(dx,dy), k=(len-28)/len;
+    arrow(from,to,color,opt={}){
+      const col=color||"#15781b", defs=this.el.querySelector("svg defs"), g=this.el.querySelector("svg g"), c=xy=>[xy[0]*100+50,xy[1]*100+50];
+      const mid="ah-"+this.el.id+"-"+col.replace(/[^a-zA-Z0-9]/g,"");
+      if(defs && !defs.querySelector("#"+mid)){
+        const mk=document.createElementNS("http://www.w3.org/2000/svg","marker");
+        mk.setAttribute("id",mid); mk.setAttribute("viewBox","0 0 10 10"); mk.setAttribute("refX","5"); mk.setAttribute("refY","5");
+        mk.setAttribute("markerWidth","3.2"); mk.setAttribute("markerHeight","3.2"); mk.setAttribute("orient","auto");
+        const p=document.createElementNS("http://www.w3.org/2000/svg","path");
+        p.setAttribute("d","M0,0 L10,5 L0,10 z"); p.setAttribute("fill",col); mk.appendChild(p); defs.appendChild(mk);
+      }
+      const a=c(this.xy(from)), b=c(this.xy(to)), dx=b[0]-a[0], dy=b[1]-a[1], len=Math.hypot(dx,dy);
+      if(!len) return;
+      const k=(len-28)/len;
       const ln=document.createElementNS("http://www.w3.org/2000/svg","line");
       ln.setAttribute("x1",a[0]); ln.setAttribute("y1",a[1]); ln.setAttribute("x2",a[0]+dx*k); ln.setAttribute("y2",a[1]+dy*k);
-      ln.setAttribute("stroke","currentColor"); ln.setAttribute("stroke-width","20"); ln.setAttribute("stroke-linecap","round"); ln.setAttribute("opacity",".8");
-      ln.setAttribute("marker-end","url(#ah-"+this.el.id+")"); g.style.color=color||"#15781b"; g.appendChild(ln);
+      ln.setAttribute("stroke",col); ln.setAttribute("stroke-width",String(opt.width||20)); ln.setAttribute("stroke-linecap","round");
+      ln.setAttribute("opacity",String(opt.opacity||0.82));
+      if(opt.dashed) ln.setAttribute("stroke-dasharray","26 16");
+      ln.setAttribute("marker-end","url(#"+mid+")"); g.appendChild(ln);
     }
     clearArrows(){ this.el.querySelector("svg g").innerHTML=""; }
     shake(){ this.el.classList.remove("shake"); void this.el.offsetWidth; this.el.classList.add("shake"); }
@@ -592,24 +604,39 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     }
     askLineMove();
   }
+  function habitWarnsAtPos(pi){
+    const node=POS[pi]; if(!node) return [];
+    const prefix=pi+"|";
+    const edgeUcis=new Set((node.e||[]).map(e=>e[0].slice(0,4)));
+    const out=[];
+    for(const k in WARN){
+      if(!k.startsWith(prefix)) continue;
+      const u=k.slice(prefix.length);
+      if(u.length>=4 && !edgeUcis.has(u.slice(0,4))) out.push({uci:u,text:WARN[k]});
+    }
+    return out;
+  }
   function askLineMove(){
-    const run=S.run, ln=LINES[run.line], fen=POS[ln.pos[run.p]].f, c=cardAt(ln,run.p), card=CARDS[c];
+    const run=S.run, ln=LINES[run.line], pi=ln.pos[run.p], fen=POS[pi].f, c=cardAt(ln,run.p), card=CARDS[c];
     run.tries=0; run.cur=c; run.hinted=false; run.viewIdx=null; run.awaitingMove=true; run.liveHintSq=null; run.pendingAdvance=null;
     const isNew = status(c)==="new";
     const teach = (run.mode==="learn"&&isNew) || (run.mode==="play"&&isNew);
     run.teach=teach;
+    const habits=habitWarnsAtPos(pi);
+    const coachWarn=run.warn||(teach&&habits.length?habits[0].text:null);
     sb.clearArrows();
     if(teach){
+      habits.slice(0,2).forEach(h=>sb.arrow(h.uci.slice(0,2),h.uci.slice(2,4),"#e11d48",{width:15,opacity:0.72,dashed:true}));
       run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#1f5f8b"];
       sb.arrow(...run.liveArrow);
-      setCoach({prompt:"New move: "+moveNo(run.p)+card.s,cls:"new",fb:"Play the move or tap › to step forward.",note:card.n,noteHead:"Why "+card.s,warn:run.warn,acts:[]});
+      setCoach({prompt:"New move: "+moveNo(run.p)+card.s,cls:"new",fb:"Play the move or tap › to step forward.",note:card.n,noteHead:"Why "+card.s,warn:coachWarn,acts:[]});
     } else {
       run.liveArrow=null;
       setCoach({prompt:"Your move",cls:"",fb:run.mode==="recall"?"Play the move you just learned.":"",note:null,warn:run.warn,acts:[
         {label:"Hint",fn:()=>giveHint(1)},{label:"Show move",fn:()=>giveHint(2)} ]});
     }
     run.warn=null;
-    renderSessionSibs(ln.pos[run.p],card.u);
+    renderSessionSibs(pi,card.u);
     sb.dests=chessDests(fen); sb.movable=ownPiece(fen,sb);
     sb.onMove=(from,to)=>onUserMove(fen,from,to);
     syncSessionNav();
@@ -768,11 +795,14 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const ed=edges[0]; run.cur=ed[5]; run.tries=0; run.hinted=false; run.missed=false; run.awaitingMove=true;
     const isNew=status(run.cur)==="new"; run.teach=isNew;
     const card=CARDS[run.cur];
+    const habits=habitWarnsAtPos(run.pos);
+    const coachWarn=run.warn||(isNew&&habits.length?habits[0].text:null);
     sb.clearArrows();
     if(isNew){
+      habits.slice(0,2).forEach(h=>sb.arrow(h.uci.slice(0,2),h.uci.slice(2,4),"#e11d48",{width:15,opacity:0.72,dashed:true}));
       run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#1f5f8b"];
       sb.arrow(...run.liveArrow);
-      setCoach({prompt:"New move: "+card.s,cls:"new",fb:"Play the move or tap › to step forward.",note:card.n,noteHead:"Why "+card.s,warn:run.warn,acts:[]});
+      setCoach({prompt:"New move: "+card.s,cls:"new",fb:"Play the move or tap › to step forward.",note:card.n,noteHead:"Why "+card.s,warn:coachWarn,acts:[]});
     } else {
       run.liveArrow=null;
       setCoach({prompt:"Your move",cls:"",fb:"",note:null,warn:run.warn,acts:[{label:"Hint",fn:()=>giveHint(1)},{label:"Show move",fn:()=>giveHint(2)}]});
@@ -830,6 +860,8 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     stb.dests=chessDests(fen); stb.movable=ownPiece(fen,stb);
     stb.onMove=(from,to)=>{ const r=tryMove(fen,from,to); if(!r) return; const u=r.uci.slice(0,4); const e=node.e.find(x=>x[0].slice(0,4)===u); if(e){ study.path.push(e[0]); syncStudyFullPath(study.path); saveStudy(); study.instant=true; renderStudyTree(); } else { exploreFrom(fen,[{san:r.m.san,from,to,uci:r.uci,fen:r.fen}],"Your move from "+sec.name); setTab("explore"); } };
     stb.clearArrows();
+    const studyHabits=habitWarnsAtPos(pi);
+    studyHabits.slice(0,2).forEach(h=>stb.arrow(h.uci.slice(0,2),h.uci.slice(2,4),"#e11d48",{width:15,opacity:0.7,dashed:true}));
     const me=mainEdge(pi);
     const drawn=new Set();
     for(const e of node.e){
@@ -849,9 +881,17 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     // notes: the move just played (yours or theirs) and the next repertoire move
     const notes=$("s-notes"); notes.innerHTML="";
     const prevPi=W.nodes.length>1?W.nodes[W.nodes.length-2]:null;
+    const shownWarns=new Set();
     if(prevPi!==null){ const e=POS[prevPi].e.find(x=>x[0]===study.path[study.path.length-1]);
       if(e&&e[5]){ notes.insertAdjacentHTML("beforeend",'<p class="note"><b>'+esc(moveNo(ply-1)+e[1])+'</b> '+esc(CARDS[e[5]].n)+'</p>'); }
-      const w=WARN[prevPi+"|"+study.path[study.path.length-1]]; if(w) notes.insertAdjacentHTML("beforeend",'<p class="warnbox">'+esc(w)+'</p>'); }
+      const w=WARN[prevPi+"|"+study.path[study.path.length-1]];
+      if(w){ shownWarns.add(w); notes.insertAdjacentHTML("beforeend",'<p class="warnbox">'+esc(w)+'</p>'); } }
+    for(const h of studyHabits){
+      if(!shownWarns.has(h.text)){
+        shownWarns.add(h.text);
+        notes.insertAdjacentHTML("beforeend",'<p class="warnbox">'+esc(h.text)+'</p>');
+      }
+    }
     const mine=node.e.filter(e=>e[3]&1);
     if(mine.length){ mine.forEach(e=>notes.insertAdjacentHTML("beforeend",'<div class="notecard"><span class="eyebrow">Your move here'+((e[3]&2)?" · Schliemann":"")+'</span><b style="font-family:var(--f-mono)">'+esc(moveNo(ply)+e[1])+'</b> '+esc(CARDS[e[5]].n)+'</div>')); }
     else if(node.e.length) notes.insertAdjacentHTML("beforeend",'<p class="note muted" style="font-size:14px">'+(sideToMove(fen)==="w"?"White":"Black")+' to move. Your repertoire covers '+node.e.map(e=>esc(e[1])).join(", ")+'.</p>');

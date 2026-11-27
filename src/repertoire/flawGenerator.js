@@ -635,7 +635,28 @@ export function pickOpponentReplies({
 /* Personal game indexing (extract replies that actually beat the user)*/
 /* ------------------------------------------------------------------ */
 
-function iterPersonalGameMoves(games, userColor, maxPlies = 28) {
+function matchesPrefixHeuristic(sans, prefixSans) {
+  if (!Array.isArray(prefixSans) || prefixSans.length < 2) return true;
+  if (sans.length < prefixSans.length) return false;
+  // Exact prefix match (handles 95%+ of games immediately)
+  let exact = true;
+  for (let i = 0; i < prefixSans.length; i++) {
+    if (sans[i] !== prefixSans[i]) {
+      exact = false;
+      break;
+    }
+  }
+  if (exact) return true;
+  // Transposition-tolerant check: at least 75% of prefix moves must appear in the opening window
+  const windowSet = new Set(sans.slice(0, prefixSans.length + 6));
+  let hits = 0;
+  for (const s of prefixSans) {
+    if (windowSet.has(s)) hits++;
+  }
+  return hits >= Math.ceil(prefixSans.length * 0.75);
+}
+
+function iterPersonalGameMoves(games, userColor, maxPlies = 28, prefixSans = []) {
   const color = userColor === 'b' ? 'b' : 'w';
   const seen = new Set();
   const parsed = [];
@@ -650,17 +671,21 @@ function iterPersonalGameMoves(games, userColor, maxPlies = 28) {
       if (g.color && g.color !== color) continue;
       gameColor = g.color || color;
       sans = g.moves.split(' ').filter(Boolean).slice(0, maxPlies);
+      if (!matchesPrefixHeuristic(sans, prefixSans)) continue;
       res = g.res === 1 ? 1 : g.res === 0 ? 0 : 0.5;
       key = g.id ? `id:${g.id}` : `m:${gameColor}|${res}|${g.moves.slice(0, 120)}`;
     } else if (typeof g?.pgn === 'string' && g.pgn.trim()) {
+      key = g.id ? `id:${g.id}` : '';
+      if (key && seen.has(key)) continue;
       try {
         const p = new Chess();
         p.loadPgn(g.pgn, { strict: false });
         sans = p.history().slice(0, maxPlies);
+        if (!matchesPrefixHeuristic(sans, prefixSans)) continue;
         if (g.winner === 'white') res = color === 'w' ? 1 : 0;
         else if (g.winner === 'black') res = color === 'b' ? 1 : 0;
         else res = 0.5;
-        key = g.id ? `id:${g.id}` : `p:${color}|${res}|${sans.join(' ').slice(0, 120)}`;
+        if (!key) key = `p:${color}|${res}|${sans.join(' ').slice(0, 120)}`;
       } catch (_) {
         continue;
       }
@@ -676,15 +701,17 @@ function iterPersonalGameMoves(games, userColor, maxPlies = 28) {
 }
 
 /**
- * Index opponent replies from the user's own games (`Insights` records or
- * Studio Explorer `recentGames`) into `Map<normFen, Array<{uci, san, games, losses}>>`.
+ * Single-pass personal game indexer that returns both opponent replies (`oppMap`)
+ * and the user's own past moves (`userMap`), pre-filtered by `prefixSans` so
+ * thousands of unrelated games cost < 1ms instead of blocking the UI thread.
  */
-export function buildPersonalOppMap(games, userColor = 'w', maxPlies = 28) {
+export function indexPersonalGames(games, userColor = 'w', { prefixSans = [], maxPlies = 28 } = {}) {
   const color = userColor === 'b' ? 'b' : 'w';
   const oppTurn = color === 'w' ? 'b' : 'w';
-  const map = new Map();
+  const oppRaw = new Map();
+  const userRaw = new Map();
 
-  for (const { sans, res } of iterPersonalGameMoves(games, color, maxPlies)) {
+  for (const { sans, res } of iterPersonalGameMoves(games, color, maxPlies, prefixSans)) {
     const userLost = res === 0;
     const chess = new Chess();
     for (let ply = 0; ply < sans.length; ply++) {
@@ -697,12 +724,12 @@ export function buildPersonalOppMap(games, userColor = 'w', maxPlies = 28) {
         break;
       }
       if (!mv) break;
+      const uci = mv.from + mv.to + (mv.promotion || '');
       if (turn === oppTurn) {
-        const uci = mv.from + mv.to + (mv.promotion || '');
-        let byUci = map.get(nf);
+        let byUci = oppRaw.get(nf);
         if (!byUci) {
           byUci = new Map();
-          map.set(nf, byUci);
+          oppRaw.set(nf, byUci);
         }
         let rec = byUci.get(uci);
         if (!rec) {
@@ -711,44 +738,11 @@ export function buildPersonalOppMap(games, userColor = 'w', maxPlies = 28) {
         }
         rec.games += 1;
         if (userLost) rec.losses += 1;
-      }
-    }
-  }
-
-  const out = new Map();
-  for (const [nf, byUci] of map) {
-    out.set(nf, [...byUci.values()]);
-  }
-  return out;
-}
-
-/**
- * Index the user's OWN moves across their games into
- * `Map<normFen, Array<{uci, san, games, wins, draws, losses, scorePct}>>`
- * so generated repertoires can explicitly point out what the player used to play wrong.
- */
-export function buildPersonalUserMoveMap(games, userColor = 'w', maxPlies = 28) {
-  const color = userColor === 'b' ? 'b' : 'w';
-  const map = new Map();
-
-  for (const { sans, res } of iterPersonalGameMoves(games, color, maxPlies)) {
-    const chess = new Chess();
-    for (let ply = 0; ply < sans.length; ply++) {
-      const turn = chess.turn();
-      const nf = normalizeFen(chess.fen());
-      let mv;
-      try {
-        mv = chess.move(sans[ply]);
-      } catch (_) {
-        break;
-      }
-      if (!mv) break;
-      if (turn === color) {
-        const uci = mv.from + mv.to + (mv.promotion || '');
-        let byUci = map.get(nf);
+      } else {
+        let byUci = userRaw.get(nf);
         if (!byUci) {
           byUci = new Map();
-          map.set(nf, byUci);
+          userRaw.set(nf, byUci);
         }
         let rec = byUci.get(uci);
         if (!rec) {
@@ -763,17 +757,40 @@ export function buildPersonalUserMoveMap(games, userColor = 'w', maxPlies = 28) 
     }
   }
 
-  const out = new Map();
-  for (const [nf, byUci] of map) {
+  const oppMap = new Map();
+  for (const [nf, byUci] of oppRaw) {
+    oppMap.set(nf, [...byUci.values()]);
+  }
+
+  const userMap = new Map();
+  for (const [nf, byUci] of userRaw) {
     const list = [...byUci.values()]
       .map((r) => ({
         ...r,
         scorePct: r.games ? Math.round(((r.wins + 0.5 * r.draws) / r.games) * 100) : 0,
       }))
       .sort((a, b) => b.losses - a.losses || b.games - a.games || a.scorePct - b.scorePct);
-    out.set(nf, list);
+    userMap.set(nf, list);
   }
-  return out;
+
+  return { oppMap, userMap };
+}
+
+/**
+ * Index opponent replies from the user's own games (`Insights` records or
+ * Studio Explorer `recentGames`) into `Map<normFen, Array<{uci, san, games, losses}>>`.
+ */
+export function buildPersonalOppMap(games, userColor = 'w', maxPlies = 28) {
+  return indexPersonalGames(games, userColor, { maxPlies }).oppMap;
+}
+
+/**
+ * Index the user's OWN moves across their games into
+ * `Map<normFen, Array<{uci, san, games, wins, draws, losses, scorePct}>>`
+ * so generated repertoires can explicitly point out what the player used to play wrong.
+ */
+export function buildPersonalUserMoveMap(games, userColor = 'w', maxPlies = 28) {
+  return indexPersonalGames(games, userColor, { maxPlies }).userMap;
 }
 
 /* ------------------------------------------------------------------ */
@@ -852,7 +869,7 @@ async function createMultiPvWorker(multipv = 4) {
   return bootStockfishWorker(STOCKFISH_ST_URL, 1, multipv, 8000);
 }
 
-function runWorkerEval(worker, fen, { depth = 11, multipv = 4, signal } = {}) {
+function runWorkerEval(worker, fen, { depth = 11, multipv = 4, movetime = 550, signal } = {}) {
   let chess;
   try {
     chess = new Chess(fen);
@@ -870,7 +887,27 @@ function runWorkerEval(worker, fen, { depth = 11, multipv = 4, signal } = {}) {
     const pvMap = new Map();
     let settled = false;
 
+    const finishWithCurrent = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      const lines = [...pvMap.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, v]) => v)
+        .filter((v) => v.uci);
+      resolve(lines);
+    };
+
+    const watchdog = setTimeout(() => {
+      if (settled) return;
+      try {
+        worker.postMessage('stop');
+      } catch (_) {}
+      setTimeout(finishWithCurrent, 300);
+    }, Math.max(1500, movetime + 2200));
+
     const cleanup = () => {
+      clearTimeout(watchdog);
       worker.onmessage = null;
       worker.onerror = null;
       if (signal) signal.removeEventListener('abort', onAbort);
@@ -942,7 +979,7 @@ function runWorkerEval(worker, fen, { depth = 11, multipv = 4, signal } = {}) {
 
     worker.postMessage(`setoption name MultiPV value ${multipv}`);
     worker.postMessage(`position fen ${fen}`);
-    worker.postMessage(`go depth ${depth}`);
+    worker.postMessage(movetime > 0 ? `go depth ${depth} movetime ${movetime}` : `go depth ${depth}`);
   });
 }
 
@@ -951,15 +988,15 @@ export async function createStockfishSession({ multipv = 4 } = {}) {
   const worker = await createMultiPvWorker(multipv);
   const cache = new Map();
 
-  async function evaluate(fen, { depth = 11, multipv: mpv = multipv, signal } = {}) {
+  async function evaluate(fen, { depth = 11, multipv: mpv = multipv, movetime = 550, signal } = {}) {
     const key = `${normalizeFen(fen)}|${depth}|${mpv}`;
     if (cache.has(key)) return cache.get(key);
-    const res = await runWorkerEval(worker, fen, { depth, multipv: mpv, signal });
+    const res = await runWorkerEval(worker, fen, { depth, multipv: mpv, movetime, signal });
     cache.set(key, res);
     return res;
   }
 
-  async function evalMove(fen, uci, { depth = 10, signal } = {}) {
+  async function evalMove(fen, uci, { depth = 10, movetime = 450, signal } = {}) {
     const det = resolveMoveDetails(fen, uci);
     if (!det) return null;
     const afterChess = new Chess(det.fenAfter);
@@ -976,7 +1013,7 @@ export async function createStockfishSession({ multipv = 4 } = {}) {
     if (afterChess.isDraw()) {
       return { uci: det.uci, san: det.san, whiteCp: 0, mate: null, pvSan: [det.san] };
     }
-    const afterLines = await evaluate(det.fenAfter, { depth, multipv: 1, signal });
+    const afterLines = await evaluate(det.fenAfter, { depth, multipv: 1, movetime, signal });
     const top = afterLines[0];
     if (!top) return null;
     return {
@@ -1058,8 +1095,17 @@ export function createExplorerFetcher({ pool = 'peers', rating = 1500, tc = 'all
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     lastCallAt = Date.now();
 
+    const reqCtrl = new AbortController();
+    const onOuterAbort = () => reqCtrl.abort();
+    if (signal) signal.addEventListener('abort', onOuterAbort, { once: true });
+    const reqTimer = setTimeout(() => reqCtrl.abort(), 4500);
+
     try {
-      const res = await fetch(url, { signal, headers, credentials: useProxy ? 'same-origin' : 'omit' });
+      const res = await fetch(url, {
+        signal: reqCtrl.signal,
+        headers,
+        credentials: useProxy ? 'same-origin' : 'omit',
+      });
       if (res.status === 401 || res.status === 403) {
         unavailableReason = 'Lichess Explorer auth unavailable — using Stockfish lines.';
         return { status: 'unavailable', reason: unavailableReason, poolLabel, totalGames: 0, moves: [] };
@@ -1075,9 +1121,15 @@ export function createExplorerFetcher({ pool = 'peers', rating = 1500, tc = 'all
       explorerSessionCache.set(key, data);
       return { status: 'ok', poolLabel, ...normalizeExplorerMoves(data, color) };
     } catch (err) {
-      if (err?.name === 'AbortError') throw err;
-      unavailableReason = 'Could not reach Lichess Explorer — using Stockfish lines.';
+      if (signal?.aborted) throw err;
+      unavailableReason =
+        err?.name === 'AbortError'
+          ? 'Lichess Explorer timed out — finished remaining branches with Stockfish.'
+          : 'Could not reach Lichess Explorer — using Stockfish lines.';
       return { status: 'error', reason: unavailableReason, poolLabel, totalGames: 0, moves: [] };
+    } finally {
+      clearTimeout(reqTimer);
+      if (signal) signal.removeEventListener('abort', onOuterAbort);
     }
   }
 
@@ -1105,26 +1157,27 @@ export async function diagnoseFlawPosition({
   rating = 1500,
   tc = 'all',
   signal,
+  sfSession: externalSfSession = null,
   evaluateFn,
   evalMoveFn,
   fetchExplorerFn,
 }) {
-  let sfSession = null;
-  let evalPos = evaluateFn;
-  let evalOne = evalMoveFn;
+  let ownedSfSession = null;
+  let evalPos = evaluateFn || externalSfSession?.evaluate;
+  let evalOne = evalMoveFn || externalSfSession?.evalMove;
   const explorer = fetchExplorerFn
     ? { fetchPosition: fetchExplorerFn, poolLabel: 'Explorer', bracketLabel: targetRatingBrackets(rating).label }
     : createExplorerFetcher({ pool, rating, tc });
 
   try {
     if (!evalPos) {
-      sfSession = await createStockfishSession({ multipv: 4 });
-      evalPos = sfSession.evaluate;
-      evalOne = sfSession.evalMove;
+      ownedSfSession = await createStockfishSession({ multipv: 4 });
+      evalPos = ownedSfSession.evaluate;
+      evalOne = ownedSfSession.evalMove;
     }
 
     const [engineLines, expRes] = await Promise.all([
-      evalPos(fen, { depth: 11, multipv: 4, signal }),
+      evalPos(fen, { depth: 11, multipv: 4, movetime: 650, signal }),
       explorer.fetchPosition(fen, color, { signal }),
     ]);
 
@@ -1139,7 +1192,7 @@ export async function diagnoseFlawPosition({
 
     let flawedEval = null;
     if (!isOppReply && !alreadyInMultiPv && fUci && evalOne) {
-      flawedEval = await evalOne(fen, fUci, { depth: 10, signal });
+      flawedEval = await evalOne(fen, fUci, { depth: 10, movetime: 450, signal });
     }
 
     const diagnosis = diagnoseFlawMove({
@@ -1166,7 +1219,7 @@ export async function diagnoseFlawPosition({
       openingFromExplorer: expRes?.opening?.name || '',
     };
   } finally {
-    if (sfSession) sfSession.close();
+    if (ownedSfSession) ownedSfSession.close();
   }
 }
 
@@ -1441,7 +1494,9 @@ export async function generateFlawRepertoire({
   personalGames = [],
   sectionName = '',
   onProgress,
+  onLineReady,
   signal,
+  sfSession: externalSfSession = null,
   evaluateFn,
   fetchExplorerFn,
 }) {
@@ -1453,22 +1508,42 @@ export async function generateFlawRepertoire({
     throw new Error('Selected anchor move is not legal in this position.');
   }
 
-  // Index positions already prepared in the user's existing repertoire (to avoid redundant expansion).
+  // Index positions from OTHER repertoire sections so transpositions merge cleanly,
+  // while NOT self-blocking when regenerating the same section or same prefix+anchor branch.
   const existingRepFenSet = new Set();
-  if (existingRepertoire?.pos?.length) {
-    for (const p of existingRepertoire.pos) {
-      if (p?.f && p.e?.some((e) => e[3] & 1)) {
-        existingRepFenSet.add(normalizeFen(p.f));
+  if (existingRepertoire?.pos?.length && existingRepertoire?.lines?.length) {
+    const targetSecKey = (sectionName || '').trim().toLowerCase();
+    const secNameById = new Map(
+      (existingRepertoire.secs || []).map((s) => [s.id, (s.name || '').trim().toLowerCase()])
+    );
+    const branchPrefixUcis = [...prefixMoves.map((m) => m.uci), anchorDet.uci];
+    for (const ln of existingRepertoire.lines) {
+      if (ln.color !== c) continue;
+      const lnSecName = secNameById.get(ln.sec) || '';
+      if (targetSecKey && lnSecName === targetSecKey) continue;
+      const isSameBranch =
+        ln.uci.length >= branchPrefixUcis.length &&
+        branchPrefixUcis.every((u, idx) => ln.uci[idx]?.slice(0, 4) === u.slice(0, 4));
+      if (isSameBranch) continue;
+      for (const pi of ln.pos || []) {
+        const p = existingRepertoire.pos[pi];
+        if (p?.f && p.e?.some((e) => e[3] & 1)) {
+          existingRepFenSet.add(normalizeFen(p.f));
+        }
       }
     }
   }
   existingRepFenSet.delete(normalizeFen(rootFen));
+  existingRepFenSet.delete(normalizeFen(anchorDet.fenAfter));
 
-  const personalOppMap = buildPersonalOppMap(personalGames, c);
-  const personalUserMap = buildPersonalUserMoveMap(personalGames, c);
+  const prefixSans = prefixMoves.map((m) => m.san).filter(Boolean);
+  const { oppMap: personalOppMap, userMap: personalUserMap } = indexPersonalGames(personalGames, c, {
+    prefixSans,
+    maxPlies: Math.max(24, prefixSans.length + preset.maxUserMoves * 2 + 4),
+  });
 
-  let sfSession = null;
-  let evalPos = evaluateFn;
+  let ownedSfSession = null;
+  let evalPos = evaluateFn || externalSfSession?.evaluate;
   const explorer = fetchExplorerFn
     ? { fetchPosition: fetchExplorerFn, poolLabel: 'Explorer' }
     : createExplorerFetcher({ pool, rating, tc });
@@ -1540,27 +1615,36 @@ export async function generateFlawRepertoire({
     return res || { status: 'error', moves: [], totalGames: 0 };
   }
 
-  async function queryEngine(posFen, multipv = 3) {
+  async function queryEngine(posFen, multipv = 3, { depth = 9, movetime = 400 } = {}) {
     engineCalls++;
-    const lines = await evalPos(posFen, { depth: 10, multipv, signal });
+    const lines = await evalPos(posFen, { depth, multipv, movetime, signal });
     recordTheory(posFen, lines);
     return lines;
   }
 
   try {
     if (!evalPos) {
-      sfSession = await createStockfishSession({ multipv: 3 });
-      evalPos = sfSession.evaluate;
+      onProgress?.({
+        step: 0,
+        linesBuilt: 0,
+        maxLines: preset.maxLines,
+        totalEstimate: preset.maxLines * 2,
+        label: 'Starting Stockfish engine…',
+      });
+      ownedSfSession = await createStockfishSession({ multipv: 3 });
+      evalPos = ownedSfSession.evaluate;
     }
 
     onProgress?.({
       step: 1,
+      linesBuilt: 0,
+      maxLines: preset.maxLines,
       totalEstimate: preset.maxLines * 2,
       label: `Analyzing ${formatMoveLabel(prefixMoves.length, c, anchorDet.san)}…`,
     });
 
     // Store theory at the flaw root position as well.
-    const rootLines = await queryEngine(rootFen, 4);
+    const rootLines = await queryEngine(rootFen, 4, { depth: 10, movetime: 550 });
     recordTheory(rootFen, rootLines, openingName);
 
     const anchorHabits =
@@ -1583,13 +1667,41 @@ export async function generateFlawRepertoire({
     };
 
     const branches = [];
+    const flawPly = prefixMoves.length;
+    const pushBranch = (br) => {
+      branches.push(br);
+      if (onLineReady) {
+        const movesText = br.moves
+          .map((m, mi) => {
+            const absPly = flawPly + mi;
+            return absPly % 2 === 0
+              ? `${Math.floor(absPly / 2) + 1}.${m.san}`
+              : mi === 0
+                ? `${Math.floor(absPly / 2) + 1}...${m.san}`
+                : m.san;
+          })
+          .join(' ');
+        onLineReady(
+          {
+            index: branches.length - 1,
+            movesText,
+            oppSharePct: br.firstOppShare ? Math.round(br.firstOppShare * 100) : null,
+            personalLosses: br.personalLosses || 0,
+            fixedHabits: br.fixedHabits || [],
+            stoppedBy: br.stoppedBy || 'depth',
+          },
+          branches.length,
+          preset.maxLines
+        );
+      }
+    };
 
     async function expandFromOpponentTurn(curFen, pathMoves, userMovesSoFar, meta) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
       const chess = new Chess(curFen);
       if (chess.isGameOver() || userMovesSoFar >= preset.maxUserMoves || branches.length >= preset.maxLines) {
-        branches.push({
+        pushBranch({
           moves: pathMoves,
           firstOppShare: meta.firstOppShare,
           personalLosses: meta.personalLosses,
@@ -1629,7 +1741,7 @@ export async function generateFlawRepertoire({
       });
 
       if (!oppReplies.length) {
-        branches.push({
+        pushBranch({
           moves: pathMoves,
           firstOppShare: meta.firstOppShare,
           personalLosses: meta.personalLosses,
@@ -1649,6 +1761,8 @@ export async function generateFlawRepertoire({
         const nextPly = prefixMoves.length + pathMoves.length;
         onProgress?.({
           step: Math.min(preset.maxLines * 2, engineCalls + explorerCalls),
+          linesBuilt: branches.length,
+          maxLines: preset.maxLines,
           totalEstimate: preset.maxLines * 2,
           label: `Checking ${formatMoveLabel(nextPly, oppDet.color, oppDet.san)}…`,
         });
@@ -1666,7 +1780,7 @@ export async function generateFlawRepertoire({
         const branchPersonalLosses = Math.max(meta.personalLosses || 0, opp.personalLosses || 0);
         const branchPersonalGames = Math.max(meta.personalGames || 0, opp.personalGames || 0);
         if (oppChess.isGameOver()) {
-          branches.push({
+          pushBranch({
             moves: [...pathMoves, oppStep],
             firstOppShare: meta.firstOppShare ?? opp.share,
             personalLosses: branchPersonalLosses,
@@ -1678,9 +1792,9 @@ export async function generateFlawRepertoire({
           continue;
         }
 
-        // Stop if this position already exists in the user's saved repertoire (clean transposition!).
+        // Stop if this position already exists in another saved repertoire section (clean transposition!).
         if (existingRepFenSet.has(afterOppNf)) {
-          branches.push({
+          pushBranch({
             moves: [...pathMoves, oppStep],
             firstOppShare: meta.firstOppShare ?? opp.share,
             personalLosses: branchPersonalLosses,
@@ -1706,7 +1820,7 @@ export async function generateFlawRepertoire({
         });
 
         if (!bestReply) {
-          branches.push({
+          pushBranch({
             moves: [...pathMoves, oppStep],
             firstOppShare: meta.firstOppShare ?? opp.share,
             personalLosses: branchPersonalLosses,
@@ -1815,7 +1929,7 @@ export async function generateFlawRepertoire({
     });
 
     if (!branches.length) {
-      branches.push({
+      pushBranch({
         moves: [anchorStep],
         firstOppShare: null,
         personalLosses: 0,
@@ -1857,6 +1971,6 @@ export async function generateFlawRepertoire({
       poolLabel: explorer.poolLabel,
     };
   } finally {
-    if (sfSession) sfSession.close();
+    if (ownedSfSession) ownedSfSession.close();
   }
 }

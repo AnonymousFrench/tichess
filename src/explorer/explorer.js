@@ -18,6 +18,7 @@ import { pullInsightsFromServer } from '../insights/cloudInsights.js';
 import { extractPathToNode } from '../repertoire/pgnImport.js';
 import { openFlawRepertoireModal } from '../repertoire/flawModal.js';
 import { initStudioRepertoire } from '../repertoire/studioPanel.js';
+import { stopLocalSf, triggerSfAnalysis } from '../engines/stockfish.js';
 
 /** Sources that show the user's own games (results read from their side). */
 const isPersonal = () => state.refSource === 'player' || state.refSource === 'mine';
@@ -338,6 +339,14 @@ export function renderRefTable(moves, meta = {}) {
       const openingName = document.getElementById('openingName')?.textContent || '';
       const baseFen = getCurrentFen();
 
+      const handleBusyChange = (busy) => {
+        if (busy) {
+          stopLocalSf();
+        } else if (state.sfEnabled) {
+          triggerSfAnalysis();
+        }
+      };
+
       if (entry.isMyTurn) {
         openFlawRepertoireModal({
           prefixMoves,
@@ -350,6 +359,7 @@ export function renderRefTable(moves, meta = {}) {
           triggerType: 'user_move',
           openingName,
           personalGames: state.mastersGamesCache || [],
+          onBusyChange: handleBusyChange,
           notify: (msg, isErr) => showToast(msg, Boolean(isErr)),
           onSaved: async () => {
             try {
@@ -402,6 +412,7 @@ export function renderRefTable(moves, meta = {}) {
         oppMove: { uci: oppUci, san: oppMv.san, ply: prefixMoves.length },
         openingName,
         personalGames: state.mastersGamesCache || [],
+        onBusyChange: handleBusyChange,
         notify: (msg, isErr) => showToast(msg, Boolean(isErr)),
         onSaved: async () => {
           try {

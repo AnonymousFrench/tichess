@@ -497,4 +497,72 @@ describe('generateFlawRepertoire end-to-end compilation & merging', () => {
     // Line preview exposes fixedHabits for the modal UI
     expect(result.linesPreview.some((ln) => ln.fixedHabits.some((h) => h.label === '7.Nde2'))).toBe(true);
   });
+
+  it('regenerates the same branch without self-blocking, streams lines live, and refreshes notes on merge', async () => {
+    const { moves: prefixMoves, fen: najdorfFen } = buildPrefix(NAJDORF_PREFIX);
+    const { evaluateFn, fetchExplorerFn } = makeMocks();
+
+    // First generation (Quick) saved into existing repertoire
+    const first = await generateFlawRepertoire({
+      prefixMoves,
+      startFen: START_FEN,
+      fen: najdorfFen,
+      color: 'w',
+      openingName: 'Sicilian Defense: Najdorf Variation',
+      flawedUci: 'f2f3',
+      flawedSan: 'f3',
+      flawedStats: { total: 8, wins: 2, draws: 1, losses: 5, scorePct: 31 },
+      mode: 'repair',
+      anchorMove: { uci: 'f2f3', san: 'f3', evLabel: '+0.3', peerScore: 51 },
+      presetKey: 'quick',
+      sectionName: 'Fix: Sicilian Defense (6.f3 follow-ups)',
+      evaluateFn,
+      fetchExplorerFn,
+    });
+
+    // Clear a card note to simulate an older saved repertoire without rich habit notes
+    const firstCardIds = Object.keys(first.repertoire.cards);
+    first.repertoire.cards[firstCardIds[firstCardIds.length - 1]].n = 'Old plain note';
+
+    // Second generation on the EXACT SAME branch with deeper preset + 1,000 unrelated games
+    const noiseGames = Array.from({ length: 1000 }, (_, i) => ({
+      id: `noise_${i}`,
+      color: 'w',
+      res: 1,
+      moves: 'd4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 O-O Nf3 h6 Bh4 b6',
+    }));
+    const streamed = [];
+
+    const second = await generateFlawRepertoire({
+      prefixMoves,
+      startFen: START_FEN,
+      fen: najdorfFen,
+      color: 'w',
+      openingName: 'Sicilian Defense: Najdorf Variation',
+      flawedUci: 'f2f3',
+      flawedSan: 'f3',
+      flawedStats: { total: 8, wins: 2, draws: 1, losses: 5, scorePct: 31 },
+      mode: 'repair',
+      anchorMove: { uci: 'f2f3', san: 'f3', evLabel: '+0.3', peerScore: 51 },
+      presetKey: 'standard',
+      sectionName: 'Fix: Sicilian Defense (6.f3 follow-ups)',
+      existingRepertoire: first.repertoire,
+      personalGames: noiseGames,
+      onLineReady: (line) => streamed.push(line),
+      evaluateFn,
+      fetchExplorerFn,
+    });
+
+    // Must NOT stop immediately at move 7 with 'repertoire'
+    expect(second.linesPreview.every((ln) => ln.stoppedBy !== 'repertoire')).toBe(true);
+    expect(streamed.length).toBe(second.stats.lines);
+    // Lines should expand deeper than 1 move after 6.f3
+    expect(second.repertoire.lines[0].uci.length).toBeGreaterThan(prefixMoves.length + 4);
+
+    // Merging with refreshNotes: true refreshes existing card notes without losing SRS card IDs
+    const merged = mergeRepertoires(first.repertoire, second.repertoire, { refreshNotes: true });
+    const mergedValid = parseRepertoireFile(buildExportFile(merged, {}, 'Refreshed', Date.now()));
+    expect(mergedValid.ok).toBe(true);
+    expect(merged.cards[firstCardIds[firstCardIds.length - 1]].n).not.toBe('Old plain note');
+  });
 });

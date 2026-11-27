@@ -36,6 +36,13 @@ import { loadRepertoire } from '../repertoire/storage.js';
 import { encodeMoveLine } from '../chess/shareUrl.js';
 import { initCloudSync, onCloudSyncState, getCloudSyncState, getLoginUrl } from '../sync/cloudSync.js';
 import { mountAccount } from '../shared/account.js';
+import {
+  pullInsightsFromServer,
+  addCloudInsightsSource,
+  removeCloudInsightsSource,
+  uploadGamesToCloud,
+  runBackgroundInsightsSync,
+} from './cloudInsights.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const PREFS_KEY = 'tichess_insights_ui_v1';
@@ -511,6 +518,28 @@ async function persistAccounts() {
   await saveAccounts(S.accounts.map((a) => ({ ...a })));
 }
 
+function isCloudAuthenticated() {
+  return Boolean(getCloudSyncState().authenticated);
+}
+
+function applyServerSources(mergedAccounts) {
+  if (!Array.isArray(mergedAccounts)) return;
+  S.accounts = mergedAccounts;
+  renderHeader();
+}
+
+function applyPulledBatch(records) {
+  if (!records?.length) return;
+  const wasEmpty = S.list.length === 0;
+  addRecords(records);
+  if (wasEmpty && S.list.length > 0) {
+    lastSyncRender = Date.now();
+    scheduleRender({ throttle: false });
+  } else {
+    scheduleRender({ throttle: true });
+  }
+}
+
 async function addAccount(src, name) {
   name = name.trim();
   if (!name) return;
@@ -526,18 +555,33 @@ async function addAccount(src, name) {
   S.accounts.push({ src, name, addedAt: Date.now() });
   await persistAccounts();
   closePopover();
+
+  if (isCloudAuthenticated()) {
+    const added = await addCloudInsightsSource(src, name).catch(() => ({ ok: false }));
+    if (added?.ok && added.source?.cachedCount > 0) {
+      toast(`Loading ${fmtInt(added.source.cachedCount)} cached games for ${name}…`);
+    }
+    runSync({ force: true, source: { src, name } });
+    return;
+  }
   runSync();
 }
 
 async function removeAccount(key) {
   const a = S.accounts.find((x) => accountKey(x) === key);
   if (!a) return;
-  if (!window.confirm(`Remove ${a.name} and delete its ${fmtInt(accountGamesCount(a))} downloaded games from this browser?`)) return;
+  const scopeMsg = isCloudAuthenticated()
+    ? `Remove ${a.name} from your Insights sources?`
+    : `Remove ${a.name} and delete its ${fmtInt(accountGamesCount(a))} downloaded games from this browser?`;
+  if (!window.confirm(scopeMsg)) return;
   if (S.sync) stopSync();
   if (S.scan) stopCoachScan();
   S.accounts = S.accounts.filter((x) => x !== a);
   await persistAccounts();
   await deleteAccountGames(a.src, a.name.toLowerCase());
+  if (isCloudAuthenticated()) {
+    await removeCloudInsightsSource(a.src, a.name).catch(() => {});
+  }
   const removedIds = [];
   for (const [id, g] of S.games) {
     if (g.src === a.src && g.acct === a.name.toLowerCase()) {
@@ -737,7 +781,7 @@ function stopSync() {
   S.syncCtrl?.abort();
 }
 
-async function runSync() {
+async function runSync({ force = false, source = null } = {}) {
   if (S.sync) return;
   const targets = S.accounts.filter((a) => a.src === 'lichess' || a.src === 'chesscom');
   if (!targets.length) return;
@@ -745,6 +789,72 @@ async function runSync() {
   S.syncCtrl = ctrl;
   S.lastSyncError = '';
   const before = S.games.size;
+
+  // When signed in (Lichess OAuth or manual Lichess token), run resumable server-side
+  // Neon sync slices so games are saved to Postgres and shared across devices/users.
+  if (isCloudAuthenticated()) {
+    let fellBack = false;
+    try {
+      const first = source || targets[0];
+      S.sync = {
+        label: `${first.src === 'lichess' ? 'Lichess' : 'Chess.com'} · ${first.name}`,
+        fetched: 0,
+        total: first.total || 0,
+        unit: 'games',
+        startedAt: Date.now(),
+      };
+      if (!S.list.length) render();
+      else renderHeader();
+
+      const res = await runBackgroundInsightsSync({
+        force,
+        source,
+        foreground: true,
+        maxSlices: 16,
+        signal: ctrl.signal,
+        onSources: (merged) => applyServerSources(merged),
+        onBatch: (recs) => applyPulledBatch(recs),
+        onProgress: (p) => {
+          if (!S.sync) return;
+          Object.assign(S.sync, {
+            label: p.label || S.sync.label,
+            fetched: p.fetched ?? S.sync.fetched,
+            total: p.total ?? S.sync.total,
+            unit: 'games',
+          });
+          renderHeader();
+          if (!S.list.length) updateEmptySyncProgress();
+        },
+      });
+
+      if (res.status === 503 || res.status === 401 || res.status === 404) {
+        fellBack = true;
+      } else if (res.aborted) {
+        toast('Sync paused. Background sync continues where it stopped.');
+      } else if (res.error) {
+        S.lastSyncError = res.error;
+        toast(res.error, true);
+      } else {
+        const added = S.games.size - before;
+        toast(added ? `${fmtInt(added)} new game${added === 1 ? '' : 's'} synced` : 'You are up to date');
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        toast('Sync paused. Background sync continues where it stopped.');
+      } else {
+        fellBack = true;
+      }
+    } finally {
+      if (!fellBack) {
+        S.sync = null;
+        S.syncCtrl = null;
+        await persistAccounts().catch(() => {});
+        render();
+      }
+    }
+    if (!fellBack) return;
+  }
+
   try {
     for (const acct of targets) {
       S.sync = { label: `${acct.src === 'lichess' ? 'Lichess' : 'Chess.com'} · ${acct.name}`, fetched: 0, total: 0, unit: 'games', startedAt: Date.now() };
@@ -805,7 +915,17 @@ function openAccounts() {
   const rows = S.accounts
     .map((a) => {
       const n = accountGamesCount(a);
-      const state = a.src === 'pgn' ? 'Imported file' : a.complete ? `Synced ${a.lastSync ? relTime(a.lastSync) : ''}` : 'Partly downloaded';
+      const cloud = isCloudAuthenticated();
+      const state =
+        a.src === 'pgn'
+          ? cloud
+            ? 'Imported · cloud saved'
+            : 'Imported file'
+          : a.complete
+            ? `${cloud ? 'Cloud synced' : 'Synced'} ${a.lastSync ? relTime(a.lastSync) : ''}`
+            : cloud
+              ? 'Syncing in background'
+              : 'Partly downloaded';
       return `<div class="flex items-center gap-2 py-2 border-t border-borderSubtle/60 first:border-0">
         <span class="px-1.5 py-0.5 rounded text-[9.5px] font-bold ${a.src === 'lichess' ? 'bg-txt/10 text-txt' : a.src === 'chesscom' ? 'bg-em/15 text-em' : 'bg-cy/15 text-cy'}">${a.src === 'lichess' ? 'LICHESS' : a.src === 'chesscom' ? 'CHESS.COM' : 'PGN'}</span>
         <div class="min-w-0 flex-1"><div class="text-[12.5px] font-semibold truncate">${a.title ? `<span class="text-am mr-1">${esc(a.title)}</span>` : ''}${esc(a.name)}</div><div class="text-[10.5px] text-txtMuted">${fmtInt(n)} games · ${esc(state)}</div></div>
@@ -875,6 +995,9 @@ async function importPgnFile(file) {
   }
   toast(`${fmtInt(records.length)} games imported`);
   render();
+  if (isCloudAuthenticated()) {
+    void uploadGamesToCloud('pgn', owner, records, { linkToUser: true }).catch(() => {});
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -986,7 +1109,7 @@ function onClick(e) {
       addAccount('lichess', el.dataset.name || '');
       break;
     case 'sync':
-      runSync();
+      runSync({ force: true });
       break;
     case 'stop-sync':
       stopSync();
@@ -1438,11 +1561,25 @@ export async function startInsights() {
     toast('This browser blocked local storage, so games cannot be saved (private window?).', true);
   }
   render();
+  let bootReady = false;
   onCloudSyncState((snap) => {
     if (!S.accounts.length && $('view').querySelector('[data-act="add-account-form"]')) renderOnboarding('');
-    autoAddSignedInAccount(snap);
+    if (!bootReady || !snap.authenticated) return;
+    void autoAddSignedInAccount(snap);
   });
   const snap = await initCloudSync();
+  if (snap.authenticated) {
+    const pulled = await pullInsightsFromServer({
+      onSources: (merged) => {
+        S.accounts = merged;
+      },
+      onBatch: (recs) => applyPulledBatch(recs),
+    }).catch(() => ({ ok: false }));
+    if (pulled.ok && S.accounts.length) {
+      render();
+    }
+  }
+  bootReady = true;
   if (await autoAddSignedInAccount(snap)) return;
   if (!S.accounts.length) {
     renderOnboarding('');

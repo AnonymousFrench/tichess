@@ -227,3 +227,218 @@ test('Studio panels can be swapped, resized and arranged with presets', async ({
   await page.selectOption('#sfLinesSelect', '1');
   await expect.poll(() => page.locator('#sfLinesList > *').count(), { timeout: 20_000 }).toBe(1);
 });
+
+test('Lichess token triggers immediate background sync and Insights reuses DB cache for self and other players', async ({ page, context }) => {
+  let authed = false;
+  let tokenPostCount = 0;
+  let bgSyncCalls = 0;
+  let directLichessCalls = 0;
+  const now = Date.now();
+
+  const dbSources = [
+    {
+      src: 'lichess',
+      acct: 'alice',
+      name: 'Alice',
+      title: '',
+      total: 2,
+      perfs: { blitz: { rating: 1920, games: 2, prov: false } },
+      newest: now - 10_000,
+      oldest: now - 20_000,
+      complete: true,
+      monthsDone: [],
+      lastSync: now - 5_000,
+      syncError: '',
+      addedAt: now - 60_000,
+      cachedCount: 2,
+      maxSeq: 2,
+    },
+  ];
+
+  const dbGames = {
+    'lichess:alice': [
+      {
+        id: 'li:a1',
+        src: 'lichess',
+        acct: 'alice',
+        t: now - 10_000,
+        tc: 'blitz',
+        clock: '180+0',
+        rated: true,
+        color: 'w',
+        res: 1,
+        term: 'mate',
+        me: 1920,
+        op: 'Bob',
+        opR: 1900,
+        opT: '',
+        eco: 'C50',
+        opening: 'Italian Game',
+        oply: 4,
+        moves: 'e4 e5 Nf3 Nc6 Bc4 Bc5',
+        plies: 6,
+        url: 'https://lichess.org/a1',
+      },
+      {
+        id: 'li:a2',
+        src: 'lichess',
+        acct: 'alice',
+        t: now - 20_000,
+        tc: 'blitz',
+        clock: '180+0',
+        rated: true,
+        color: 'b',
+        res: 0.5,
+        term: 'agreement',
+        me: 1915,
+        op: 'Carol',
+        opR: 1910,
+        opT: '',
+        eco: 'B20',
+        opening: 'Sicilian Defense',
+        oply: 2,
+        moves: 'e4 c5 Nf3 d6',
+        plies: 4,
+        url: 'https://lichess.org/a2/black',
+      },
+    ],
+    'lichess:drnykterstein': [
+      {
+        id: 'li:m1',
+        src: 'lichess',
+        acct: 'drnykterstein',
+        t: now - 30_000,
+        tc: 'blitz',
+        clock: '180+0',
+        rated: true,
+        color: 'w',
+        res: 1,
+        term: 'resign',
+        me: 3100,
+        op: 'RivalGM',
+        opR: 3050,
+        opT: 'GM',
+        eco: 'C65',
+        opening: 'Ruy Lopez: Berlin Defense',
+        oply: 6,
+        moves: 'e4 e5 Nf3 Nc6 Bb5 Nf6',
+        plies: 6,
+        url: 'https://lichess.org/m1',
+      },
+    ],
+  };
+
+  await context.route(/lichess\.org|chess\.com/, async (route) => {
+    directLichessCalls++;
+    return route.fulfill({ status: 404, body: '' });
+  });
+
+  await context.route('**/api/**', async (route) => {
+    const url = new URL(route.request().url());
+    const method = route.request().method();
+
+    if (url.pathname === '/api/auth/me') {
+      return route.fulfill({
+        json: authed
+          ? { configured: true, authenticated: true, user: { id: 'alice', username: 'Alice' } }
+          : { configured: true, authenticated: false, user: null },
+      });
+    }
+    if (url.pathname === '/api/auth/token' && method === 'POST') {
+      tokenPostCount++;
+      authed = true;
+      return route.fulfill({ json: { ok: true, user: { id: 'alice', username: 'Alice' }, sourceAdded: true } });
+    }
+    if (url.pathname === '/api/sync') {
+      return route.fulfill({
+        json: {
+          user: { id: 'alice', username: 'Alice' },
+          repertoire: null,
+          repertoireName: '',
+          repertoireUpdatedAt: 0,
+          progress: {},
+          progressUpdatedAt: 0,
+          scoutTargets: [],
+          scoutTargetsUpdatedAt: 0,
+        },
+      });
+    }
+    if (url.pathname === '/api/insights' && method === 'GET') {
+      if (url.searchParams.get('action') === 'games') {
+        const key = `${url.searchParams.get('src')}:${url.searchParams.get('acct')}`;
+        const list = dbGames[key] || [];
+        return route.fulfill({ json: { games: list, lastSeq: list.length, hasMore: false } });
+      }
+      return route.fulfill({ json: { user: { id: 'alice', username: 'Alice' }, sources: dbSources } });
+    }
+    if (url.pathname === '/api/insights' && method === 'POST') {
+      const body = route.request().postDataJSON();
+      if (body?.action === 'addSource' && body?.name?.toLowerCase() === 'drnykterstein') {
+        const added = {
+          src: 'lichess',
+          acct: 'drnykterstein',
+          name: 'DrNykterstein',
+          title: 'GM',
+          total: 1,
+          perfs: { blitz: { rating: 3100, games: 1, prov: false } },
+          newest: now - 30_000,
+          oldest: now - 30_000,
+          complete: true,
+          monthsDone: [],
+          lastSync: now - 5_000,
+          syncError: '',
+          addedAt: now,
+          cachedCount: 1,
+          maxSeq: 1,
+        };
+        if (!dbSources.some((s) => s.acct === 'drnykterstein')) dbSources.push(added);
+        return route.fulfill({ json: { ok: true, source: added, sources: dbSources } });
+      }
+      return route.fulfill({ json: { ok: true, saved: 0 } });
+    }
+    if (url.pathname === '/api/insights/sync' && method === 'POST') {
+      bgSyncCalls++;
+      return route.fulfill({
+        json: {
+          ok: true,
+          synced: {
+            src: 'lichess',
+            acct: 'alice',
+            displayName: 'Alice',
+            added: 0,
+            complete: true,
+            totalGames: 2,
+            cachedCount: 2,
+            maxSeq: 2,
+          },
+          hasMore: false,
+          pendingCount: 0,
+        },
+      });
+    }
+    return route.fulfill({ status: 404, json: { error: 'Not mocked' } });
+  });
+
+  // 1. User pastes a manual Lichess token in Studio Settings -> immediately signs in and starts background sync job.
+  await page.goto('/');
+  await page.click('#btnSettingsMenu');
+  await page.click('#actOpenSettings');
+  await page.fill('#inputLichessToken', 'lip_valid_test_token_123456');
+  await page.click('#btnSaveToken');
+  await expect.poll(() => tokenPostCount).toBe(1);
+  await expect.poll(() => bgSyncCalls).toBeGreaterThanOrEqual(1);
+
+  // 2. Opening Insights loads Alice's cached games directly from Neon without touching lichess.org.
+  directLichessCalls = 0;
+  await page.goto('/insights.html');
+  await expect(page.locator('#hdrRight')).toContainText('2');
+  await expect(page.locator('#view')).toContainText('Bob');
+
+  // 3. Adding another player (DrNykterstein) loads their cached DB games right away too.
+  await page.click('[data-act=accounts]');
+  await page.fill('[role=dialog] input[name=name]', 'DrNykterstein');
+  await page.click('[role=dialog] button:has-text("Add")');
+  await expect(page.locator('#hdrRight')).toContainText('3');
+  await expect(page.locator('#view')).toContainText('RivalGM');
+  expect(directLichessCalls).toBe(0);
+});

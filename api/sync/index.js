@@ -1,6 +1,7 @@
 import { getDb, isDbConfigured } from '../_lib/db.js';
 import { readSessionFromRequest, isSameOriginRequest } from '../_lib/session.js';
 import { mergeProgress } from '../../src/repertoire/model.js';
+import { ensureSourceInDb } from '../_lib/insightsSync.js';
 
 const MAX_REPERTOIRE_BYTES = 4 * 1024 * 1024;
 const MAX_PROGRESS_BYTES = 512 * 1024;
@@ -195,6 +196,16 @@ export default async function handler(req, res) {
           ON CONFLICT (lichess_id)
           DO UPDATE SET targets_json = EXCLUDED.targets_json, updated_at = EXCLUDED.updated_at
         `;
+        // Also ensure scouted opponents have player archives in Neon so their games are cached too.
+        for (const t of mergedTargets.slice(0, 12)) {
+          await ensureSourceInDb(sql, {
+            lichessId: user.id,
+            src: t.source,
+            displayName: t.username,
+            linkToUser: false,
+            now,
+          }).catch(() => {});
+        }
         return res.status(200).json({ ok: true, scoutTargets: mergedTargets, updatedAt: now });
       }
 

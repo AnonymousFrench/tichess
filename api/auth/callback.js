@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { getDb, isDbConfigured } from '../_lib/db.js';
+import { ensureSourceInDb } from '../_lib/insightsSync.js';
 import {
   OAUTH_COOKIE,
   SESSION_COOKIE,
@@ -125,6 +126,14 @@ export default async function handler(req, res) {
         lichess_token_enc = EXCLUDED.lichess_token_enc,
         last_seen_at = NOW()
     `;
+
+    // Immediately queue the signed-in player's Lichess archive for background game syncing.
+    await ensureSourceInDb(sql, {
+      lichessId,
+      src: 'lichess',
+      displayName: username,
+      linkToUser: true,
+    });
 
     // 4. Issue signed HttpOnly session cookie (we do NOT need to persist the raw Lichess token)
     const sessionVal = signToken({ sub: lichessId, username }, secret, SESSION_MAX_AGE_SEC);

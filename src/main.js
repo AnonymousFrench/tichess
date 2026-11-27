@@ -85,6 +85,7 @@ import {
   onCloudDataPulled,
   getLoginUrl,
   syncNow,
+  signInWithLichessToken,
   signOutCloudSync,
 } from './sync/cloudSync.js';
 import { mountModals } from './ui/modals.js';
@@ -663,11 +664,30 @@ function bindEvents() {
       e.target.value = '';
     }
   };
-  document.getElementById('btnSaveToken').onclick = () => {
-    state.lichessToken = document.getElementById('inputLichessToken').value.trim();
+  document.getElementById('btnSaveToken').onclick = async () => {
+    const token = document.getElementById('inputLichessToken').value.trim();
+    state.lichessToken = token;
     localStorage.setItem('cms_lichess_token', state.lichessToken);
-      showToast('Lichess token saved');
     refreshReferenceExplorer();
+    if (!token) {
+      showToast('Lichess token saved');
+      return;
+    }
+    const cloud = getCloudSyncState();
+    if (!cloud.configured) {
+      showToast('Lichess token saved');
+      return;
+    }
+    showToast('Verifying Lichess token…');
+    const res = await signInWithLichessToken(token);
+    if (res.ok) {
+      showToast(`Signed in as ${res.user?.username || 'Lichess'} — syncing games in background`);
+      refreshReferenceExplorer();
+    } else if (res.status === 401 || res.status === 403) {
+      showToast(res.error || 'Lichess rejected that token', true);
+    } else {
+      showToast('Lichess token saved locally');
+    }
   };
   document.getElementById('btnClearToken').onclick = () => {
     state.lichessToken = '';

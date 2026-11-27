@@ -65,5 +65,16 @@
         }
       ]
     }
+  ],
+  "functions": {
+    "api/insights/*.js": {
+      "maxDuration": 60
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/insights/cron",
+      "schedule": "0 4 * * *"
+    }
   ]
 }

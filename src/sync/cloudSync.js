@@ -5,8 +5,14 @@ import {
   loadProgress,
   saveProgress,
 } from '../repertoire/storage.js';
+import {
+  kickBackgroundInsightsSync,
+  registerManualLichessToken,
+} from '../insights/cloudInsights.js';
 
 const SCOUT_TARGETS_KEY = 'tichess-scout-targets';
+const MANUAL_TOKEN_KEY = 'cms_lichess_token';
+const SIGNED_OUT_FLAG = 'tichess_signed_out_v1';
 
 const syncState = {
   configured: false,
@@ -333,8 +339,13 @@ export function scheduleProgressSync(progress) {
   }, 1200);
 }
 
+function isInsightsPage() {
+  return typeof window !== 'undefined' && /\/insights(\.html)?$/i.test(window.location.pathname || '');
+}
+
 /**
  * Record a scouted Lichess or Chess.com opponent and sync the bookmark list across devices.
+ * Also kicks off background archiving so other players' games are saved into Neon.
  */
 export async function recordScoutTarget({ source, username, max = 100, perfType = '' }) {
   if (!source || !username) return;
@@ -355,10 +366,41 @@ export async function recordScoutTarget({ source, username, max = 100, perfType 
       syncState.scoutTargets = data.scoutTargets;
       emitState();
     }
+    kickBackgroundInsightsSync({ includeScout: true });
   } catch (_) {}
 }
 
+/**
+ * Verify a manually entered Lichess personal token on the server, sign into cloud sync,
+ * and immediately kick off background Insights database syncing.
+ */
+export async function signInWithLichessToken(token) {
+  const clean = String(token || '').trim();
+  if (!clean) return { ok: false, error: 'Enter a Lichess token first' };
+  try {
+    sessionStorage.removeItem(SIGNED_OUT_FLAG);
+  } catch (_) {}
+
+  const res = await registerManualLichessToken(clean);
+  if (!res.ok || !res.user) {
+    return res;
+  }
+
+  syncState.configured = true;
+  syncState.authenticated = true;
+  syncState.user = res.user;
+  syncState.error = '';
+  emitState();
+
+  await syncNow();
+  kickBackgroundInsightsSync({ force: true, includeScout: true });
+  return { ok: true, user: res.user };
+}
+
 export async function signOutCloudSync() {
+  try {
+    sessionStorage.setItem(SIGNED_OUT_FLAG, '1');
+  } catch (_) {}
   try {
     await apiJson('/api/auth/logout', { method: 'POST' });
   } catch (_) {}
@@ -391,10 +433,14 @@ export async function initCloudSync() {
         Date.now() - lastAutoPullAt > 10_000
       ) {
         syncNow();
+        if (!isInsightsPage()) kickBackgroundInsightsSync();
       }
     });
     window.addEventListener('online', () => {
-      if (syncState.authenticated) syncNow();
+      if (syncState.authenticated) {
+        syncNow();
+        if (!isInsightsPage()) kickBackgroundInsightsSync();
+      }
     });
   }
 
@@ -404,9 +450,31 @@ export async function initCloudSync() {
       syncState.configured = Boolean(data.configured);
       syncState.authenticated = Boolean(data.authenticated && data.user);
       syncState.user = data.user || null;
+
+      // If the user already pasted a Lichess personal token in Settings and hasn't signed out,
+      // exchange it once so background DB sync starts immediately without extra clicks.
+      if (syncState.configured && !syncState.authenticated && typeof window !== 'undefined') {
+        let localToken = '';
+        let signedOut = false;
+        try {
+          localToken = (localStorage.getItem(MANUAL_TOKEN_KEY) || '').trim();
+          signedOut = sessionStorage.getItem(SIGNED_OUT_FLAG) === '1';
+        } catch (_) {}
+        if (localToken && !signedOut) {
+          const tokRes = await registerManualLichessToken(localToken);
+          if (tokRes.ok && tokRes.user) {
+            syncState.authenticated = true;
+            syncState.user = tokRes.user;
+          }
+        }
+      }
+
       emitState();
       if (syncState.authenticated) {
         await syncNow();
+        if (!isInsightsPage()) {
+          kickBackgroundInsightsSync();
+        }
       }
       return getCloudSyncState();
     }

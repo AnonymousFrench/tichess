@@ -20,6 +20,8 @@ import {
   lookupRepertoirePosition,
 } from '../repertoire/studioPanel.js';
 import { recordScoutTarget, getCloudSyncState } from '../sync/cloudSync.js';
+import { normalizeChessComGame } from '../insights/normalize.js';
+import { uploadGamesToCloud, registerOtherPlayerArchive } from '../insights/cloudInsights.js';
 
 function renderWdlBar(w, d, l) {
   const tot = w + d + l || 1;
@@ -268,6 +270,9 @@ export async function runLichessSync() {
     document.getElementById('scoutModal').classList.add('hidden');
     await reloadCollections(cid);
     recordScoutTarget({ source: 'lichess', username: user, max, perfType });
+    if (getCloudSyncState().authenticated) {
+      void registerOtherPlayerArchive('lichess', user);
+    }
     showToast(`Synced ${raw.length} Lichess games for ${user}`);
   } catch (err) {
     wrap.classList.add('hidden');
@@ -296,11 +301,14 @@ export async function runChessComSync() {
     const allArchives = await fetchChessComArchives(user);
     const archives = allArchives.slice(-months);
     const raw = [];
+    const normalizedForCloud = [];
     for (let i = 0; i < archives.length; i++) {
       setP(15 + (i / Math.max(1, archives.length)) * 35, `Archive ${i + 1}/${archives.length}...`);
       const games = await fetchChessComMonthGames(archives[i]);
       for (const g of games) {
         if (g.rules !== 'chess' || !g.pgn) continue;
+        const norm = normalizeChessComGame(g, user);
+        if (norm) normalizedForCloud.push(norm);
         raw.push({
           pgn: g.pgn,
           white: g.white?.username || 'White',
@@ -324,6 +332,9 @@ export async function runChessComSync() {
     document.getElementById('scoutModal').classList.add('hidden');
     await reloadCollections(cid);
     recordScoutTarget({ source: 'chesscom', username: user, max: months });
+    if (getCloudSyncState().authenticated && normalizedForCloud.length) {
+      void uploadGamesToCloud('chesscom', user, normalizedForCloud, { linkToUser: false }).catch(() => {});
+    }
     showToast(`Synced ${raw.length} games for ${user}`);
   } catch (err) {
     wrap.classList.add('hidden');

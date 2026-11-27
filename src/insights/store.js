@@ -126,3 +126,14 @@ export async function deleteAnalyses(ids) {
     for (const id of ids) s.delete(id);
   });
 }
+
+export async function loadServerSeqs() {
+  const v = await tx('meta', 'readonly', (t) => reqResult(t.objectStore('meta').get('serverSeqs')));
+  return v && typeof v === 'object' ? v : {};
+}
+
+export async function saveServerSeqs(seqs) {
+  await tx('meta', 'readwrite', (t) => {
+    t.objectStore('meta').put(seqs && typeof seqs === 'object' ? seqs : {}, 'serverSeqs');
+  });
+}

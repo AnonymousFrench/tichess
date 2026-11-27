@@ -331,7 +331,7 @@ export function renderSfUI() {
       state.sf.topArrowUci = top.pv[0];
       renderArrows();
     }
-    if (state.evalBarSource === 'sf' || state.lc0.mode !== 'ws') {
+    if (state.evalBarSource === 'sf' || (state.evalBarSource === 'lc0' && state.lc0.mode !== 'ws')) {
       updateEvalBarFromState();
     }
   }

@@ -48,6 +48,18 @@ import {
   setLc0SettingsHandler,
 } from './engines/lc0.js';
 import {
+  initHumanfish,
+  setEngineTab,
+  triggerHumanfishAnalysis,
+  stopHumanfish,
+  setHumanfishUseClocks,
+  toggleHumanfishArrows,
+  toggleHumanfishWhatIf,
+  setHumanfishServerUrl,
+  updateHumanfishServerBadge,
+  setHumanfishSettingsHandler,
+} from './engines/humanfish.js';
+import {
   startActiveTabReview,
   cancelGameReview,
   renderGameReviewPanel,
@@ -203,7 +215,10 @@ function openModal(id) {
     document.getElementById('inputLichessToken').value = state.lichessToken;
     document.getElementById('inputLc0WsUrl').value = state.lc0.wsUrl;
     document.getElementById('inputSfWsUrl').value = state.sf.wsUrl;
+    const hfInput = document.getElementById('inputHfServerUrl');
+    if (hfInput) hfInput.value = state.hf.serverUrl;
     updateBridgeStatusBadge();
+    updateHumanfishServerBadge();
     renderCloudSyncUI(getCloudSyncState());
   }
   if (id === 'scoutModal') {
@@ -280,6 +295,12 @@ function flipBoard() {
 }
 
 function toggleBothEngines() {
+  if (state.engineTab === 'hf') {
+    state.hf.running = !state.hf.running;
+    document.getElementById('btnSfToggle').textContent = state.hf.running ? '⏸' : '▶';
+    triggerHumanfishAnalysis();
+    return;
+  }
   const next = !(state.sf.running || (state.lc0.mode === 'ws' && state.lc0.running));
   state.sf.running = next;
   state.lc0.running = next;
@@ -381,11 +402,24 @@ function bindEvents() {
   // Board & Navigation
   document.getElementById('btnAddBoardTab').onclick = () => addBoardTab(`Analysis ${state.tabs.length + 1}`);
   document.getElementById('evalBarContainer').onclick = () => {
-    if (state.lc0.mode !== 'ws') {
-      showToast('Connect Local Lc0 Bridge in Settings to switch Eval Bar to Lc0');
-      return;
+    const sources = ['sf', 'hf'];
+    if (state.lc0.mode === 'ws') sources.push('lc0');
+    const idx = sources.indexOf(state.evalBarSource);
+    const next = sources[(idx + 1) % sources.length];
+    state.evalBarSource = next;
+    if (next === 'hf' && !state.hf.enabled) {
+      state.hf.enabled = true;
+      triggerHumanfishAnalysis();
+      showToast('Eval Bar: HumanFish W/D/L');
+    } else {
+      showToast(
+        next === 'hf'
+          ? 'Eval Bar: HumanFish W/D/L'
+          : next === 'lc0'
+            ? 'Eval Bar: Lc0'
+            : 'Eval Bar: Stockfish'
+      );
     }
-    state.evalBarSource = state.evalBarSource === 'sf' ? 'lc0' : 'sf';
     updateEvalBarFromState();
   };
   document.getElementById('btnFirst').onclick = () => {
@@ -648,10 +682,23 @@ function bindEvents() {
   };
   document.getElementById('btnLc0Bridge').onclick = () => openModal('settingsModal');
   document.getElementById('btnSfToggle').onclick = () => {
+    if (state.engineTab === 'hf') {
+      state.hf.running = !state.hf.running;
+      document.getElementById('btnSfToggle').textContent = state.hf.running ? '⏸' : '▶';
+      triggerHumanfishAnalysis();
+      return;
+    }
     state.sf.running = !state.sf.running;
     document.getElementById('btnSfToggle').textContent = state.sf.running ? '⏸' : '▶';
     triggerSfAnalysis();
   };
+  document.getElementById('btnEngineTabSf').onclick = () => setEngineTab('sf');
+  document.getElementById('btnEngineTabHf').onclick = () => setEngineTab('hf');
+  document.getElementById('sfHfSummaryChip').onclick = () => setEngineTab('hf');
+  document.getElementById('btnHfClockMode').onclick = () => setHumanfishUseClocks(!state.hf.useClocks);
+  document.getElementById('btnHfArrows').onclick = toggleHumanfishArrows;
+  document.getElementById('btnHfWhatIf').onclick = toggleHumanfishWhatIf;
+  document.getElementById('btnHfRefresh').onclick = () => triggerHumanfishAnalysis({ force: true });
   document.getElementById('btnSfCloud').onclick = toggleSfCloud;
 
   // Modals
@@ -722,6 +769,21 @@ function bindEvents() {
   document.getElementById('btnConnectSfWs').onclick = () =>
     connectSfWs(document.getElementById('inputSfWsUrl').value.trim());
   document.getElementById('btnDisconnectSfWs').onclick = disconnectSfWs;
+  document.getElementById('btnSaveHfServerUrl').onclick = () => {
+    const val = document.getElementById('inputHfServerUrl')?.value.trim() || '';
+    if (val && !/^https?:\/\//i.test(val)) {
+      showToast('HumanFish URL must start with http:// or https://', true);
+      return;
+    }
+    setHumanfishServerUrl(val);
+    showToast(val ? `HumanFish server set to ${val}` : 'Using built-in HumanFish proxy');
+  };
+  document.getElementById('btnResetHfServerUrl').onclick = () => {
+    const inp = document.getElementById('inputHfServerUrl');
+    if (inp) inp.value = '';
+    setHumanfishServerUrl('');
+    showToast('Reset to built-in HumanFish proxy');
+  };
   document.getElementById('btnCopyBridgeScript').onclick = () =>
     copyText(document.getElementById('bridgeScriptCode').textContent, 'Copied bridge.js');
   document.getElementById('btnWipeDb').onclick = async () => {
@@ -791,6 +853,7 @@ const debouncedPositionLookups = debounce(() => {
   if (state.activeHub === 'scouted') renderScoutedGamesTable();
   triggerLc0Analysis();
   triggerSfAnalysis();
+  triggerHumanfishAnalysis();
 }, 250);
 
 // Subscribe all views to position changes
@@ -802,6 +865,7 @@ onPositionChange(() => {
   if (state.activeHub === 'repertoire') renderStudioRepertoirePanel();
   syncRepertoireBoardArrows();
   stopLocalSf();
+  stopHumanfish();
   debouncedPositionLookups();
 });
 
@@ -932,6 +996,7 @@ async function bootstrap() {
   initMobileBoardPin();
   initMobileToolTabs();
   setLc0SettingsHandler(() => openModal('settingsModal'));
+  setHumanfishSettingsHandler(() => openModal('settingsModal'));
   initBoardInteractions();
   bindEvents();
   renderLayoutMenus();
@@ -1005,6 +1070,7 @@ async function bootstrap() {
 
   initLc0();
   initStockfish();
+  initHumanfish();
   discoverAndSyncLiveBroadcasts();
   startLivePollTimer();
 }

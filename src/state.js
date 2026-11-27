@@ -35,7 +35,8 @@ export const state = {
   showEngineArrows: true,
   showRepertoireArrows: true,
   showEvalBar: true,
-  evalBarSource: 'sf', // 'sf' | 'lc0'
+  evalBarSource: 'sf', // 'sf' | 'hf' | 'lc0'
+  engineTab: 'sf', // 'sf' | 'hf'
 
   // Configurable workspace panels
   panels: safeGetJsonStorage('tichess_panels_v1', DEFAULT_PANELS),
@@ -112,6 +113,21 @@ export const state = {
     evalLabel: '—',
     currentFen: '',
     cloudReqId: 0,
+  },
+  hf: {
+    enabled: false,
+    running: true,
+    useClocks: true,
+    showArrows: true,
+    showWhatIf: false,
+    serverUrl: safeGetStorage('tichess_hf_api_url', ''),
+    loading: false,
+    error: '',
+    currentFen: '',
+    result: null,
+    hoverCandidateUci: null,
+    whatIfOverride: null, // null = auto from active game, or { white_elo, black_elo, clk_white_s, clk_black_s, tc_category, tc_initial_s, tc_increment_s, has_move40 }
+    reqId: 0,
   },
 
   lichessToken: safeGetStorage('cms_lichess_token', ''),

@@ -144,7 +144,8 @@
           <!-- Eval Bar + Interactive Chessboard -->
           <div class="p-2 flex items-stretch justify-center gap-1.5">
             <!-- Clickable Vertical Eval Bar -->
-            <div id="evalBarContainer" class="w-5 sm:w-6 rounded bg-[#1c202a] border border-borderSubtle overflow-hidden relative flex flex-col justify-end shrink-0 select-none cursor-pointer group" title="Click to toggle Stockfish / Lc0 Eval Bar (requires Local Lc0 Bridge)">
+            <div id="evalBarContainer" class="w-5 sm:w-6 rounded bg-[#1c202a] border border-borderSubtle overflow-hidden relative flex flex-col justify-end shrink-0 select-none cursor-pointer group" title="Click to cycle Stockfish / HumanFish W·D·L / Lc0 Eval Bar">
+              <div id="evalFillDraw" class="w-full bg-[#6b7280]" style="height: 0%;"></div>
               <div id="evalFillWhite" class="w-full bg-[#e4e7ee]" style="height: 50%;"></div>
               <span id="evalLabelTop" class="absolute top-1 left-0 right-0 text-center font-mono text-[8.5px] font-bold text-[#e4e7ee] pointer-events-none"></span>
               <span id="evalLabelBottom" class="absolute bottom-1 left-0 right-0 text-center font-mono text-[8.5px] font-bold text-[#101319] pointer-events-none">0.0</span>
@@ -242,36 +243,58 @@
             <div id="lc0LinesList" class="flex-1 overflow-y-auto divide-y divide-borderSubtle/40 font-mono text-[11px]"></div>
           </div>
 
-          <!-- RIGHT: STOCKFISH 19 WASM / CLOUD / LOCAL UCI -->
+          <!-- RIGHT: STOCKFISH 19 WASM / CLOUD / LOCAL UCI + HUMANFISH -->
           <div id="panel-sf" data-dock="sf" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
             <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
-              <div class="flex items-center gap-1.5 min-w-0">
-                <button id="btnSfToggle" class="w-5 h-5 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/40 flex items-center justify-center text-[10px]" title="Start / Stop Stockfish" aria-label="Start or stop Stockfish">⏸</button>
-                <span class="font-bold text-[11.5px] text-cy">Stockfish</span>
+              <div class="flex items-center gap-1 min-w-0">
+                <button id="btnSfToggle" class="w-5 h-5 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/40 flex items-center justify-center text-[10px] shrink-0" title="Start / Stop Stockfish" aria-label="Start or stop engine">⏸</button>
+                <div role="tablist" aria-label="Engine mode" class="flex items-center gap-0.5 bg-surface rounded p-0.5 border border-borderSubtle shrink-0">
+                  <button id="btnEngineTabSf" type="button" role="tab" aria-selected="true" class="px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 font-bold text-[11px] transition-colors">Stockfish</button>
+                  <button id="btnEngineTabHf" type="button" role="tab" aria-selected="false" class="px-1.5 py-0.5 rounded text-txtMuted hover:text-txt font-semibold text-[11px] transition-colors" title="HumanFish calibrated W/D/L odds, Shapley attribution, and GM move probability arrows">HumanFish</button>
+                </div>
                 <span id="sfModeBadge" class="px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted truncate">Loading SF 19 Lite...</span>
+                <span id="hfModeBadge" class="hidden px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-em truncate">With Time</span>
               </div>
               <div class="flex items-center gap-1 shrink-0">
-                <select id="sfLinesSelect" aria-label="Engine lines" title="Number of engine lines" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-cy">
-                  <option value="1">1 line</option><option value="2">2 lines</option><option value="3">3 lines</option><option value="4">4 lines</option><option value="5">5 lines</option>
-                </select>
-                <select id="sfDepthSelect" aria-label="Engine depth" title="How deep the in-browser engine searches" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-cy">
-                  <option value="14">d14</option><option value="18">d18</option><option value="22">d22</option><option value="26">d26</option><option value="0">∞</option>
-                </select>
-                <button id="btnSfCloud" class="px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 text-[10px] font-medium" title="Toggle Free Lichess Cloud Eval">☁ Cloud</button>
-                <button class="panel-close-btn" data-panel-close="sf" title="Hide Stockfish" aria-label="Hide Stockfish">✕</button>
+                <div id="sfHeaderControls" class="flex items-center gap-1">
+                  <select id="sfLinesSelect" aria-label="Engine lines" title="Number of engine lines" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-cy">
+                    <option value="1">1 line</option><option value="2">2 lines</option><option value="3">3 lines</option><option value="4">4 lines</option><option value="5">5 lines</option>
+                  </select>
+                  <select id="sfDepthSelect" aria-label="Engine depth" title="How deep the in-browser engine searches" class="px-1 py-0.5 rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted focus:outline-none focus:border-cy">
+                    <option value="14">d14</option><option value="18">d18</option><option value="22">d22</option><option value="26">d26</option><option value="0">∞</option>
+                  </select>
+                  <button id="btnSfCloud" class="px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 text-[10px] font-medium" title="Toggle Free Lichess Cloud Eval">☁ Cloud</button>
+                </div>
+                <div id="hfHeaderControls" class="hidden flex items-center gap-1">
+                  <button id="btnHfClockMode" type="button" class="px-1.5 py-0.5 rounded bg-em/20 text-em border border-em/40 text-[10px] font-medium" title="Toggle With Time / Board Only">⏱ Time</button>
+                  <button id="btnHfArrows" type="button" class="px-1.5 py-0.5 rounded bg-em/20 text-em border border-em/40 text-[10px] font-medium" title="Toggle calibrated GM move probability arrows on the board">↗ Arrows</button>
+                  <button id="btnHfWhatIf" type="button" class="px-1.5 py-0.5 rounded bg-surface text-txtMuted border border-borderSubtle text-[10px] font-medium" title="Adjust What-If clocks, Elos, and time control">What-If</button>
+                  <button id="btnHfRefresh" type="button" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover text-txtMuted hover:text-txt border border-borderSubtle text-[10.5px]" title="Recalculate HumanFish evaluation" aria-label="Recalculate HumanFish">↻</button>
+                </div>
+                <button class="panel-close-btn" data-panel-close="sf" title="Hide Engine" aria-label="Hide Engine">✕</button>
               </div>
             </div>
 
-            <div class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
-              <div class="flex items-center gap-2">
-                <span id="sfMainEval" class="px-1.5 py-[1px] rounded bg-cy/20 text-cy font-bold min-w-[46px] text-center">—</span>
-                <span id="sfDepth" class="text-txtMuted">Depth: —</span>
+            <div id="sfEngineView" class="flex-1 flex flex-col min-h-0">
+              <div class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span id="sfMainEval" class="px-1.5 py-[1px] rounded bg-cy/20 text-cy font-bold min-w-[46px] text-center">—</span>
+                  <span id="sfDepth" class="text-txtMuted">Depth: —</span>
+                  <button id="sfHfSummaryChip" type="button" class="hidden px-1.5 py-[1px] rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 text-[9.5px] font-semibold truncate" title="Open HumanFish breakdown"></button>
+                </div>
+                <span id="sfNps" class="text-txtMuted text-[10px] shrink-0"></span>
               </div>
-              <span id="sfNps" class="text-txtMuted text-[10px]"></span>
+
+              <div id="sfLinesList" class="flex-1 overflow-y-auto divide-y divide-borderSubtle/40 font-mono text-[11px]">
+                <div class="p-2 text-txtMuted">Starting Stockfish 19 WASM...</div>
+              </div>
             </div>
 
-            <div id="sfLinesList" class="flex-1 overflow-y-auto divide-y divide-borderSubtle/40 font-mono text-[11px]">
-              <div class="p-2 text-txtMuted">Starting Stockfish 19 WASM...</div>
+            <div id="hfEngineView" class="hidden flex-1 flex flex-col min-h-0">
+              <div id="hfSummaryStrip" class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
+                <span class="text-txtMuted">Ready</span>
+              </div>
+              <div id="hfContentBody" class="flex-1 overflow-y-auto"></div>
             </div>
           </div>
         </div>

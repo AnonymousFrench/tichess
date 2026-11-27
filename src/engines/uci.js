@@ -186,19 +186,62 @@ export function formatEvalBarLabel(evalLabel, cp) {
 }
 
 export function updateEvalBarFromState() {
+  const fill = document.getElementById('evalFillWhite');
+  const drawFill = document.getElementById('evalFillDraw');
+  const top = document.getElementById('evalLabelTop');
+  const bot = document.getElementById('evalLabelBottom');
+  const box = document.getElementById('evalBarContainer');
+  const badge = document.getElementById('evalSourceBadge');
+  if (!fill || !top || !bot || !box || !badge) return;
+
+  const hfActive = state.evalBarSource === 'hf' && state.hf.enabled && state.hf.result;
+  if (hfActive) {
+    const hum =
+      !state.hf.useClocks && state.hf.result.human_no_clock
+        ? state.hf.result.human_no_clock
+        : state.hf.result.human;
+    if (hum) {
+      const wPct = Math.max(0, Math.min(100, Math.round((Number(hum.white) || 0) * 100)));
+      const dPct = Math.max(0, Math.min(100 - wPct, Math.round((Number(hum.draw) || 0) * 100)));
+      const expPct = Math.round((Number(hum.expected_score) || 0.5) * 100);
+      const wAdv = expPct >= 50;
+
+      badge.textContent = 'HF';
+      badge.className =
+        'absolute top-1/2 left-0 right-0 -translate-y-1/2 text-center font-mono text-[7.5px] font-bold py-0.5 bg-bg/85 text-em pointer-events-none';
+
+      fill.style.height = `${wPct}%`;
+      if (drawFill) drawFill.style.height = `${dPct}%`;
+
+      if (state.flipped) {
+        box.classList.remove('justify-end');
+        box.classList.add('justify-start');
+        if (drawFill && fill.nextElementSibling !== drawFill) fill.after(drawFill);
+        top.textContent = wAdv ? `${expPct}%` : '';
+        top.style.color = wPct >= 14 ? '#0f172a' : '#e2e8f0';
+        bot.textContent = !wAdv ? `${100 - expPct}%` : '';
+        bot.style.color = '#e2e8f0';
+      } else {
+        box.classList.remove('justify-start');
+        box.classList.add('justify-end');
+        if (drawFill && drawFill.nextElementSibling !== fill) fill.before(drawFill);
+        bot.textContent = wAdv ? `${expPct}%` : '';
+        bot.style.color = wPct >= 14 ? '#0f172a' : '#e2e8f0';
+        top.textContent = !wAdv ? `${100 - expPct}%` : '';
+        top.style.color = '#e2e8f0';
+      }
+      return;
+    }
+  }
+
+  if (drawFill) drawFill.style.height = '0%';
+
   // If user selected Lc0 for eval bar but Lc0 is disconnected, fall back to Stockfish display
   const useLc0 = state.evalBarSource === 'lc0' && state.lc0.mode === 'ws';
   const src = useLc0 ? state.lc0 : state.sf;
   const cp = src.evalWhiteCp || 0;
   const shortLbl = formatEvalBarLabel(src.evalLabel, cp);
   const pct = Math.max(4, Math.min(96, 50 + 50 * (2 / (1 + Math.exp(-0.42 * (cp / 100))) - 1)));
-
-  const fill = document.getElementById('evalFillWhite');
-  const top = document.getElementById('evalLabelTop');
-  const bot = document.getElementById('evalLabelBottom');
-  const box = document.getElementById('evalBarContainer');
-  const badge = document.getElementById('evalSourceBadge');
-  if (!fill || !top || !bot || !box || !badge) return;
 
   badge.textContent = useLc0 ? 'Lc0' : 'SF';
   badge.className = `absolute top-1/2 left-0 right-0 -translate-y-1/2 text-center font-mono text-[7.5px] font-bold py-0.5 bg-bg/80 pointer-events-none ${

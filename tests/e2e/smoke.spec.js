@@ -972,6 +972,111 @@ test('configurable panels close/persist/restore, repertoire shows multi-move arr
   expect(pageErrors).toEqual([]);
 });
 
+test('HumanFish engine tab renders W/D/L odds, Shapley waterfall, calibrated arrows, and 3-segment eval bar', async ({
+  page,
+}) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  const MOCK_HF_RESPONSE = {
+    fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    turn: 'white',
+    fullmove: 1,
+    human: { white: 0.34, draw: 0.48, black: 0.18, expected_score: 0.58 },
+    human_no_clock: { white: 0.31, draw: 0.52, black: 0.17, expected_score: 0.57 },
+    stockfish: { white: 0.08, draw: 0.91, black: 0.01, expected_score: 0.535, cp_white: 22 },
+    diagnostics: { expected_regret_mover: 0.095, p_human_blunder_08: 0.4, hidden_only_move_score: 0.09 },
+    explanation: {
+      driver_tag: 'Immediate trap / only-move',
+      driver_summary: 'Natural GM candidates lose significant eval compared to Stockfish.',
+      waterfall: {
+        sf_exp: 0.535,
+        eq_elo_board_exp: 0.56,
+        actual_elo_board_exp: 0.57,
+        elo_delta_board_only: 0.01,
+        with_time_exp: 0.58,
+        board_delta: 0.025,
+        elo_delta: 0.01,
+        clock_delta: 0.01,
+        total_delta: 0.045,
+      },
+      candidates: [
+        {
+          uci: 'e2e4',
+          san: 'e4',
+          prob: 0.46,
+          raw_dsc_prob: 0.44,
+          is_sf_best: true,
+          cp_white: 22,
+          drop_mover: 0,
+          grade: 'best',
+          refutation: [],
+        },
+        {
+          uci: 'd2d4',
+          san: 'd4',
+          prob: 0.32,
+          raw_dsc_prob: 0.34,
+          is_sf_best: false,
+          cp_white: -120,
+          drop_mover: 0.14,
+          grade: 'blunder',
+          refutation: [{ uci: 'd7d5', san: 'd5' }],
+        },
+      ],
+      lines: {
+        sf_pv: {
+          label: 'Stockfish 19 best line',
+          cp_white: 22,
+          steps: [
+            { uci: 'e2e4', san: 'e4' },
+            { uci: 'e7e5', san: 'e5' },
+          ],
+        },
+        human_line: {
+          label: 'Tempting GM move (32% prob, -14 pp)',
+          cp_white: -120,
+          steps: [
+            { uci: 'd2d4', san: 'd4' },
+            { uci: 'd7d5', san: 'd5' },
+          ],
+        },
+      },
+    },
+  };
+
+  await page.route('https://lichess.org/**', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+  await page.route('**/api/humanfish/evaluate', (r) =>
+    r.fulfill({ contentType: 'application/json', body: JSON.stringify(MOCK_HF_RESPONSE) })
+  );
+
+  await page.goto('/');
+  await page.click('#btnEngineTabHf');
+
+  await expect(page.locator('#hfSummaryStrip')).toContainText('58%', { timeout: 10_000 });
+  await expect(page.locator('#hfSummaryStrip')).toContainText('Trap Risk');
+  await expect(page.locator('#hfContentBody')).toContainText('Immediate trap / only-move');
+  await expect(page.locator('#hfContentBody')).toContainText('34%');
+  await expect(page.locator('#hfContentBody')).toContainText('48%');
+  await expect(page.locator('#evalSourceBadge')).toHaveText('HF');
+
+  // Verify calibrated probability arrows with percentage badges render on board overlay
+  await expect(page.locator('#arrowOverlay text')).toHaveCount(2);
+  await expect(page.locator('#arrowOverlay')).toContainText('46%');
+  await expect(page.locator('#arrowOverlay')).toContainText('32%');
+
+  // Toggle Board Only mode and verify instant switch without re-fetching
+  await page.click('#btnHfClockMode');
+  await expect(page.locator('#hfModeBadge')).toHaveText('Board Only');
+  await expect(page.locator('#hfSummaryStrip')).toContainText('57%');
+
+  // Click candidate move e4 to play it on the variation tree
+  await page.locator('.hf-cand-row[data-hf-uci="e2e4"]').click();
+  await expect(page.locator('#variationTreeContainer')).toContainText('e4');
+  expect(pageErrors).toEqual([]);
+});
+
 
 
 

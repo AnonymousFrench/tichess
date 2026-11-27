@@ -132,8 +132,74 @@ html, body {
   filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.65));
 }
 
-#evalFillWhite {
+#evalFillWhite,
+#evalFillDraw {
   transition: height 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* HumanFish candidate table & Shapley waterfall */
+.hf-cand-row {
+  display: grid;
+  grid-template-columns: 64px 1fr 34px 40px 44px 44px;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.hf-wf-row {
+  display: grid;
+  grid-template-columns: 112px 1fr 56px;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+}
+.hf-wf-row.is-total {
+  padding-top: 4px;
+  margin-top: 2px;
+  border-top: 1px solid rgba(48, 53, 67, 0.8);
+  color: #f8fafc;
+  font-weight: 700;
+}
+.hf-wf-row.is-muted {
+  opacity: 0.42;
+}
+.hf-wf-bar {
+  position: relative;
+  height: 8px;
+  background: #1b1f29;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.hf-wf-zero {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #64748b;
+}
+.hf-wf-fill {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  border-radius: 2px;
+}
+.hf-wf-fill.base {
+  left: 0;
+  background: #64748b;
+}
+.hf-wf-fill.total {
+  left: 0;
+  background: #10b981;
+}
+.hf-wf-fill.pos {
+  left: 50%;
+  background: #10b981;
+}
+.hf-wf-fill.neg {
+  right: 50%;
+  background: #fb7185;
 }
 
 /* Stacked bars */

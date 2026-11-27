@@ -151,6 +151,7 @@ export function createTreeFromPgn(pgnText, fallbackFen = START_FEN) {
           result: headers.Result || '*',
           eco: headers.ECO || '',
           opening: headers.Opening || '',
+          timeControl: headers.TimeControl || '',
         }
       : null;
 

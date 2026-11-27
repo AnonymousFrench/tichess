@@ -178,6 +178,20 @@ const MODALS_HTML = `
             </div>
           </div>
         </div>
+        <div class="pt-1 border-t border-borderSubtle/60 flex flex-col gap-1.5">
+          <div class="flex items-center justify-between gap-2">
+            <label for="inputHfServerUrl" class="text-[10.5px] text-em font-semibold">HumanFish Server URL <span class="font-normal text-txtMuted">(optional override)</span></label>
+            <span id="hfServerStatusBadge" class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel text-txtMuted">Built-in API</span>
+          </div>
+          <div class="flex gap-1">
+            <input id="inputHfServerUrl" type="text" placeholder="http://localhost:8842 (blank = built-in proxy)" class="flex-1 min-w-0 px-2 py-1 rounded bg-panel border border-borderSubtle font-mono text-[11px] focus:outline-none focus:border-em" />
+            <button id="btnSaveHfServerUrl" class="px-2.5 py-1 rounded bg-em/20 hover:bg-em/30 text-em border border-em/40 text-[11px] font-semibold">Save</button>
+            <button id="btnResetHfServerUrl" class="px-1.5 py-1 rounded bg-surface hover:bg-surfaceHover text-txtMuted border border-borderSubtle text-[11px]" title="Use built-in HumanFish proxy" aria-label="Reset HumanFish URL">✕</button>
+          </div>
+          <p class="text-[10px] text-txtMuted leading-relaxed">
+            Leave blank to use tichess's built-in <code class="font-mono text-txt/90">/api/humanfish/evaluate</code> proxy, or point to your own self-hosted HumanFish instance (e.g. <code class="font-mono text-txt/90">uvicorn webapp:app --app-dir src --port 8842</code> from <a href="https://github.com/AnonymousFrench/humanfish" target="_blank" rel="noopener noreferrer" class="text-em hover:underline">AnonymousFrench/humanfish ↗</a>).
+          </p>
+        </div>
         <p class="text-[10.5px] text-txtMuted">
           Works from HTTPS deployments in Chrome and Firefox (<code class="font-mono text-txt/90">ws://localhost</code>); Safari may block mixed-content WebSockets on HTTPS pages. Only allows <code class="font-mono text-txt/90">tichess.vercel.app</code> and <code class="font-mono text-txt/90">localhost</code> origins.
         </p>
@@ -219,6 +233,10 @@ wss.on('connection', (ws) =&gt; {
           <a href="/stockfish/LICENSE.txt" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">GNU GPLv3</a>
           (<a href="https://github.com/official-stockfish/Stockfish" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">Stockfish source ↗</a> ·
           <a href="https://github.com/nmrugg/stockfish.js" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">stockfish.js ↗</a>).
+          HumanFish human-outcome &amp; move-probability mode uses
+          <a href="https://humanfish.vercel.app/methodology" target="_blank" rel="noopener noreferrer" class="text-em hover:underline">HumanFish ↗</a>
+          (public domain · backup at
+          <a href="https://github.com/AnonymousFrench/humanfish" target="_blank" rel="noopener noreferrer" class="text-em hover:underline">AnonymousFrench/humanfish ↗</a>).
           Studio UI source is licensed under MIT.
         </p>
       </div>

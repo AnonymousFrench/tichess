@@ -11,6 +11,13 @@ export default defineConfig({
   plugins: [tailwindcss()],
   server: {
     headers: COOP_COEP_HEADERS,
+    proxy: {
+      '/api/humanfish': {
+        target: process.env.HUMANFISH_API_URL || 'https://humanfish.vercel.app',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/humanfish/, '/api'),
+      },
+    },
   },
   preview: {
     headers: COOP_COEP_HEADERS,

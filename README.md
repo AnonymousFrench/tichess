@@ -32,7 +32,7 @@ The Studio's opening explorer gets a **Mine** source once Insights has games: yo
 - **Board themes:** Slate, Green, Wood, Blue and Graphite under **Settings → Theme**.
 - **Live:** the hub opens on a compact list of events (live now, ongoing, upcoming, recently finished) with search across all Lichess broadcasts, or paste a broadcast link. Open an event to see every round and its games; click a game to follow it in a tab. Finished rounds stay one click away, and open live games keep updating while you browse other events.
 - **Repertoire in the Studio:** the tree follows the board. The current move is highlighted and kept in view, the line leading to it is marked, only the openings you are in stay open, and a status line says whether you are in your repertoire or where you left it (with **Back to book**).
-- **Engine:** choose 1–5 Stockfish lines and the search depth (14 to unlimited) in the Stockfish panel.
+- **Engine:** switch between **Stockfish** (1–5 lines, depth 14 to unlimited, Lichess Cloud Eval, or local UCI bridge) and **HumanFish** (calibrated White/Draw/Black human outcome probabilities, 3-segment W/D/L eval bar, Shapley attribution waterfall for board practicality / Elo gap / clock pressure, calibrated System 1+2 GM move-probability arrows, concrete refutation lines, and live What-If Elo/clock sliders).
 - **Shortcuts:** press `?` for the full list.
 
 Layout, sizes and theme are saved in this browser.
@@ -42,6 +42,7 @@ Layout, sizes and theme are saved in this browser.
 Every metric shown in the UI comes from a real engine or API response:
 
 - **No synthetic evaluations:** Stockfish runs real **Stockfish 19 Lite WASM** (multi-threaded via `SharedArrayBuffer` when `crossOriginIsolated`, with automatic single-threaded fallback) or Lichess Cloud Eval / your local UCI bridge. If the multi-threaded build does not respond within 5 seconds (as can happen in Safari), it retries single-threaded. The Lite build uses Stockfish's smaller NNUE network, so it is somewhat weaker than desktop Stockfish. If WASM cannot load, the UI reports the error honestly instead of falling back to a fake evaluator.
+- **Real HumanFish only:** HumanFish evaluations come from the real `DSC-150M` + Stockfish 19 + LightGBM/move-policy backend via `/api/humanfish/evaluate` (proxying `HUMANFISH_API_URL`, defaulting to `https://humanfish.vercel.app`) or your own self-hosted HumanFish server configured in **Settings → HumanFish Server URL** (backed up at [AnonymousFrench/humanfish](https://github.com/AnonymousFrench/humanfish)). If the server is unreachable, the UI reports the error instead of fabricating human odds.
 - **Real Lc0 only:** The Lc0 panel only displays evaluations and WDL bars when connected to a real local Lc0 instance over the UCI WebSocket bridge.
 - **No invented depths or speeds:** Cloud Eval shows the real depth and total node count (`nodes`, never mislabelled as `kn/s`). Unknown fields render `—`.
 - **Live broadcast status from Lichess:** Events, rounds, start times, and `LIVE` badges come directly from the Lichess Broadcast API (`round.ongoing === true`), refresh periodically, and auto-advance when a new round starts unless you picked a round yourself.

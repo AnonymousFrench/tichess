@@ -330,20 +330,81 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(warn!==undefined){ $("se-warn").hidden=!warn; $("se-warn").textContent=warn||""; }
     if(acts!==undefined){ const a=$("se-act"); a.innerHTML=""; acts.forEach(x=>{ const b=document.createElement("button"); b.className="btn"+(x.primary?" primary":""); b.textContent=x.label; b.onclick=x.fn; if(x.id) b.id=x.id; a.appendChild(b); }); }
   }
+  function buildTreeFrames(prefix, fallbackFen){
+    if(prefix && prefix.length){
+      const mv=movesFromSan(prefix);
+      if(mv && mv.length && mv[mv.length-1].fen.split(" ").slice(0,4).join(" ")===fallbackFen.split(" ").slice(0,4).join(" ")){
+        return [{fen:START,last:null}].concat(mv.map(m=>({fen:m.fen,last:[m.from,m.to]})));
+      }
+    }
+    return [{fen:fallbackFen,last:null}];
+  }
+  function sessionFrames(run){
+    if(!run) return [];
+    if(run.tree) return run.frames||[{fen:POS[run.pos].f,last:null}];
+    const ln=LINES[run.line];
+    const tip=Math.min(ln.pos.length-1, run.p+(run.justPlayed?1:0));
+    const out=[];
+    for(let k=0;k<=tip;k++){
+      const u=k>0?ln.uci[k-1]:null;
+      out.push({fen:POS[ln.pos[k]].f,last:u?[u.slice(0,2),u.slice(2,4)]:null});
+    }
+    return out;
+  }
+  function syncSessionNav(){
+    const run=S&&S.run;
+    const frames=sessionFrames(run);
+    const tip=Math.max(0,frames.length-1);
+    const cur=run&&run.viewIdx!==null&&run.viewIdx!==undefined?Math.min(run.viewIdx,tip):tip;
+    $("se-first").disabled=$("se-prev").disabled=!run||cur<=0;
+    $("se-next").disabled=$("se-last").disabled=!run||cur>=tip;
+  }
+  function goSessionView(targetIdx){
+    if(!S||!S.run) return;
+    const run=S.run, frames=sessionFrames(run), tip=frames.length-1;
+    if(tip<0) return;
+    const idx=Math.max(0,Math.min(tip,targetIdx));
+    const f=frames[idx];
+    sb.clearArrows(); sb.clearMarks();
+    sb.set(f.fen,{last:f.last,anim:false,sound:false});
+    const ck=checkSq(f.fen); if(ck) sb.mark(ck,"check");
+    if(idx===tip){
+      run.viewIdx=null;
+      if(run.liveArrow) sb.arrow(run.liveArrow[0],run.liveArrow[1],run.liveArrow[2]);
+      if(run.liveHintSq) sb.mark(run.liveHintSq,"hint");
+      if(run.awaitingMove){ sb.dests=chessDests(f.fen); sb.movable=ownPiece(f.fen,sb); }
+      else sb.movable=()=>false;
+    } else {
+      run.viewIdx=idx;
+      sb.movable=()=>false;
+    }
+    syncSessionNav();
+    renderMini();
+  }
+  $("se-first").onclick=()=>goSessionView(0);
+  $("se-prev").onclick=()=>{ const run=S&&S.run; if(!run) return; const tip=sessionFrames(run).length-1; goSessionView((run.viewIdx??tip)-1); };
+  $("se-next").onclick=()=>{ const run=S&&S.run; if(!run) return; const tip=sessionFrames(run).length-1; goSessionView((run.viewIdx??tip)+1); };
+  $("se-last").onclick=()=>goSessionView(Infinity);
+  $("se-flip").onclick=()=>{ sb.setOrient(sb.orient==="w"?"b":"w"); };
+
   function startRun(){
     updHead();
     if(S.ri>=S.runs.length){ showSummary(false); return; }
     const run=S.runs[S.ri];
+    run.viewIdx=null; run.justPlayed=false; run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null;
     if(run.tree){
       const sec=SECBY[run.sec];
       run.pos = run.startPos!==undefined ? run.startPos : sec.start;
       run.color = run.startPos!==undefined ? run.color : sec.color;
       run.hist=[]; run.prefix = run.startPos!==undefined ? (run.prefixSan||[]) : LINES[sec.lines[0]].san.slice(0,sec.startPly);
       run.me = run.color==="w"?"w":"b";
+      run.frames = buildTreeFrames(run.prefix, POS[run.pos].f);
       sb.setOrient(run.color==="w"?"w":"b"); sb.clearArrows(); sb.clearMarks();
-      sb.set(POS[run.pos].f,{anim:false});
+      const lastF=run.frames[run.frames.length-1];
+      sb.set(POS[run.pos].f,{anim:false,last:lastF?lastF.last:null});
       $("se-line").textContent=sec?sec.name:"From this position"; $("se-open").textContent=openingName(run.pos)||"";
       run.tries=0; S.run=run;
+      syncSessionNav();
       setTimeout(()=>treeStep(),250);
       return;
     }
@@ -353,59 +414,87 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     sb.set(POS[ln.pos[run.p]].f,{anim:false,last:lastU?[lastU.slice(0,2),lastU.slice(2,4)]:null});
     $("se-line").textContent=lineLabel(ln)+(run.mode==="recall"?" · from memory":run.mode==="learn"?" · new moves":"");
     $("se-open").textContent=openingName(ln.pos[run.p])||"";
-    renderMini();
+    renderMini(); syncSessionNav();
     setCoach({prompt:run.mode==="recall"?"Now from memory":"",fb:"",note:null,warn:null,acts:[]});
     setTimeout(()=>lineStep(),run.mode==="recall"?700:350);
   }
-  function sanList(sans,meParity){ return sans.map((s,p)=>(p%2===0?(Math.floor(p/2)+1)+".":"")+(p%2===meParity?"<b>"+esc(s)+"</b>":esc(s))).join(" "); }
   function renderMini(){
-    const run=S.run; if(!run) return;
-    if(run.tree){ $("se-moves").innerHTML=sanList(run.prefix.concat(run.hist),run.me==="w"?0:1); return; }
-    const ln=LINES[run.line]; const parts=[];
-    for(let p=0;p<run.p;p++){ parts.push((p%2===0?(Math.floor(p/2)+1)+".":"")+(p%2===meIdx(ln)?"<b>"+esc(ln.san[p])+"</b>":esc(ln.san[p]))); }
-    $("se-moves").innerHTML=parts.join(" ");
+    const run=S&&S.run; if(!run) return;
+    const frames=sessionFrames(run), tip=frames.length-1;
+    const activeIdx=run.viewIdx!==null&&run.viewIdx!==undefined?run.viewIdx:tip;
+    let sans, meParity;
+    if(run.tree){
+      sans=run.prefix.concat(run.hist);
+      if(run.justPlayed && run.pendingSan) sans=sans.concat([run.pendingSan]);
+      meParity=run.me==="w"?0:1;
+    } else {
+      const ln=LINES[run.line];
+      const count=Math.min(ln.san.length, run.p+(run.justPlayed?1:0));
+      sans=ln.san.slice(0,count);
+      meParity=meIdx(ln);
+    }
+    const offset=frames.length-1-sans.length;
+    const host=$("se-moves"); host.innerHTML="";
+    sans.forEach((s,p)=>{
+      if(p>0) host.appendChild(document.createTextNode(" "));
+      if(p%2===0){ const n=document.createElement("span"); n.textContent=(Math.floor(p/2)+1)+"."; host.appendChild(n); }
+      const b=document.createElement("button");
+      const frameIdx=offset+p+1;
+      b.type="button";
+      b.className="mm"+(frameIdx===activeIdx && run.viewIdx!==null?" cur":"");
+      b.innerHTML=p%2===meParity?"<b>"+esc(s)+"</b>":esc(s);
+      if(frameIdx>=0 && frameIdx<frames.length) b.onclick=()=>goSessionView(frameIdx);
+      host.appendChild(b);
+    });
   }
   function playAuto(fen,uci){ sb.clearArrows(); sb.clearMarks(); const r=tryMove(fen,uci.slice(0,2),uci.slice(2,4)); sb.set(r.fen,{last:[uci.slice(0,2),uci.slice(2,4)]}); const ck=checkSq(r.fen); if(ck) sb.mark(ck,"check"); return r.fen; }
 
   /* line runs */
   function lineStep(){
     if(!S) return; const run=S.run, ln=LINES[run.line];
-    if(run.p>=ln.uci.length){ finishRun(); return; }
+    run.viewIdx=null; run.justPlayed=false; run.liveArrow=null; run.liveHintSq=null;
+    if(run.p>=ln.uci.length){ run.awaitingMove=false; syncSessionNav(); finishRun(); return; }
     const fen=POS[ln.pos[run.p]].f;
     if(run.p%2!==meIdx(ln)){
       // opponent move
+      run.awaitingMove=false;
       sb.movable=()=>false;
+      syncSessionNav();
       setCoach({prompt:(ln.color==="w"?"Black":"White")+" plays…",cls:"",acts:[]});
       setTimeout(()=>{ if(!S||S.run!==run) return;
         playAuto(fen,ln.uci[run.p]); const w=WARN[ln.pos[run.p]+"|"+ln.uci[run.p]];
-        run.warn=w||null; run.p++; renderMini(); $("se-open").textContent=openingName(ln.pos[run.p])||$("se-open").textContent; lineStep(); },250);
+        run.warn=w||null; run.p++; renderMini(); syncSessionNav(); $("se-open").textContent=openingName(ln.pos[run.p])||$("se-open").textContent; lineStep(); },250);
       return;
     }
     askLineMove();
   }
   function askLineMove(){
     const run=S.run, ln=LINES[run.line], fen=POS[ln.pos[run.p]].f, c=cardAt(ln,run.p), card=CARDS[c];
-    run.tries=0; run.cur=c; run.hinted=false;
+    run.tries=0; run.cur=c; run.hinted=false; run.viewIdx=null; run.awaitingMove=true; run.liveHintSq=null;
     const isNew = status(c)==="new";
     const teach = (run.mode==="learn"&&isNew) || (run.mode==="play"&&isNew);
     run.teach=teach;
     sb.clearArrows();
     if(teach){
-      sb.arrow(card.u.slice(0,2),card.u.slice(2,4),"#1f5f8b");
+      run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#1f5f8b"];
+      sb.arrow(...run.liveArrow);
       setCoach({prompt:"New move: "+moveNo(run.p)+card.s,cls:"new",fb:"Play the arrow move on the board.",note:card.n,noteHead:"Why "+card.s,warn:run.warn,acts:[]});
     } else {
+      run.liveArrow=null;
       setCoach({prompt:"Your move",cls:"",fb:run.mode==="recall"?"Play the move you just learned.":"",note:null,warn:run.warn,acts:[
         {label:"Hint",fn:()=>giveHint(1)},{label:"Show move",fn:()=>giveHint(2)} ]});
     }
     run.warn=null;
     sb.dests=chessDests(fen); sb.movable=ownPiece(fen,sb);
     sb.onMove=(from,to)=>onUserMove(fen,from,to);
+    syncSessionNav();
   }
   function giveHint(level){
     const run=S.run, card=CARDS[run.cur];
+    if(run.viewIdx!==null) goSessionView(Infinity);
     if(!run.hinted && !run.teach){ run.hinted=true; noteMiss(); }
-    if(level===1){ sb.clearMarks(); sb.mark(card.u.slice(0,2),"hint"); setCoach({fb:"This piece moves."}); }
-    else { sb.clearArrows(); sb.arrow(card.u.slice(0,2),card.u.slice(2,4),"#b0382e"); setCoach({fb:"Play "+esc(card.s)+".",note:card.n,noteHead:"Why "+card.s}); }
+    if(level===1){ run.liveHintSq=card.u.slice(0,2); sb.clearMarks(); sb.mark(run.liveHintSq,"hint"); setCoach({fb:"This piece moves."}); }
+    else { run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#b0382e"]; sb.clearArrows(); sb.arrow(...run.liveArrow); setCoach({fb:"Play "+esc(card.s)+".",note:card.n,noteHead:"Why "+card.s}); }
   }
   function noteMiss(){ const run=S.run; if(run.missed) return; run.missed=true; S.stats.miss++; S.missed.add(run.cur); }
   function altVerdict(fen,uci){
@@ -441,9 +530,14 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   function correct(fen,r){
     const run=S.run, c=run.cur, card=CARDS[c];
+    run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.viewIdx=null;
     sb.movable=()=>false; sb.clearArrows(); sb.clearMarks();
-    sb.set(r.fen,{last:[card.u.slice(0,2),card.u.slice(2,4)],anim:false});
+    const last=[card.u.slice(0,2),card.u.slice(2,4)];
+    sb.set(r.fen,{last,anim:false});
     const ck=checkSq(r.fen); if(ck) sb.mark(ck,"check");
+    run.justPlayed=true; run.pendingSan=card.s;
+    if(run.tree && run.frames) run.frames.push({fen:r.fen,last});
+    renderMini(); syncSessionNav();
     S.stats.asked++;
     let shouldGrade;
     if(run.teach){ learnCard(c); S.stats.learned++; }
@@ -457,7 +551,22 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     }
     updHead();
     const wasMiss=run.missed; run.missed=false;
-    const advance=()=>{ if(!S||S.run!==run) return; if(run.tree){ run.hist.push(card.s); run.pos=POS[run.pos].e.find(e=>e[0]===card.u)[2]; treeStep(); } else { run.p++; renderMini(); lineStep(); } };
+    const advance=()=>{
+      if(!S||S.run!==run) return;
+      run.justPlayed=false; run.pendingSan=null; run.viewIdx=null;
+      if(run.tree){
+        run.hist.push(card.s);
+        run.pos=POS[run.pos].e.find(e=>e[0]===card.u)[2];
+        const f=run.frames[run.frames.length-1];
+        if(f) sb.set(f.fen,{last:f.last,anim:false,sound:false});
+        treeStep();
+      } else {
+        run.p++;
+        const ln=LINES[run.line], u=run.p>0?ln.uci[run.p-1]:null;
+        sb.set(POS[ln.pos[run.p]].f,{last:u?[u.slice(0,2),u.slice(2,4)]:null,anim:false,sound:false});
+        renderMini(); syncSessionNav(); lineStep();
+      }
+    };
     if(wasMiss){
       Snd.play("move");
       setCoach({prompt:card.s,cls:"err",fb:"Got it. This move comes back in 10 minutes.",note:card.n,noteHead:"Why "+card.s,acts:[{label:"Continue",primary:true,fn:advance,id:"se-cont"}]});
@@ -472,6 +581,8 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   function finishRun(){
     const run=S.run;
+    run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null;
+    syncSessionNav();
     if(run.tree){
       S.ri++; updHead();
       setCoach({prompt:"Line complete",cls:"ok",fb:esc(run.endName||"You reached the end of your repertoire here."),note:(()=>{ const ln=LINES.find(l=>l.pos[l.pos.length-1]===run.pos); return ln?ln.note:null; })(),noteHead:"The plan",warn:null,acts:[
@@ -497,29 +608,38 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   /* tree (play) runs */
   function treeStep(){
     if(!S) return; const run=S.run, node=POS[run.pos], fen=node.f, stm=sideToMove(fen);
+    run.viewIdx=null; run.justPlayed=false; run.liveArrow=null; run.liveHintSq=null;
     $("se-open").textContent=openingName(run.pos)||$("se-open").textContent;
-    renderMini();
+    renderMini(); syncSessionNav();
     const mine = stm===run.me;
     const inSec = e => !run.sec || e[4].some(li=>LINES[li].sec===run.sec);
     const edges = node.e.filter(e=> (mine ? (e[3]&1)&&!(e[3]&2) : true) && inSec(e));
     if(!edges.length){ const ln=LINES.find(l=>l.pos[l.pos.length-1]===run.pos); run.endName=ln?"End of "+lineLabel(ln)+".":""; finishRun(); return; }
     if(!mine){
+      run.awaitingMove=false;
       sb.movable=()=>false;
       setCoach({prompt:(run.me==="w"?"Black":"White")+" plays…",cls:"",note:SET.notes?undefined:null,acts:[]});
       const ws=edges.map(e=>{ let w=1; subCards(e[2]).forEach(c=>{ const s=status(c); if(s==="due") w+=3; else if(s==="new") w+=1; }); return w; });
       let tot=ws.reduce((a,b)=>a+b,0), r=Math.random()*tot, pick=edges[0];
       for(let i=0;i<edges.length;i++){ r-=ws[i]; if(r<=0){ pick=edges[i]; break; } }
-      setTimeout(()=>{ if(!S||S.run!==run) return; playAuto(fen,pick[0]); run.warn=WARN[run.pos+"|"+pick[0]]||null; run.hist.push(pick[1]); run.pos=pick[2]; treeStep(); },250);
+      setTimeout(()=>{ if(!S||S.run!==run) return; const nextFen=playAuto(fen,pick[0]); run.warn=WARN[run.pos+"|"+pick[0]]||null; run.hist.push(pick[1]); run.pos=pick[2]; if(run.frames) run.frames.push({fen:nextFen,last:[pick[0].slice(0,2),pick[0].slice(2,4)]}); treeStep(); },250);
       return;
     }
-    const ed=edges[0]; run.cur=ed[5]; run.tries=0; run.hinted=false; run.missed=false;
+    const ed=edges[0]; run.cur=ed[5]; run.tries=0; run.hinted=false; run.missed=false; run.awaitingMove=true;
     const isNew=status(run.cur)==="new"; run.teach=isNew;
     const card=CARDS[run.cur];
     sb.clearArrows();
-    if(isNew){ sb.arrow(card.u.slice(0,2),card.u.slice(2,4),"#1f5f8b"); setCoach({prompt:"New move: "+card.s,cls:"new",fb:"Play the arrow move.",note:card.n,noteHead:"Why "+card.s,warn:run.warn,acts:[]}); }
-    else setCoach({prompt:"Your move",cls:"",fb:"",note:null,warn:run.warn,acts:[{label:"Hint",fn:()=>giveHint(1)},{label:"Show move",fn:()=>giveHint(2)}]});
+    if(isNew){
+      run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#1f5f8b"];
+      sb.arrow(...run.liveArrow);
+      setCoach({prompt:"New move: "+card.s,cls:"new",fb:"Play the arrow move.",note:card.n,noteHead:"Why "+card.s,warn:run.warn,acts:[]});
+    } else {
+      run.liveArrow=null;
+      setCoach({prompt:"Your move",cls:"",fb:"",note:null,warn:run.warn,acts:[{label:"Hint",fn:()=>giveHint(1)},{label:"Show move",fn:()=>giveHint(2)}]});
+    }
     run.warn=null;
     sb.dests=chessDests(fen); sb.movable=ownPiece(fen,sb); sb.onMove=(from,to)=>onUserMove(fen,from,to);
+    syncSessionNav();
   }
   function showSummary(early){
     flushDays(); S.done=true;
@@ -543,26 +663,31 @@ export function startTrainer({ data: D, progress, saveProgress }) {
 
   /* ---------- STUDY ---------- */
   const stb=new Board($("s-board"));
-  let study={sec:"A", path:[]};   // path: list of edge uci from the section start
-  try{ const s=JSON.parse(localStorage.getItem("rt2-study")||"{}"); if(s.sec&&SECBY[s.sec]) study.sec=s.sec; if(Array.isArray(s.path)) study.path=s.path; }catch(_){}
-  function saveStudy(){ try{ localStorage.setItem("rt2-study",JSON.stringify(study)); }catch(_){} }
+  let study={sec:"A", path:[], fullPath:[], flipped:false};   // path: list of edge uci from the section start
+  try{ const s=JSON.parse(localStorage.getItem("rt2-study")||"{}"); if(s.sec&&SECBY[s.sec]) study.sec=s.sec; if(Array.isArray(s.path)){ study.path=s.path; study.fullPath=s.path.slice(); } }catch(_){}
+  function saveStudy(){ try{ localStorage.setItem("rt2-study",JSON.stringify({sec:study.sec,path:study.path})); }catch(_){} }
   function studyRootPath(){ const sec=SECBY[study.sec]; const ln=LINES[sec.lines[0]]; return {pos:ln.pos.slice(0,sec.startPly+1), san:ln.san.slice(0,sec.startPly), uci:ln.uci.slice(0,sec.startPly)}; }
   function studyWalk(path){ const root=studyRootPath(); let pi=root.pos[root.pos.length-1]; const nodes=[pi], sans=[]; for(const u of path){ const e=POS[pi].e.find(x=>x[0]===u); if(!e) break; sans.push(e[1]); pi=e[2]; nodes.push(pi); } return {root,nodes,sans,pi}; }
-  function openStudyAt(li,p){ const ln=LINES[li], sec=SECBY[ln.sec]; study.sec=ln.sec; study.path=ln.uci.slice(sec.startPly,p); saveStudy(); setTab("study"); }
+  function openStudyAt(li,p){ const ln=LINES[li], sec=SECBY[ln.sec]; study.sec=ln.sec; study.path=ln.uci.slice(sec.startPly,p); study.fullPath=study.path.slice(); study.flipped=false; saveStudy(); setTab("study"); }
   function mainEdge(pi){ const es=POS[pi].e; if(!es.length) return null; return es.slice().sort((a,b)=>((a[3]&2)-(b[3]&2))||(Math.min(...a[4])-Math.min(...b[4])))[0]; }
+  function syncStudyFullPath(nextPath){
+    const matches=study.fullPath.length>=nextPath.length && nextPath.every((u,i)=>study.fullPath[i]===u);
+    if(!matches) study.fullPath=nextPath.slice();
+  }
   function renderStudy(){
-    secChips($("s-secs"),study.sec,id=>{ study.sec=id; study.path=[]; saveStudy(); renderStudy(); },false,null);
+    secChips($("s-secs"),study.sec,id=>{ study.sec=id; study.path=[]; study.fullPath=[]; study.flipped=false; saveStudy(); renderStudy(); },false,null);
     renderStudyTree();
   }
   function renderStudyTree(){
     const sec=SECBY[study.sec], W=studyWalk(study.path); study.path=study.path.slice(0,W.sans.length);
     const pi=W.pi, node=POS[pi], fen=node.f;
-    stb.setOrient(sec.color);
+    const baseColor=sec.color==="b"?"b":"w";
+    stb.setOrient(study.flipped?(baseColor==="w"?"b":"w"):baseColor);
     const lastU=study.path.length?study.path[study.path.length-1]:(W.root.uci.length?W.root.uci[W.root.uci.length-1]:null);
     stb.set(fen,{last:lastU?[lastU.slice(0,2),lastU.slice(2,4)]:null,anim:!study.instant}); study.instant=false;
     stb.clearMarks(); const ck=checkSq(fen); if(ck) stb.mark(ck,"check");
     stb.dests=chessDests(fen); stb.movable=ownPiece(fen,stb);
-    stb.onMove=(from,to)=>{ const r=tryMove(fen,from,to); if(!r) return; const u=r.uci.slice(0,4); const e=node.e.find(x=>x[0].slice(0,4)===u); if(e){ study.path.push(e[0]); saveStudy(); study.instant=true; renderStudyTree(); } else { exploreFrom(fen,[{san:r.m.san,from,to,uci:r.uci,fen:r.fen}],"Your move from "+sec.name); setTab("explore"); } };
+    stb.onMove=(from,to)=>{ const r=tryMove(fen,from,to); if(!r) return; const u=r.uci.slice(0,4); const e=node.e.find(x=>x[0].slice(0,4)===u); if(e){ study.path.push(e[0]); syncStudyFullPath(study.path); saveStudy(); study.instant=true; renderStudyTree(); } else { exploreFrom(fen,[{san:r.m.san,from,to,uci:r.uci,fen:r.fen}],"Your move from "+sec.name); setTab("explore"); } };
     stb.clearArrows();
     const me=mainEdge(pi);
     const drawn=new Set();
@@ -600,7 +725,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const curPath=study.path.join(" ");
     function tok(e,path,ply,force){ const b=document.createElement("button"); b.className="mv"+((e[3]&1)?" me":"")+(path.join(" ")===curPath?" cur":"");
       b.innerHTML=((ply%2===0||force)?'<span class="n">'+moveNo(ply)+'</span>':"")+esc(e[1])+(e[5]?'<i class="dot '+status(e[5])+'"></i>':"");
-      b.onclick=()=>{ study.path=path; saveStudy(); renderStudyTree(); }; return b; }
+      b.onclick=()=>{ study.path=path; syncStudyFullPath(path); saveStudy(); renderStudyTree(); }; return b; }
     function walk(pi,path,ply,container,force){
       let line=document.createElement("span"); line.className="vline"; container.appendChild(line);
       let first=true;
@@ -650,17 +775,54 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const al=$("s-alts"); al.innerHTML="";
     (t.alts||[]).forEach(a=>{ const inRep=node.e.find(e=>e[0].slice(0,4)===a.uci.slice(0,4)); const d=document.createElement("div"); d.className="alt";
       d.innerHTML='<span class="m">'+esc(moveNo(ply)+a.san)+'</span><span class="e">'+fmtEv(a.ev)+'</span><span>'+(inRep?'<span class="tag here">In repertoire</span> ':node.e.length&&!mine.length?'<span class="tag gap">Not prepared</span> ':"")+(a.name?'<span class="muted" style="font-size:12.5px">'+esc(a.name)+'</span>':"")+'</span><span class="pvs">'+fmtPv(a.pv.slice(1,7),ply+1)+'</span>'; al.appendChild(d); });
-    $("s-back").disabled=!study.path.length; $("s-fwd").disabled=!node.e.length;
+    const hasFullFwd=study.fullPath.length>study.path.length && study.path.every((u,i)=>study.fullPath[i]===u);
+    $("s-first").disabled=$("s-back").disabled=!study.path.length;
+    $("s-fwd").disabled=!hasFullFwd && !node.e.length;
+    $("s-last").disabled=!hasFullFwd && !node.e.length;
   }
-  $("s-back").onclick=()=>{ study.path.pop(); saveStudy(); renderStudyTree(); };
-  $("s-fwd").onclick=()=>{ const W=studyWalk(study.path); const m=mainEdge(W.pi); if(m){ study.path.push(m[0]); saveStudy(); renderStudyTree(); } };
+  $("s-first").onclick=()=>{ if(!study.path.length) return; syncStudyFullPath(study.path); study.path=[]; saveStudy(); renderStudyTree(); };
+  $("s-back").onclick=()=>{ if(!study.path.length) return; syncStudyFullPath(study.path); study.path.pop(); saveStudy(); renderStudyTree(); };
+  $("s-fwd").onclick=()=>{
+    const hasFullFwd=study.fullPath.length>study.path.length && study.path.every((u,i)=>study.fullPath[i]===u);
+    if(hasFullFwd){ study.path=study.fullPath.slice(0,study.path.length+1); saveStudy(); renderStudyTree(); return; }
+    const W=studyWalk(study.path); const m=mainEdge(W.pi); if(m){ study.path.push(m[0]); syncStudyFullPath(study.path); saveStudy(); renderStudyTree(); }
+  };
+  $("s-last").onclick=()=>{
+    const hasFullFwd=study.fullPath.length>study.path.length && study.path.every((u,i)=>study.fullPath[i]===u);
+    if(hasFullFwd){ study.path=study.fullPath.slice(); saveStudy(); renderStudyTree(); return; }
+    const W=studyWalk(study.path); let curPi=W.pi; const seenPi=new Set(W.nodes);
+    while(true){ const m=mainEdge(curPi); if(!m||seenPi.has(m[2])) break; study.path.push(m[0]); curPi=m[2]; seenPi.add(curPi); }
+    syncStudyFullPath(study.path); saveStudy(); renderStudyTree();
+  };
+  $("s-flip").onclick=()=>{ study.flipped=!study.flipped; renderStudyTree(); };
   $("s-drill").onclick=()=>{ const W=studyWalk(study.path); const sec=SECBY[study.sec]; startSession("play",{sec:study.sec,pos:W.pi,color:sec.color,prefix:W.root.san.concat(W.sans)}); };
   $("s-an").onclick=()=>{ const W=studyWalk(study.path); exploreFrom(POS[W.pi].f,[],openingName(W.pi)||SECBY[study.sec].name); an.flip=SECBY[study.sec].color==="b"; setTab("explore"); };
   $("s-vs").onclick=()=>{ const W=studyWalk(study.path); const c=SECBY[study.sec].color; exploreFrom(POS[W.pi].f,[],openingName(W.pi)||SECBY[study.sec].name); an.flip=c==="b"; an.vs=c; setTab("explore"); };
   document.addEventListener("keydown",e=>{
-    if(S||/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
-    if(tab==="study"){ if(e.key==="ArrowLeft"){ $("s-back").click(); e.preventDefault(); } if(e.key==="ArrowRight"){ $("s-fwd").click(); e.preventDefault(); } }
-    if(tab==="explore"){ if(e.key==="ArrowLeft"){ anGo(an.idx-1); e.preventDefault(); } if(e.key==="ArrowRight"){ anGo(an.idx+1); e.preventDefault(); } }
+    if(/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    if(S && !S.done){
+      if(e.key==="ArrowLeft"){ $("se-prev").click(); e.preventDefault(); }
+      else if(e.key==="ArrowRight"){ $("se-next").click(); e.preventDefault(); }
+      else if(e.key==="Home"){ $("se-first").click(); e.preventDefault(); }
+      else if(e.key==="End"){ $("se-last").click(); e.preventDefault(); }
+      else if(e.key==="f"||e.key==="F"){ $("se-flip").click(); e.preventDefault(); }
+      return;
+    }
+    if(S) return;
+    if(tab==="study"){
+      if(e.key==="ArrowLeft"){ $("s-back").click(); e.preventDefault(); }
+      else if(e.key==="ArrowRight"){ $("s-fwd").click(); e.preventDefault(); }
+      else if(e.key==="Home"){ $("s-first").click(); e.preventDefault(); }
+      else if(e.key==="End"){ $("s-last").click(); e.preventDefault(); }
+      else if(e.key==="f"||e.key==="F"){ $("s-flip").click(); e.preventDefault(); }
+    }
+    if(tab==="explore"){
+      if(e.key==="ArrowLeft"){ anGo(an.idx-1); e.preventDefault(); }
+      else if(e.key==="ArrowRight"){ anGo(an.idx+1); e.preventDefault(); }
+      else if(e.key==="Home"){ anGo(0); e.preventDefault(); }
+      else if(e.key==="End"){ anGo(an.moves.length); e.preventDefault(); }
+      else if(e.key==="f"||e.key==="F"){ $("x-flip").click(); e.preventDefault(); }
+    }
   });
 
   /* ---------- EXPLORE (live engine) ---------- */
@@ -691,7 +853,8 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const sh=$("x-sheet"); sh.innerHTML=""; let ply=plyOfFen(an.start);
     if(!an.moves.length) sh.innerHTML='<span class="muted" style="font-size:14px">Move a piece to start a variation.</span>';
     an.moves.forEach((m,k)=>{ if(ply%2===0||k===0){ const n=document.createElement("span"); n.className="n"; n.textContent=moveNo(ply); sh.appendChild(n); } const b=document.createElement("button"); b.className="mv"+(an.idx===k+1?" cur":""); b.textContent=m.san; b.onclick=()=>anGo(k+1); sh.appendChild(b); ply++; });
-    $("x-prev").disabled=$("x-start").disabled=an.idx===0; $("x-next").disabled=an.idx===an.moves.length;
+    $("x-prev").disabled=$("x-start").disabled=an.idx===0;
+    $("x-next").disabled=$("x-last").disabled=an.idx===an.moves.length;
     if(an.vs){ if(engTurn && !new Chess(fen).isGameOver()) engPlay(fen); else engStop(); } else engAnalyze(fen);
     renderLive();
   }
@@ -701,7 +864,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   $("x-vs").onclick=vsToggle;
   $("x-lvl").onchange=e=>{ try{ localStorage.setItem("rt2-vslvl",e.target.value); }catch(_){} };
-  $("x-start").onclick=()=>anGo(0); $("x-prev").onclick=()=>anGo(an.idx-1); $("x-next").onclick=()=>anGo(an.idx+1);
+  $("x-start").onclick=()=>anGo(0); $("x-prev").onclick=()=>anGo(an.idx-1); $("x-next").onclick=()=>anGo(an.idx+1); $("x-last").onclick=()=>anGo(an.moves.length);
   $("x-reset").onclick=()=>{ exploreFrom(START,[],"Starting position"); an.flip=false; renderExplore(); };
   $("x-flip").onclick=()=>{ an.flip=!an.flip; if(an.vs) an.vs=an.flip?"b":"w"; renderExplore(); };
   const ENG={w:null,ready:false,failed:false,loading:false,on:true,searching:false,pending:null,fen:null,lines:[],depth:0,raf:0,kind:"",threads:1,err:"",note:"",playing:false,playFen:null,pendingPlay:null};

@@ -42,7 +42,7 @@ const DEFAULT_UI = {
   tab: 'overview',
   filters: { tc: 'all', color: 'all', period: '12m', rated: 'all', opp: 'all', account: 'all' },
   games: { outcome: 'all', term: 'all', sort: 'new', search: '', limit: 50, day: '', prefix: '', pcolor: '' },
-  explorer: { color: 'w', path: [] },
+  explorer: { color: 'w', path: [], fullPath: [], flipped: null },
   openings: { sort: 'played', group: 'family', min: 5 },
   activity: { years: 3 },
   rating: { tc: '', range: '365' },
@@ -667,7 +667,8 @@ function setTab(tab) {
 }
 
 function goExplore(color, prefix) {
-  S.ui.explorer = { color: color === 'b' ? 'b' : 'w', path: prefix ? prefix.split(' ').filter(Boolean) : [] };
+  const path = prefix ? prefix.split(' ').filter(Boolean) : [];
+  S.ui.explorer = { color: color === 'b' ? 'b' : 'w', path, fullPath: [...path], flipped: null };
   setTab('openings');
 }
 
@@ -743,12 +744,14 @@ function onClick(e) {
     case 'explore':
       goExplore(el.dataset.color, el.dataset.prefix || '');
       break;
-    case 'op-pick':
-      ui.explorer = { color: el.dataset.color === 'b' ? 'b' : 'w', path: (el.dataset.prefix || '').split(' ').filter(Boolean) };
+    case 'op-pick': {
+      const path = (el.dataset.prefix || '').split(' ').filter(Boolean);
+      ui.explorer = { color: el.dataset.color === 'b' ? 'b' : 'w', path, fullPath: [...path], flipped: null };
       saveUi();
       render();
       if (window.innerWidth < 1024) document.getElementById('insExplorer')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       break;
+    }
     case 'ex-games':
       showGames({ prefix: ui.explorer.path.join(' '), pcolor: ui.explorer.color });
       break;
@@ -765,28 +768,71 @@ function onClick(e) {
       saveUi();
       render();
       break;
-    case 'ex-move':
-      ui.explorer.path = [...ui.explorer.path, el.dataset.san];
+    case 'ex-move': {
+      const next = [...ui.explorer.path, el.dataset.san];
+      const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
+      const matchesFp = fp.length >= next.length && next.every((s, i) => fp[i] === s);
+      ui.explorer.path = next;
+      if (!matchesFp) ui.explorer.fullPath = [...next];
       saveUi();
       render();
       break;
-    case 'ex-back':
+    }
+    case 'ex-back': {
+      const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
+      if (fp.length < ui.explorer.path.length) ui.explorer.fullPath = [...ui.explorer.path];
       ui.explorer.path = ui.explorer.path.slice(0, -1);
       saveUi();
       render();
       break;
-    case 'ex-goto':
+    }
+    case 'ex-fwd': {
+      const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
+      const hasFullFwd = fp.length > ui.explorer.path.length && ui.explorer.path.every((s, i) => fp[i] === s);
+      if (hasFullFwd) {
+        ui.explorer.path = fp.slice(0, ui.explorer.path.length + 1);
+      } else if (el.dataset.top) {
+        ui.explorer.path = [...ui.explorer.path, el.dataset.top];
+        ui.explorer.fullPath = [...ui.explorer.path];
+      }
+      saveUi();
+      render();
+      break;
+    }
+    case 'ex-last': {
+      const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
+      const hasFullFwd = fp.length > ui.explorer.path.length && ui.explorer.path.every((s, i) => fp[i] === s);
+      if (hasFullFwd) {
+        ui.explorer.path = [...fp];
+        saveUi();
+        render();
+      }
+      break;
+    }
+    case 'ex-goto': {
+      const fp = Array.isArray(ui.explorer.fullPath) ? ui.explorer.fullPath : [];
+      if (fp.length < ui.explorer.path.length) ui.explorer.fullPath = [...ui.explorer.path];
       ui.explorer.path = ui.explorer.path.slice(0, Number(el.dataset.i));
+      saveUi();
+      render();
+      break;
+    }
+    case 'ex-flip':
+      ui.explorer.flipped = !(ui.explorer.flipped ?? (ui.explorer.color === 'b'));
       saveUi();
       render();
       break;
     case 'ex-color':
       ui.explorer.color = el.dataset.v;
+      ui.explorer.flipped = null;
       saveUi();
       render();
       break;
     case 'ex-studio':
-      openInStudio(ui.explorer.path, { flipped: ui.explorer.color === 'b', title: 'My games' });
+      openInStudio(ui.explorer.path, {
+        flipped: ui.explorer.flipped ?? (ui.explorer.color === 'b'),
+        title: 'My games',
+      });
       break;
     case 'open-game': {
       const g = S.games.get(el.dataset.id);

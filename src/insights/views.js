@@ -51,6 +51,7 @@ import {
   expectedVsActual,
 } from './charts.js';
 import { miniBoardHtml } from './miniBoard.js';
+import { BOARD_ICONS } from '../shared/boardControls.js';
 
 /* ------------------------------------------------------------------ */
 /* Shared bits                                                         */
@@ -423,7 +424,14 @@ function explorerPanel(ctx) {
       /* ignore */
     }
   }
-  const board = miniBoardHtml(fen, { flipped: ui.color === 'b', last, arrows });
+  const flipped = ui.flipped ?? ui.color === 'b';
+  const board = miniBoardHtml(fen, { flipped, last, arrows });
+  const fullPath = Array.isArray(ui.fullPath) ? ui.fullPath : [];
+  const hasFullFwd = fullPath.length > ui.path.length && ui.path.every((s, i) => fullPath[i] === s);
+  const topSan = node.moves[0]?.san || '';
+  const atStart = ui.path.length === 0;
+  const canFwd = hasFullFwd || Boolean(topSan);
+  const canLast = hasFullFwd;
   const crumbs = [`<button data-act="ex-goto" data-i="0" class="hover:text-em ${ui.path.length ? 'text-txtMuted' : 'text-txt font-semibold'}">Start</button>`]
     .concat(
       ui.path.map((s, i) => {
@@ -452,13 +460,19 @@ function explorerPanel(ctx) {
   const recentHere = [...node.reached].sort((a, b) => b.t - a.t).slice(0, 5);
   const side = ui.color === 'w' ? 'White' : 'Black';
   return `<div class="grid gap-3 xl:grid-cols-[minmax(240px,360px)_1fr] items-start min-w-0" id="insExplorer">
-    <div class="grid gap-2">
+    <div class="grid gap-1.5">
       ${board}
-      <div class="flex items-center gap-1.5">
-        <button data-act="ex-goto" data-i="0" class="px-2.5 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[11px]" aria-label="Start position">⏮</button>
-        <button data-act="ex-back" class="px-2.5 py-1 rounded-lg bg-surface hover:bg-surfaceHover border border-borderSubtle font-mono text-[11px]" aria-label="Back one move">◀</button>
-        <span class="ml-auto"></span>
-        <button data-act="ex-studio" class="px-2.5 py-1 rounded-lg bg-em/15 hover:bg-em/25 text-em border border-em/35 text-[11px] font-semibold">Open in Studio ↗</button>
+      <div class="board-controls board-controls-bare">
+        <div class="board-nav" role="group" aria-label="Move navigation">
+          <button data-act="ex-goto" data-i="0" class="board-btn board-btn-nav" title="First move" aria-label="Start position" ${atStart ? 'disabled' : ''}>${BOARD_ICONS.first}</button>
+          <button data-act="ex-back" class="board-btn board-btn-nav" title="Previous move" aria-label="Back one move" ${atStart ? 'disabled' : ''}>${BOARD_ICONS.prev}</button>
+          <button data-act="ex-fwd" data-top="${esc(topSan)}" class="board-btn board-btn-nav" title="Next move" aria-label="Forward one move" ${canFwd ? '' : 'disabled'}>${BOARD_ICONS.next}</button>
+          <button data-act="ex-last" class="board-btn board-btn-nav" title="Last move" aria-label="Last move" ${canLast ? '' : 'disabled'}>${BOARD_ICONS.last}</button>
+        </div>
+        <div class="board-actions">
+          <button data-act="ex-flip" class="board-btn board-btn-ico" title="Flip board" aria-label="Flip board">${BOARD_ICONS.flip}</button>
+          <button data-act="ex-studio" class="board-btn board-btn-ico board-btn-em" title="Open in Studio" aria-label="Open in Studio">${BOARD_ICONS.studio}</button>
+        </div>
       </div>
     </div>
     <div class="grid gap-3 min-w-0">

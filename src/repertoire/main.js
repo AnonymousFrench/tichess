@@ -6,6 +6,7 @@ import '@fontsource/inter/800.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import './repertoire.css';
+import '../shared/boardControls.css';
 import { mountAppNav } from '../shared/appNav.js';
 import { mountAccount } from '../shared/account.js';
 

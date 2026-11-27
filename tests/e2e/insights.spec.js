@@ -92,12 +92,22 @@ test('Insights downloads a Lichess account, explains it, and hands positions to 
   await page.keyboard.press('Escape');
   await page.click('[data-act=clear-filters]');
 
-  // Openings: pick an opening, walk its moves, and open the line in the Studio.
+  // Openings: pick an opening, walk its moves (including back/forward/last/flip), and open in Studio.
   await page.click('#toolbar [data-act=tab][data-v=openings]');
   await page.click('[data-act=op-pick] >> nth=0');
   await page.click('[data-act=ex-goto][data-i="0"] >> nth=0');
   await page.click('tr[data-act=ex-move] >> nth=0');
   await expect(page.locator('[data-act=ex-goto]')).toContainText(['Start', '1.e4']);
+  await page.click('[data-act=ex-back]');
+  await expect(page.locator('[data-act=ex-fwd]')).toBeEnabled();
+  await page.click('[data-act=ex-fwd]');
+  await expect(page.locator('[data-act=ex-goto]')).toContainText(['Start', '1.e4']);
+  await page.click('[data-act=ex-goto][data-i="0"] >> nth=0');
+  await page.click('[data-act=ex-last]');
+  await expect(page.locator('[data-act=ex-back]')).toBeEnabled();
+  await page.click('[data-act=ex-goto][data-i="1"]');
+  await page.click('[data-act=ex-flip]');
+  await page.click('[data-act=ex-flip]');
   const [studio] = await Promise.all([context.waitForEvent('page'), page.click('[data-act=ex-studio]')]);
   await studio.waitForLoadState('load');
   await expect(studio.locator('#variationTreeContainer')).toContainText('e4');

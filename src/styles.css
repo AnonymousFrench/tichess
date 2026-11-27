@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 @import "./theme.css";
+@import "./shared/boardControls.css";
 
 * {
   box-sizing: border-box;
@@ -447,117 +448,4 @@ html, body {
     font-size: 18px;
   }
   body.dock-dragging .dock-append.over { border-color: #10b981; color: #10b981; background: rgba(16, 185, 129, 0.08); }
-}
-
-/* Controls under the board: compact single row on desktop and phones. */
-.board-controls {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 5px;
-  padding: 5px 6px;
-}
-.board-nav,
-.board-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-.board-export-wrap {
-  position: relative;
-  display: flex;
-}
-.board-export-menu {
-  top: auto;
-  bottom: calc(100% + 6px);
-  left: auto;
-  right: 0;
-  min-width: 190px;
-}
-.board-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  height: 32px;
-  min-width: 34px;
-  padding: 0 9px;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-  user-select: none;
-  touch-action: manipulation;
-  transition: background-color 0.12s, transform 0.06s;
-}
-.board-btn:active {
-  transform: translateY(1px);
-}
-.board-btn.hidden {
-  display: none;
-}
-.board-btn-nav {
-  min-width: 38px;
-}
-.board-btn-ico {
-  width: 36px;
-  padding: 0;
-}
-.board-ico {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  flex: none;
-}
-@media (max-width: 1023px), (pointer: coarse) {
-  .board-btn {
-    height: 38px;
-    font-size: 12.5px;
-    border-radius: 8px;
-  }
-  .board-ico {
-    width: 18px;
-    height: 18px;
-  }
-}
-@media (max-width: 640px) {
-  /* Phones: single full-width row, every visible button an equal share. */
-  .board-controls {
-    gap: 4px;
-  }
-  .board-nav,
-  .board-actions {
-    display: contents;
-  }
-  .board-nav > .board-btn,
-  .board-actions > .board-btn:not(.hidden),
-  .board-actions > .board-export-wrap {
-    flex: 1 1 0;
-    min-width: 0;
-    width: auto;
-    padding: 0 4px;
-  }
-  .board-actions > .board-export-wrap {
-    padding: 0;
-  }
-  .board-actions > .board-export-wrap > .board-btn {
-    width: 100%;
-    min-width: 0;
-    padding: 0 4px;
-  }
-  .board-export-menu {
-    position: absolute;
-    top: auto;
-    bottom: calc(100% + 6px);
-    left: auto;
-    right: 0;
-    min-width: 190px !important;
-  }
 }

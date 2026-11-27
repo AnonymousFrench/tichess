@@ -788,6 +788,36 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
   expect(repScroll.overflowY).toBe('visible');
   expect(repScroll.overscrollY).toBe('auto');
   expect(repScroll.scrollY).toBeGreaterThan(100);
+
+  // Repertoire Study uses the same single-row board controls as Studio (first/prev/next/last/flip/studio)
+  await page.click('.tabbar button[data-tab="study"]');
+  await expect(page.locator('#s-fwd')).toBeVisible();
+  const studyRowYs = await page.evaluate(() =>
+    ['s-first', 's-back', 's-fwd', 's-last', 's-flip', 's-tichess'].map((id) =>
+      Math.round(document.getElementById(id).getBoundingClientRect().y)
+    )
+  );
+  expect(Math.max(...studyRowYs) - Math.min(...studyRowYs)).toBeLessThanOrEqual(2);
+  await page.click('#s-last');
+  await expect(page.locator('#s-back')).toBeEnabled();
+  await page.click('#s-first');
+  await expect(page.locator('#s-fwd')).toBeEnabled();
+
+  // Repertoire Training Session also keeps the unified board nav controls below the board
+  await page.click('#s-last');
+  await page.click('#s-drill');
+  await expect(page.locator('#session')).toBeVisible();
+  const seRowYs = await page.evaluate(() =>
+    ['se-first', 'se-prev', 'se-next', 'se-last', 'se-flip'].map((id) =>
+      Math.round(document.getElementById(id).getBoundingClientRect().y)
+    )
+  );
+  expect(Math.max(...seRowYs) - Math.min(...seRowYs)).toBeLessThanOrEqual(2);
+  await expect(page.locator('#se-prev')).toBeEnabled();
+  await page.click('#se-prev');
+  await expect(page.locator('#se-next')).toBeEnabled();
+  await page.click('#se-last');
+  await expect(page.locator('#se-next')).toBeDisabled();
   expect(pageErrors).toEqual([]);
 });
 

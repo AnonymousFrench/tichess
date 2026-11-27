@@ -7,6 +7,8 @@ import {
   resolveHumanfishEndpoint,
   buildHumanfishCacheKey,
   getActiveHumanOutcome,
+  analyzeMatingMaterial,
+  enforceMatingMaterialConstraint,
   computeDangerLevel,
   computeDivergenceInfo,
   formatSignedPp,
@@ -130,6 +132,39 @@ describe('HumanFish math and context extraction', () => {
       '/api/humanfish/evaluate'
     );
     expect(k1).toContain('2800|2700|60|30|blitz');
+  });
+
+  it('enforces chess insufficient-material rules so a bare king never has nonzero win odds', () => {
+    // Exact K+b5 vs bare Black king position where raw HumanFish gave Black 4% win odds
+    const kpVsK = '8/8/1k6/1P1K4/8/8/8/8 w - - 0 85';
+    expect(analyzeMatingMaterial(kpVsK)).toMatchObject({
+      whiteCanWin: true,
+      blackCanWin: false,
+      deadDraw: false,
+    });
+    const fixed = enforceMatingMaterialConstraint(kpVsK, {
+      white: 0.01,
+      draw: 0.95,
+      black: 0.04,
+      expected_score: 0.485,
+    });
+    expect(fixed.black).toBe(0);
+    expect(fixed.white).toBeCloseTo(0.01, 4);
+    expect(fixed.draw).toBeCloseTo(0.99, 4);
+    expect(fixed.expected_score).toBeCloseTo(0.505, 3);
+    expect(fixed.materialAdjusted).toBe(true);
+
+    // Dead draw K+B vs K -> 0 / 100 / 0
+    const kbVsK = '8/8/1k6/3K4/4B3/8/8/8 w - - 0 85';
+    const dead = getActiveHumanOutcome(
+      { fen: kbVsK, human: { white: 0.12, draw: 0.84, black: 0.04, expected_score: 0.54 } },
+      true
+    );
+    expect(dead.white).toBe(0);
+    expect(dead.draw).toBe(1);
+    expect(dead.black).toBe(0);
+    expect(dead.expected_score).toBe(0.5);
+    expect(dead.materialAdjusted).toBe(true);
   });
 });
 

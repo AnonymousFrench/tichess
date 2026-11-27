@@ -1,6 +1,7 @@
 import { Chess } from 'chess.js';
 import { state, escapeHtml } from '../state.js';
 import { playMoveOnTree, renderArrows } from '../board/board.js';
+import { getActiveHumanOutcome } from './humanfishMath.js';
 
 const CASTLING_KING_ROOK_MAP = {
   w: {
@@ -194,12 +195,36 @@ export function updateEvalBarFromState() {
   const badge = document.getElementById('evalSourceBadge');
   if (!fill || !top || !bot || !box || !badge) return;
 
+  const maiaActive = state.evalBarSource === 'maia' && state.maia.enabled && state.maia.result;
+  if (maiaActive) {
+    const expPct = Math.max(4, Math.min(96, Math.round((Number(state.maia.result.whiteExp) || 0.5) * 100)));
+    const wAdv = expPct >= 50;
+    if (drawFill) drawFill.style.height = '0%';
+    badge.textContent = 'M2';
+    badge.className =
+      'absolute top-1/2 left-0 right-0 -translate-y-1/2 text-center font-mono text-[7.5px] font-bold py-0.5 bg-bg/85 text-vi pointer-events-none';
+    fill.style.height = `${expPct}%`;
+    if (state.flipped) {
+      box.classList.remove('justify-end');
+      box.classList.add('justify-start');
+      top.textContent = wAdv ? `${expPct}%` : '';
+      top.style.color = '#0f172a';
+      bot.textContent = !wAdv ? `${100 - expPct}%` : '';
+      bot.style.color = '#e2e8f0';
+    } else {
+      box.classList.remove('justify-start');
+      box.classList.add('justify-end');
+      bot.textContent = wAdv ? `${expPct}%` : '';
+      bot.style.color = '#0f172a';
+      top.textContent = !wAdv ? `${100 - expPct}%` : '';
+      top.style.color = '#e2e8f0';
+    }
+    return;
+  }
+
   const hfActive = state.evalBarSource === 'hf' && state.hf.enabled && state.hf.result;
   if (hfActive) {
-    const hum =
-      !state.hf.useClocks && state.hf.result.human_no_clock
-        ? state.hf.result.human_no_clock
-        : state.hf.result.human;
+    const hum = getActiveHumanOutcome(state.hf.result, state.hf.useClocks);
     if (hum) {
       const wPct = Math.max(0, Math.min(100, Math.round((Number(hum.white) || 0) * 100)));
       const dPct = Math.max(0, Math.min(100 - wPct, Math.round((Number(hum.draw) || 0) * 100)));

@@ -1077,6 +1077,48 @@ test('HumanFish engine tab renders W/D/L odds, Shapley waterfall, calibrated arr
   expect(pageErrors).toEqual([]);
 });
 
+test('Maia 2 runs real quantized ONNX model locally at 1100-2000 Elo and grades candidates with Stockfish', async ({
+  page,
+}) => {
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
+
+  await page.route('https://lichess.org/**', (r) => r.abort());
+  await page.route('https://explorer.lichess.org/**', (r) => r.abort());
+
+  await page.goto('/');
+
+  // Load Italian position (4. ... Bc5)
+  await page.click('[data-menu="settings"]');
+  await page.click('#actLoadModal');
+  await page.fill(
+    '#loadPgnTextarea',
+    'r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4'
+  );
+  await page.click('#btnConfirmLoad');
+
+  // Switch to Maia 2 tab and wait for real ONNX inference + Stockfish grading
+  await page.click('#btnEngineTabMaia');
+  await expect(page.locator('#maiaContentBody')).toContainText('Human Candidates (Maia 2 × SF19)', {
+    timeout: 30_000,
+  });
+  await expect(page.locator('#evalSourceBadge')).toHaveText('M2');
+  await expect(page.locator('#arrowOverlay text').first()).toBeVisible({ timeout: 10_000 });
+  // Stockfish grader populates 'Best' / centipawns on candidates
+  await expect(page.locator('#maiaContentBody')).toContainText('Best', { timeout: 20_000 });
+
+  // Scrub Elo slider to 1100 and then 2000 and verify live re-inference
+  await page.locator('#maiaEloWhiteSlider').fill('1100');
+  await page.locator('#maiaEloWhiteSlider').dispatchEvent('input');
+  await expect(page.locator('#maiaContentBody')).toContainText('1100 Elo');
+
+  await page.locator('#maiaEloWhiteSlider').fill('2000');
+  await page.locator('#maiaEloWhiteSlider').dispatchEvent('input');
+  await expect(page.locator('#maiaContentBody')).toContainText('2000 (2000+) Elo');
+
+  expect(pageErrors).toEqual([]);
+});
+
 
 
 

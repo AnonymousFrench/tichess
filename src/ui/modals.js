@@ -233,7 +233,10 @@ wss.on('connection', (ws) =&gt; {
           <a href="/stockfish/LICENSE.txt" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">GNU GPLv3</a>
           (<a href="https://github.com/official-stockfish/Stockfish" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">Stockfish source ↗</a> ·
           <a href="https://github.com/nmrugg/stockfish.js" target="_blank" rel="noopener noreferrer" class="text-cy hover:underline">stockfish.js ↗</a>).
-          HumanFish human-outcome &amp; move-probability mode uses
+          <span class="text-txt">Maia 2</span> (1000–2200 Elo local ONNX human model) under
+          <a href="/models/MAIA2_LICENSE.txt" target="_blank" rel="noopener noreferrer" class="text-vi hover:underline">MIT</a>
+          (<a href="https://github.com/CSSLab/maia2" target="_blank" rel="noopener noreferrer" class="text-vi hover:underline">CSSLab/maia2 ↗</a>).
+          HumanFish master/GM (2400–2900) mode uses
           <a href="https://humanfish.vercel.app/methodology" target="_blank" rel="noopener noreferrer" class="text-em hover:underline">HumanFish ↗</a>
           (public domain · backup at
           <a href="https://github.com/AnonymousFrench/humanfish" target="_blank" rel="noopener noreferrer" class="text-em hover:underline">AnonymousFrench/humanfish ↗</a>).

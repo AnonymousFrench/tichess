@@ -243,17 +243,21 @@
             <div id="lc0LinesList" class="flex-1 overflow-y-auto divide-y divide-borderSubtle/40 font-mono text-[11px]"></div>
           </div>
 
-          <!-- RIGHT: STOCKFISH 19 WASM / CLOUD / LOCAL UCI + HUMANFISH -->
+          <!-- RIGHT: STOCKFISH 19 WASM / CLOUD / LOCAL UCI + MAIA 2 + HUMANFISH -->
           <div id="panel-sf" data-dock="sf" class="bg-panel border border-borderSubtle rounded-xl flex flex-col overflow-hidden min-h-0">
             <div class="px-2 py-1 border-b border-borderSubtle bg-bg/55 flex items-center justify-between gap-1">
               <div class="flex items-center gap-1 min-w-0">
                 <button id="btnSfToggle" class="w-5 h-5 rounded bg-cy/20 hover:bg-cy/30 text-cy border border-cy/40 flex items-center justify-center text-[10px] shrink-0" title="Start / Stop Stockfish" aria-label="Start or stop engine">⏸</button>
                 <div role="tablist" aria-label="Engine mode" class="flex items-center gap-0.5 bg-surface rounded p-0.5 border border-borderSubtle shrink-0">
-                  <button id="btnEngineTabSf" type="button" role="tab" aria-selected="true" class="px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 font-bold text-[11px] transition-colors">Stockfish</button>
-                  <button id="btnEngineTabHf" type="button" role="tab" aria-selected="false" class="px-1.5 py-0.5 rounded text-txtMuted hover:text-txt font-semibold text-[11px] transition-colors" title="HumanFish calibrated W/D/L odds, Shapley attribution, and GM move probability arrows">HumanFish</button>
+                  <button id="btnEngineTabSf" type="button" role="tab" aria-selected="true" class="px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 font-bold text-[11px] transition-colors"><span class="sm:hidden">SF</span><span class="hidden sm:inline">Stockfish</span></button>
+                  <button id="btnEngineTabMaia" type="button" role="tab" aria-selected="false" class="px-1.5 py-0.5 rounded text-txtMuted hover:text-txt font-semibold text-[11px] transition-colors" title="Maia 2 local human neural network (1000–2200 Elo, runs in browser WASM)">Maia 2</button>
+                  <button id="btnEngineTabHf" type="button" role="tab" aria-selected="false" class="px-1.5 py-0.5 rounded text-txtMuted hover:text-txt font-semibold text-[11px] transition-colors" title="HumanFish master/GM W/D/L odds (2400–2900 Elo), Shapley attribution, and move probabilities"><span class="sm:hidden">HF</span><span class="hidden sm:inline">HumanFish</span></button>
                 </div>
-                <span id="sfModeBadge" class="px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted truncate">Loading SF 19 Lite...</span>
-                <span id="hfModeBadge" class="hidden px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-em truncate">With Time</span>
+                <span class="hidden sm:inline-flex items-center min-w-0">
+                  <span id="sfModeBadge" class="px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-txtMuted truncate">Loading SF 19 Lite...</span>
+                  <span id="maiaModeBadge" class="hidden px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-vi truncate">Local ONNX</span>
+                  <span id="hfModeBadge" class="hidden px-1.5 py-[1px] rounded bg-surface border border-borderSubtle font-mono text-[9.5px] text-em truncate">With Time</span>
+                </span>
               </div>
               <div class="flex items-center gap-1 shrink-0">
                 <div id="sfHeaderControls" class="flex items-center gap-1">
@@ -265,10 +269,13 @@
                   </select>
                   <button id="btnSfCloud" class="px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 text-[10px] font-medium" title="Toggle Free Lichess Cloud Eval">☁ Cloud</button>
                 </div>
+                <div id="maiaHeaderControls" class="hidden flex items-center gap-1">
+                  <button id="btnMaiaArrows" type="button" class="px-1.5 py-0.5 rounded bg-vi/20 text-vi border border-vi/40 text-[10px] font-medium" title="Toggle Maia 2 human move probability arrows on the board">↗ Arrows</button>
+                </div>
                 <div id="hfHeaderControls" class="hidden flex items-center gap-1">
                   <button id="btnHfClockMode" type="button" class="px-1.5 py-0.5 rounded bg-em/20 text-em border border-em/40 text-[10px] font-medium" title="Toggle With Time / Board Only">⏱ Time</button>
                   <button id="btnHfArrows" type="button" class="px-1.5 py-0.5 rounded bg-em/20 text-em border border-em/40 text-[10px] font-medium" title="Toggle calibrated GM move probability arrows on the board">↗ Arrows</button>
-                  <button id="btnHfWhatIf" type="button" class="px-1.5 py-0.5 rounded bg-surface text-txtMuted border border-borderSubtle text-[10px] font-medium" title="Adjust What-If clocks, Elos, and time control">What-If</button>
+                  <button id="btnHfWhatIf" type="button" class="px-1.5 py-0.5 rounded bg-surface text-txtMuted border border-borderSubtle text-[10px] font-medium" title="Adjust What-If clocks, Elos (2400–2900), and time control">What-If</button>
                   <button id="btnHfRefresh" type="button" class="px-1.5 py-0.5 rounded bg-surface hover:bg-surfaceHover text-txtMuted hover:text-txt border border-borderSubtle text-[10.5px]" title="Recalculate HumanFish evaluation" aria-label="Recalculate HumanFish">↻</button>
                 </div>
                 <button class="panel-close-btn" data-panel-close="sf" title="Hide Engine" aria-label="Hide Engine">✕</button>
@@ -277,9 +284,10 @@
 
             <div id="sfEngineView" class="flex-1 flex flex-col min-h-0">
               <div class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
-                <div class="flex items-center gap-2 min-w-0">
+                <div class="flex items-center gap-1.5 min-w-0">
                   <span id="sfMainEval" class="px-1.5 py-[1px] rounded bg-cy/20 text-cy font-bold min-w-[46px] text-center">—</span>
-                  <span id="sfDepth" class="text-txtMuted">Depth: —</span>
+                  <span id="sfDepth" class="text-txtMuted shrink-0">Depth: —</span>
+                  <button id="sfMaiaSummaryChip" type="button" class="hidden px-1.5 py-[1px] rounded bg-vi/15 hover:bg-vi/25 text-vi border border-vi/35 text-[9.5px] font-semibold truncate" title="Open Maia 2 breakdown"></button>
                   <button id="sfHfSummaryChip" type="button" class="hidden px-1.5 py-[1px] rounded bg-em/15 hover:bg-em/25 text-em border border-em/35 text-[9.5px] font-semibold truncate" title="Open HumanFish breakdown"></button>
                 </div>
                 <span id="sfNps" class="text-txtMuted text-[10px] shrink-0"></span>
@@ -288,6 +296,13 @@
               <div id="sfLinesList" class="flex-1 overflow-y-auto divide-y divide-borderSubtle/40 font-mono text-[11px]">
                 <div class="p-2 text-txtMuted">Starting Stockfish 19 WASM...</div>
               </div>
+            </div>
+
+            <div id="maiaEngineView" class="hidden flex-1 flex flex-col min-h-0">
+              <div id="maiaSummaryStrip" class="px-2 py-1 border-b border-borderSubtle bg-bg/40 flex items-center justify-between gap-2 font-mono text-[10.5px]">
+                <span class="text-txtMuted">Ready (1000–2200 Elo)</span>
+              </div>
+              <div id="maiaContentBody" class="flex-1 overflow-y-auto"></div>
             </div>
 
             <div id="hfEngineView" class="hidden flex-1 flex flex-col min-h-0">

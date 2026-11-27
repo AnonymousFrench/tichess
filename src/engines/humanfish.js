@@ -18,6 +18,7 @@ import {
   formatShortClock,
   formatSignedPp,
 } from './humanfishMath.js';
+import { triggerMaia2Analysis, renderMaiaUI } from './maia2.js';
 
 const MAX_CACHE_ENTRIES = 120;
 const resultCache = new Map();
@@ -71,62 +72,88 @@ export function getEffectiveHumanfishParams() {
 }
 
 /**
- * Switch the Engine panel between Stockfish ('sf') and HumanFish ('hf').
- * Switching to HumanFish automatically enables HumanFish evaluation and switches
- * the eval bar to HumanFish W/D/L unless the user explicitly changed it away.
+ * Switch the Engine panel between Stockfish ('sf'), Maia 2 ('maia'), and HumanFish ('hf').
  */
 export function setEngineTab(tabName) {
-  const next = tabName === 'hf' ? 'hf' : 'sf';
+  const next = tabName === 'hf' ? 'hf' : tabName === 'maia' ? 'maia' : 'sf';
   state.engineTab = next;
 
   const btnSfTab = document.getElementById('btnEngineTabSf');
+  const btnMaiaTab = document.getElementById('btnEngineTabMaia');
   const btnHfTab = document.getElementById('btnEngineTabHf');
   const sfControls = document.getElementById('sfHeaderControls');
+  const maiaControls = document.getElementById('maiaHeaderControls');
   const hfControls = document.getElementById('hfHeaderControls');
   const sfView = document.getElementById('sfEngineView');
+  const maiaView = document.getElementById('maiaEngineView');
   const hfView = document.getElementById('hfEngineView');
   const sfBadge = document.getElementById('sfModeBadge');
+  const maiaBadge = document.getElementById('maiaModeBadge');
   const hfBadge = document.getElementById('hfModeBadge');
   const toggleBtn = document.getElementById('btnSfToggle');
 
+  const inactiveCls =
+    'px-1.5 py-0.5 rounded text-txtMuted hover:text-txt font-semibold text-[11px] transition-colors';
   if (btnSfTab) {
     btnSfTab.setAttribute('aria-selected', String(next === 'sf'));
     btnSfTab.className =
       next === 'sf'
         ? 'px-1.5 py-0.5 rounded bg-cy/20 text-cy border border-cy/40 font-bold text-[11px] transition-colors'
-        : 'px-1.5 py-0.5 rounded text-txtMuted hover:text-txt font-semibold text-[11px] transition-colors';
+        : inactiveCls;
+  }
+  if (btnMaiaTab) {
+    btnMaiaTab.setAttribute('aria-selected', String(next === 'maia'));
+    btnMaiaTab.className =
+      next === 'maia'
+        ? 'px-1.5 py-0.5 rounded bg-vi/20 text-vi border border-vi/40 font-bold text-[11px] transition-colors'
+        : inactiveCls;
   }
   if (btnHfTab) {
     btnHfTab.setAttribute('aria-selected', String(next === 'hf'));
     btnHfTab.className =
       next === 'hf'
         ? 'px-1.5 py-0.5 rounded bg-em/20 text-em border border-em/40 font-bold text-[11px] transition-colors'
-        : 'px-1.5 py-0.5 rounded text-txtMuted hover:text-txt font-semibold text-[11px] transition-colors';
+        : inactiveCls;
   }
 
   sfControls?.classList.toggle('hidden', next !== 'sf');
+  maiaControls?.classList.toggle('hidden', next !== 'maia');
   hfControls?.classList.toggle('hidden', next !== 'hf');
   sfView?.classList.toggle('hidden', next !== 'sf');
+  maiaView?.classList.toggle('hidden', next !== 'maia');
   hfView?.classList.toggle('hidden', next !== 'hf');
   sfBadge?.classList.toggle('hidden', next !== 'sf');
+  maiaBadge?.classList.toggle('hidden', next !== 'maia');
   hfBadge?.classList.toggle('hidden', next !== 'hf');
 
   if (toggleBtn) {
-    const running = next === 'hf' ? state.hf.running : state.sf.running;
+    const running =
+      next === 'hf' ? state.hf.running : next === 'maia' ? state.maia.running : state.sf.running;
     toggleBtn.textContent = running ? '⏸' : '▶';
-    toggleBtn.title = next === 'hf' ? 'Start / Stop HumanFish' : 'Start / Stop Stockfish';
+    toggleBtn.title =
+      next === 'hf'
+        ? 'Start / Stop HumanFish'
+        : next === 'maia'
+          ? 'Start / Stop Maia 2'
+          : 'Start / Stop Stockfish';
   }
 
   if (next === 'hf') {
     const firstEnable = !state.hf.enabled;
     state.hf.enabled = true;
-    if (firstEnable) {
-      state.evalBarSource = 'hf';
-    }
+    state.maia.hoverCandidateUci = null;
+    if (firstEnable) state.evalBarSource = 'hf';
     triggerHumanfishAnalysis();
+  } else if (next === 'maia') {
+    const firstEnable = !state.maia.enabled;
+    state.maia.enabled = true;
+    state.hf.hoverCandidateUci = null;
+    if (firstEnable) state.evalBarSource = 'maia';
+    triggerMaia2Analysis();
   } else {
     state.hf.hoverCandidateUci = null;
-    if (state.evalBarSource === 'hf') {
+    state.maia.hoverCandidateUci = null;
+    if (state.evalBarSource === 'hf' || state.evalBarSource === 'maia') {
       state.evalBarSource = 'sf';
     }
   }
@@ -134,6 +161,7 @@ export function setEngineTab(tabName) {
   renderArrows();
   updateEvalBarFromState();
   renderHumanfishUI();
+  renderMaiaUI();
 }
 
 export function setHumanfishUseClocks(useClocks) {
@@ -614,6 +642,10 @@ export function renderHumanfishUI() {
     `;
   }
 
+  const matBanner = hum?.materialAdjusted
+    ? `<div class="px-2 py-1 rounded bg-surface/70 border border-borderSubtle text-[10px] text-txtMuted">Adjusted for chess rules: ${escapeHtml(hum.materialReason || 'Insufficient mating material')} (impossible win odds moved to draw)</div>`
+    : '';
+
   const divBanner = div.significant
     ? `<div class="px-2 py-1 rounded text-[10.5px] font-medium border ${
         div.flippedFavorite
@@ -712,6 +744,7 @@ export function renderHumanfishUI() {
         </div>
       </div>
 
+      ${matBanner}
       ${divBanner}
 
       ${

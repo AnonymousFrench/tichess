@@ -60,6 +60,11 @@ import {
   setHumanfishSettingsHandler,
 } from './engines/humanfish.js';
 import {
+  triggerMaia2Analysis,
+  stopMaia2,
+  toggleMaiaArrows,
+} from './engines/maia2.js';
+import {
   startActiveTabReview,
   cancelGameReview,
   renderGameReviewPanel,
@@ -301,6 +306,12 @@ function toggleBothEngines() {
     triggerHumanfishAnalysis();
     return;
   }
+  if (state.engineTab === 'maia') {
+    state.maia.running = !state.maia.running;
+    document.getElementById('btnSfToggle').textContent = state.maia.running ? '⏸' : '▶';
+    triggerMaia2Analysis();
+    return;
+  }
   const next = !(state.sf.running || (state.lc0.mode === 'ws' && state.lc0.running));
   state.sf.running = next;
   state.lc0.running = next;
@@ -402,22 +413,28 @@ function bindEvents() {
   // Board & Navigation
   document.getElementById('btnAddBoardTab').onclick = () => addBoardTab(`Analysis ${state.tabs.length + 1}`);
   document.getElementById('evalBarContainer').onclick = () => {
-    const sources = ['sf', 'hf'];
+    const sources = ['sf', 'maia', 'hf'];
     if (state.lc0.mode === 'ws') sources.push('lc0');
     const idx = sources.indexOf(state.evalBarSource);
     const next = sources[(idx + 1) % sources.length];
     state.evalBarSource = next;
-    if (next === 'hf' && !state.hf.enabled) {
+    if (next === 'maia' && !state.maia.enabled) {
+      state.maia.enabled = true;
+      triggerMaia2Analysis();
+      showToast(`Eval Bar: Maia 2 (${state.maia.eloWhite} Elo)`);
+    } else if (next === 'hf' && !state.hf.enabled) {
       state.hf.enabled = true;
       triggerHumanfishAnalysis();
       showToast('Eval Bar: HumanFish W/D/L');
     } else {
       showToast(
-        next === 'hf'
-          ? 'Eval Bar: HumanFish W/D/L'
-          : next === 'lc0'
-            ? 'Eval Bar: Lc0'
-            : 'Eval Bar: Stockfish'
+        next === 'maia'
+          ? `Eval Bar: Maia 2 (${state.maia.eloWhite} Elo)`
+          : next === 'hf'
+            ? 'Eval Bar: HumanFish W/D/L'
+            : next === 'lc0'
+              ? 'Eval Bar: Lc0'
+              : 'Eval Bar: Stockfish'
       );
     }
     updateEvalBarFromState();
@@ -688,13 +705,22 @@ function bindEvents() {
       triggerHumanfishAnalysis();
       return;
     }
+    if (state.engineTab === 'maia') {
+      state.maia.running = !state.maia.running;
+      document.getElementById('btnSfToggle').textContent = state.maia.running ? '⏸' : '▶';
+      triggerMaia2Analysis();
+      return;
+    }
     state.sf.running = !state.sf.running;
     document.getElementById('btnSfToggle').textContent = state.sf.running ? '⏸' : '▶';
     triggerSfAnalysis();
   };
   document.getElementById('btnEngineTabSf').onclick = () => setEngineTab('sf');
+  document.getElementById('btnEngineTabMaia').onclick = () => setEngineTab('maia');
   document.getElementById('btnEngineTabHf').onclick = () => setEngineTab('hf');
+  document.getElementById('sfMaiaSummaryChip').onclick = () => setEngineTab('maia');
   document.getElementById('sfHfSummaryChip').onclick = () => setEngineTab('hf');
+  document.getElementById('btnMaiaArrows').onclick = toggleMaiaArrows;
   document.getElementById('btnHfClockMode').onclick = () => setHumanfishUseClocks(!state.hf.useClocks);
   document.getElementById('btnHfArrows').onclick = toggleHumanfishArrows;
   document.getElementById('btnHfWhatIf').onclick = toggleHumanfishWhatIf;
@@ -853,6 +879,7 @@ const debouncedPositionLookups = debounce(() => {
   if (state.activeHub === 'scouted') renderScoutedGamesTable();
   triggerLc0Analysis();
   triggerSfAnalysis();
+  triggerMaia2Analysis();
   triggerHumanfishAnalysis();
 }, 250);
 
@@ -865,6 +892,7 @@ onPositionChange(() => {
   if (state.activeHub === 'repertoire') renderStudioRepertoirePanel();
   syncRepertoireBoardArrows();
   stopLocalSf();
+  stopMaia2();
   stopHumanfish();
   debouncedPositionLookups();
 });

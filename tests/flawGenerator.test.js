@@ -496,6 +496,134 @@ describe('generateFlawRepertoire end-to-end compilation & merging', () => {
 
     // Line preview exposes fixedHabits for the modal UI
     expect(result.linesPreview.some((ln) => ln.fixedHabits.some((h) => h.label === '7.Nde2'))).toBe(true);
+
+    // Line plan ("THE PLAN" shown on Line complete) must mention the fixed old habit even in repair mode
+    expect(result.repertoire.lines[0].note).toContain('Fixes your old habit: 7.Nde2');
+    expect(result.repertoire.lines[0].note).toContain('7.Nb3');
+  });
+
+  it('mentions deeper fixed habits in THE PLAN and refreshes existing Fix sections on regeneration + merge', async () => {
+    const { moves: prefixMoves, fen: najdorfFen } = buildPrefix(NAJDORF_PREFIX);
+    const afterF3 = buildPrefix([...NAJDORF_PREFIX, 'f3']).fen;
+    const afterF3E5 = buildPrefix([...NAJDORF_PREFIX, 'f3', 'e5']).fen;
+    const afterNb3 = buildPrefix([...NAJDORF_PREFIX, 'f3', 'e5', 'Nb3']).fen;
+    const afterBe7 = buildPrefix([...NAJDORF_PREFIX, 'f3', 'e5', 'Nb3', 'Be7']).fen;
+
+    // Player ALREADY played 7.Nb3 correctly, but kept playing 8.Qd2 (wrong habit) instead of 8.Be3
+    const personalGames = [
+      { id: 'h1', color: 'w', res: 0, moves: 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 f3 e5 Nb3 Be7 Qd2 O-O' },
+      { id: 'h2', color: 'w', res: 0, moves: 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 f3 e5 Nb3 Be7 Qd2 Be6' },
+      { id: 'h3', color: 'w', res: 0, moves: 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 f3 e5 Nb3 Be7 Qd2 Nbd7' },
+    ];
+
+    const script = new Map([
+      [
+        normalizeFen(afterF3),
+        {
+          explorer: {
+            totalGames: 800,
+            moves: [{ uci: 'e7e5', san: 'e5', games: 500, share: 0.62, score: 0.52 }],
+          },
+        },
+      ],
+      [
+        normalizeFen(afterF3E5),
+        {
+          engine: [{ uci: 'd4b3', san: 'Nb3', whiteCp: 35, mate: null, pvSan: ['Nb3', 'Be7', 'Be3'] }],
+          explorer: {
+            totalGames: 600,
+            moves: [{ uci: 'd4b3', san: 'Nb3', games: 420, share: 0.7, score: 0.54 }],
+          },
+        },
+      ],
+      [
+        normalizeFen(afterNb3),
+        {
+          explorer: {
+            totalGames: 500,
+            moves: [{ uci: 'f8e7', san: 'Be7', games: 300, share: 0.6, score: 0.5 }],
+          },
+        },
+      ],
+      [
+        normalizeFen(afterBe7),
+        {
+          engine: [
+            { uci: 'c1e3', san: 'Be3', whiteCp: 42, mate: null, pvSan: ['Be3', 'O-O', 'Qd2'] },
+            { uci: 'd1d2', san: 'Qd2', whiteCp: -10, mate: null, pvSan: ['Qd2', 'O-O'] },
+          ],
+          explorer: {
+            totalGames: 450,
+            moves: [{ uci: 'c1e3', san: 'Be3', games: 310, share: 0.68, score: 0.57 }],
+          },
+        },
+      ],
+    ]);
+
+    const { evaluateFn, fetchExplorerFn } = makeMocks(script);
+
+    // 1. Simulate an older pre-PR#6 Fix section saved WITHOUT personalGames (no old-habit notes or warnings)
+    const oldResult = await generateFlawRepertoire({
+      prefixMoves,
+      startFen: START_FEN,
+      fen: najdorfFen,
+      color: 'w',
+      openingName: 'Sicilian Defense: Najdorf Variation',
+      flawedUci: 'f2f3',
+      flawedSan: 'f3',
+      flawedStats: { total: 3, wins: 0, draws: 0, losses: 3, scorePct: 0 },
+      mode: 'repair',
+      anchorMove: { uci: 'f2f3', san: 'f3', evLabel: '+0.2', peerScore: 52 },
+      presetKey: 'standard',
+      personalGames: [],
+      evaluateFn,
+      fetchExplorerFn,
+    });
+    const oldBe3Card = Object.values(oldResult.repertoire.cards).find((c) => c.u === 'c1e3');
+    expect(oldBe3Card).toBeDefined();
+    expect(oldBe3Card.n).not.toContain('8.Qd2');
+    expect(Object.keys(oldResult.repertoire.warn)).toHaveLength(0);
+
+    // 2. Regenerate the SAME Fix section WITH personalGames while passing existingRepertoire = oldResult.repertoire
+    const refreshed = await generateFlawRepertoire({
+      prefixMoves,
+      startFen: START_FEN,
+      fen: najdorfFen,
+      color: 'w',
+      openingName: 'Sicilian Defense: Najdorf Variation',
+      flawedUci: 'f2f3',
+      flawedSan: 'f3',
+      flawedStats: { total: 3, wins: 0, draws: 0, losses: 3, scorePct: 0 },
+      mode: 'repair',
+      anchorMove: { uci: 'f2f3', san: 'f3', evLabel: '+0.2', peerScore: 52 },
+      presetKey: 'standard',
+      existingRepertoire: oldResult.repertoire,
+      personalGames,
+      evaluateFn,
+      fetchExplorerFn,
+    });
+
+    // Must NOT truncate early on the old section's positions
+    expect(refreshed.repertoire.lines[0].san).toContain('Be3');
+    // Line plan ("THE PLAN") must surface the deeper wrong habit 8.Qd2 -> 8.Be3
+    expect(refreshed.repertoire.lines[0].note).toContain('Fixes your old habit: 8.Qd2');
+    expect(refreshed.repertoire.lines[0].note).toContain('8.Be3');
+
+    // 3. Merge refreshed section back into the old saved repertoire with preferIncomingMeta
+    const merged = mergeRepertoires(oldResult.repertoire, refreshed.repertoire, { preferIncomingMeta: true });
+    const mergedValidated = parseRepertoireFile(buildExportFile(merged, {}, 'Refreshed Fix', Date.now()));
+    expect(mergedValidated.ok).toBe(true);
+
+    // Existing card ID is preserved (keeps SRS progress) while its note is upgraded with the old habit!
+    const mergedBe3Card = Object.values(merged.cards).find((c) => c.u === 'c1e3');
+    expect(mergedBe3Card?.n).toContain('You used to play 8.Qd2');
+    expect(mergedBe3Card?.n).toContain('Play 8.Be3');
+
+    // Existing line's THE PLAN note and off-edge habit warnings are refreshed!
+    expect(merged.lines[0].note).toContain('Fixes your old habit: 8.Qd2');
+    const mergedWarns = Object.values(merged.warn);
+    expect(mergedWarns.some((w) => w.includes('Old habit') && w.includes('8.Qd2') && w.includes('8.Be3'))).toBe(true);
+    expect(mergedWarns.some((w) => w.includes('You used to play 8.Qd2') && w.includes('8.Be3'))).toBe(true);
   });
 
   it('regenerates the same branch without self-blocking, streams lines live, and refreshes notes on merge', async () => {

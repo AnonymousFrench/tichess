@@ -1245,6 +1245,43 @@ function formatHabitsSummary(habits) {
     .join(' / ');
 }
 
+function computeFlawSectionName({
+  sectionName = '',
+  openingName = '',
+  mode = 'replace',
+  flawPly = 0,
+  color = 'w',
+  flawedSan = '',
+  oppMove = null,
+  anchorSan = '',
+}) {
+  const c = color === 'b' ? 'b' : 'w';
+  const oppColor = c === 'w' ? 'b' : 'w';
+  const flawLabel = formatMoveLabel(flawPly, c, flawedSan);
+  const oppLabel = oppMove?.san
+    ? formatMoveLabel(oppMove.ply ?? Math.max(0, flawPly - 1), oppColor, oppMove.san)
+    : flawLabel;
+  const anchorLabel = formatMoveLabel(flawPly, c, anchorSan);
+  const shortOpening = (openingName || 'Opening').split(':')[0].trim().slice(0, 32);
+  return (
+    (sectionName || '').trim().slice(0, 60) ||
+    (mode === 'vs_opponent'
+      ? `Fix: ${shortOpening} (vs ${oppLabel})`
+      : mode === 'repair'
+        ? `Fix: ${shortOpening} (${flawLabel} follow-ups)`
+        : `Fix: ${shortOpening} (${anchorLabel} vs ${flawLabel})`)
+  ).slice(0, 60);
+}
+
+function formatFixedHabitsPlan(fixedHabits) {
+  if (!Array.isArray(fixedHabits) || !fixedHabits.length) return '';
+  const items = fixedHabits.slice(0, 3).map((h) => {
+    const stats = [`${h.scorePct}%`, `${h.games}g`, h.losses > 0 ? `${h.losses}L` : ''].filter(Boolean).join(', ');
+    return h.expectedLabel ? `${h.label} (${stats}) → ${h.expectedLabel}` : `${h.label} (${stats})`;
+  });
+  return `Fixes your old ${items.length > 1 ? 'habits' : 'habit'}: ${items.join('; ')}.`;
+}
+
 export function compileFlawRepertoire({
   prefixMoves = [],
   startFen = START_FEN,
@@ -1271,14 +1308,16 @@ export function compileFlawRepertoire({
     ? formatMoveLabel(oppMove.ply ?? Math.max(0, flawPly - 1), oppColor, oppMove.san)
     : flawLabel;
   const anchorLabel = formatMoveLabel(flawPly, c, anchorMove.san);
-  const shortOpening = (openingName || 'Opening').split(':')[0].trim().slice(0, 32);
-  const cleanSection =
-    (sectionName || '').trim().slice(0, 60) ||
-    (mode === 'vs_opponent'
-      ? `Fix: ${shortOpening} (vs ${oppLabel})`
-      : mode === 'repair'
-        ? `Fix: ${shortOpening} (${flawLabel} follow-ups)`
-        : `Fix: ${shortOpening} (${anchorLabel} vs ${flawLabel})`).slice(0, 60);
+  const cleanSection = computeFlawSectionName({
+    sectionName,
+    openingName,
+    mode,
+    flawPly,
+    color: c,
+    flawedSan,
+    oppMove,
+    anchorSan: anchorMove.san,
+  });
 
   const total = Number(flawedStats?.total) || 0;
   const scorePct =
@@ -1330,9 +1369,15 @@ export function compileFlawRepertoire({
       : '';
 
     const personalTag = br.personalLosses > 0 ? ` (lost ${br.personalLosses}×)` : '';
+    const basePlan = idx === 0 ? anchorNote : br.summaryNote || anchorNote;
+    const unmentionedHabits = (br.fixedHabits || []).filter(
+      (h) => h?.label && !basePlan.includes(h.label)
+    );
+    const habitPlan = formatFixedHabitsPlan(unmentionedHabits);
+    const lineNote = habitPlan ? `${basePlan} ${habitPlan}`.trim() : basePlan;
     return {
       name: `${anchorLabel} vs ${firstOppLabel}${secondOppLabel}${personalTag}`.slice(0, 72),
-      note: idx === 0 ? anchorNote : br.summaryNote || anchorNote,
+      note: lineNote,
       alt: idx > 0,
       moves: combined,
     };
@@ -1510,9 +1555,19 @@ export async function generateFlawRepertoire({
 
   // Index positions from OTHER repertoire sections so transpositions merge cleanly,
   // while NOT self-blocking when regenerating the same section or same prefix+anchor branch.
+  const targetSectionName = computeFlawSectionName({
+    sectionName,
+    openingName,
+    mode,
+    flawPly: prefixMoves.length,
+    color: c,
+    flawedSan,
+    oppMove,
+    anchorSan: anchorDet.san,
+  });
+  const targetSecKey = targetSectionName.trim().toLowerCase();
   const existingRepFenSet = new Set();
   if (existingRepertoire?.pos?.length && existingRepertoire?.lines?.length) {
-    const targetSecKey = (sectionName || '').trim().toLowerCase();
     const secNameById = new Map(
       (existingRepertoire.secs || []).map((s) => [s.id, (s.name || '').trim().toLowerCase()])
     );
@@ -1886,6 +1941,7 @@ export async function generateFlawRepertoire({
             nextFixedHabits.push({
               label: topH.label,
               san: topH.san,
+              expectedLabel: replyLabel,
               scorePct: topH.scorePct,
               games: topH.games,
               losses: topH.losses,
@@ -1908,11 +1964,13 @@ export async function generateFlawRepertoire({
       }
     }
 
+    const anchorExpectedLabel = formatMoveLabel(prefixMoves.length, c, anchorDet.san);
     const initialFixedHabits = anchorHabits.length
       ? [
           {
             label: anchorHabits[0].label,
             san: anchorHabits[0].san,
+            expectedLabel: anchorExpectedLabel,
             scorePct: anchorHabits[0].scorePct,
             games: anchorHabits[0].games,
             losses: anchorHabits[0].losses,

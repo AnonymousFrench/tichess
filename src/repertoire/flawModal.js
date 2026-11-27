@@ -888,9 +888,10 @@ export async function openFlawRepertoireModal({
   const existingRepertoire = existingDoc?.repertoire || null;
   const existingMoves = findExistingRepMovesAtFen(existingRepertoire, resolvedFen);
 
-  // Pull local Insights games if caller didn't supply a full personal game set so we catch real losses.
+  // Pull local Insights games if caller didn't supply a full Insights game set (e.g. Studio Explorer's 20-game recentGames sample).
   let mergedPersonalGames = Array.isArray(personalGames) ? [...personalGames] : [];
-  if (mergedPersonalGames.length < 15) {
+  const hasInsightsArchive = mergedPersonalGames.some((g) => typeof g?.moves === 'string' && g.moves.trim());
+  if (mergedPersonalGames.length < 15 || !hasInsightsArchive) {
     try {
       const store = await import('../insights/store.js');
       const localGames = await store.loadAllGames();

@@ -164,7 +164,7 @@ export function renderArrows() {
     }
   }
 
-  if (state.showRepertoireArrows && state.repertoireArrows?.length && !probCandidates.length) {
+  if (state.showRepertoireArrows && state.repertoireArrows?.length) {
     let mineSeen = 0;
     state.repertoireArrows.forEach((ra, i) => {
       let color;

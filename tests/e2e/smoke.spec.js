@@ -101,6 +101,7 @@ test('Stockfish 19 WASM worker works, UI is honest, and live events lead to roun
   await expect(page.locator('#lc0ModeBadge')).toHaveText('Not Connected');
 
   // 3. Cloud eval displays nodes (NEVER kn/s)
+  await page.click('#btnEngineTabSf');
   await expect(page.locator('#sfModeBadge')).toHaveText('Lichess Cloud');
   await expect(page.locator('#sfDepth')).toHaveText('Depth: 75');
   const sfNps = await page.locator('#sfNps').textContent();
@@ -135,6 +136,7 @@ test('falls back cleanly to real Stockfish 19 WASM when Lichess is blocked', asy
   const isolated = await page.evaluate(() => window.crossOriginIsolated);
   expect(isolated).toBe(true);
 
+  await page.click('#btnEngineTabSf');
   await expect(page.locator('#sfModeBadge')).toHaveText(/^SF 19 Lite( MT \(\d+T\))?$/, {
     timeout: 20_000,
   });
@@ -173,7 +175,8 @@ test('clicking a cloud PV line with king-to-rook castling (e1h1) plays O-O on th
   await page.fill('#loadPgnTextarea', CASTLE_FEN);
   await page.click('#btnConfirmLoad');
 
-  // Verify cloud PV normalized e1h1 -> O-O and clicking it plays 5.O-O
+  // Switch to Stockfish tab and verify cloud PV normalized e1h1 -> O-O and clicking it plays 5.O-O
+  await page.click('#btnEngineTabSf');
   const firstPv = page.locator('#sfLinesList .pv-row').first();
   await expect(firstPv).toContainText('5.O-O d6 6.c3', { timeout: 10_000 });
   await expect(firstPv).toHaveAttribute('data-uci', 'e1g1');
@@ -1088,6 +1091,14 @@ test('Maia 2 runs real quantized ONNX model locally at 1100-2000 Elo and grades 
 
   await page.goto('/');
 
+  // Maia 2 is first and active by default; Stockfish and HumanFish tabs remain visible
+  const tabIds = await page
+    .locator('[role="tablist"][aria-label="Engine mode"] [role="tab"]')
+    .evaluateAll((els) => els.map((e) => e.id));
+  expect(tabIds).toEqual(['btnEngineTabMaia', 'btnEngineTabSf', 'btnEngineTabHf']);
+  await expect(page.locator('#btnEngineTabMaia')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#btnEngineTabHf')).toBeVisible();
+
   // Load Italian position (4. ... Bc5)
   await page.click('[data-menu="settings"]');
   await page.click('#actLoadModal');
@@ -1097,8 +1108,7 @@ test('Maia 2 runs real quantized ONNX model locally at 1100-2000 Elo and grades 
   );
   await page.click('#btnConfirmLoad');
 
-  // Switch to Maia 2 tab and wait for real ONNX inference + Stockfish grading
-  await page.click('#btnEngineTabMaia');
+  // Maia 2 is already active by default — wait for real ONNX inference + Stockfish grading
   await expect(page.locator('#maiaContentBody')).toContainText('Human Candidates (Maia 2 × SF19)', {
     timeout: 30_000,
   });

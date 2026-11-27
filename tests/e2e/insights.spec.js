@@ -224,6 +224,7 @@ test('Studio panels can be swapped, resized and arranged with presets', async ({
   await expect(page.locator('#panel-explorer')).toBeVisible();
 
   // Engine shows the chosen number of lines.
+  await page.click('#btnEngineTabSf');
   await page.selectOption('#sfLinesSelect', '1');
   await expect.poll(() => page.locator('#sfLinesList > *').count(), { timeout: 20_000 }).toBe(1);
 });

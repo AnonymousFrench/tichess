@@ -413,7 +413,7 @@ function bindEvents() {
   // Board & Navigation
   document.getElementById('btnAddBoardTab').onclick = () => addBoardTab(`Analysis ${state.tabs.length + 1}`);
   document.getElementById('evalBarContainer').onclick = () => {
-    const sources = ['sf', 'maia', 'hf'];
+    const sources = ['maia', 'sf', 'hf'];
     if (state.lc0.mode === 'ws') sources.push('lc0');
     const idx = sources.indexOf(state.evalBarSource);
     const next = sources[(idx + 1) % sources.length];

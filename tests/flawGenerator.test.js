@@ -1,0 +1,366 @@
+import { describe, it, expect } from 'vitest';
+import { Chess } from 'chess.js';
+import { START_FEN, normalizeFen } from '../src/state.js';
+import { parseRepertoireFile, buildExportFile } from '../src/repertoire/model.js';
+import { buildRepertoireFromPgn, mergeRepertoires } from '../src/repertoire/pgnImport.js';
+import {
+  diagnoseFlawMove,
+  pickBestUserMove,
+  pickOpponentReplies,
+  buildPersonalOppMap,
+  generateFlawRepertoire,
+} from '../src/repertoire/flawGenerator.js';
+
+function buildPrefix(sans) {
+  const chess = new Chess();
+  const moves = [];
+  for (const s of sans) {
+    const mv = chess.move(s);
+    moves.push({
+      san: mv.san,
+      uci: mv.from + mv.to + (mv.promotion || ''),
+      fen: chess.fen(),
+      color: mv.color,
+    });
+  }
+  return { moves, fen: chess.fen() };
+}
+
+const NAJDORF_PREFIX = ['e4', 'c5', 'Nf3', 'd6', 'd4', 'cxd4', 'Nxd4', 'Nf6', 'Nc3', 'a6'];
+
+describe('diagnoseFlawMove (weak move vs. sound move with weak follow-up)', () => {
+  it('diagnoses 6.f3 in the Sicilian Najdorf as a sound move with weak follow-ups', () => {
+    const { fen, moves } = buildPrefix(NAJDORF_PREFIX);
+    const diag = diagnoseFlawMove({
+      fen,
+      ply: moves.length,
+      color: 'w',
+      flawedUci: 'f2f3',
+      flawedSan: 'f3',
+      flawedStats: { total: 3, wins: 0, draws: 1, losses: 2, scorePct: 17 },
+      engineLines: [
+        { uci: 'c1e3', san: 'Be3', whiteCp: 32, mate: null, pvSan: ['Be3', 'e5', 'Nb3'] },
+        { uci: 'c1g5', san: 'Bg5', whiteCp: 28, mate: null, pvSan: ['Bg5', 'e6', 'f4'] },
+        { uci: 'f2f3', san: 'f3', whiteCp: 24, mate: null, pvSan: ['f3', 'e5', 'Nb3'] },
+        { uci: 'f1e2', san: 'Be2', whiteCp: 22, mate: null, pvSan: ['Be2', 'e5', 'Nb3'] },
+      ],
+      peerMoves: [
+        { uci: 'c1e3', san: 'Be3', games: 5000, share: 0.4, score: 0.56 },
+        { uci: 'c1g5', san: 'Bg5', games: 2200, share: 0.18, score: 0.54 },
+        { uci: 'f2f3', san: 'f3', games: 900, share: 0.08, score: 0.52 },
+      ],
+      peerBracketLabel: 'Lichess 1800–2000',
+    });
+
+    expect(diag.kind).toBe('sound_followup');
+    expect(diag.recommendedMode).toBe('repair');
+    expect(diag.smallSample).toBe(true);
+    expect(diag.sampleNote).toContain('3 games');
+    expect(diag.explanation).toContain('6.f3');
+    expect(diag.explanation).toContain("isn't because");
+    expect(diag.whyDistinction).toContain('keep 6.f3');
+    expect(diag.candidates.length).toBeGreaterThanOrEqual(2);
+    expect(diag.candidates[0].san).toBe('Be3');
+    expect(diag.candidates.some((c) => c.san === 'f3')).toBe(false);
+  });
+
+  it('diagnoses an objectively bad opening move as weak_move and recommends switching', () => {
+    const { fen, moves } = buildPrefix(NAJDORF_PREFIX);
+    const diag = diagnoseFlawMove({
+      fen,
+      ply: moves.length,
+      color: 'w',
+      flawedUci: 'g2g4',
+      flawedSan: 'g4',
+      flawedStats: { total: 12, wins: 2, draws: 1, losses: 9, scorePct: 21 },
+      engineLines: [
+        { uci: 'c1e3', san: 'Be3', whiteCp: 32, mate: null, pvSan: ['Be3', 'e5'] },
+        { uci: 'c1g5', san: 'Bg5', whiteCp: 28, mate: null, pvSan: ['Bg5', 'e6'] },
+      ],
+      flawedEval: { uci: 'g2g4', san: 'g4', whiteCp: -95, mate: null, pvSan: ['g4', 'e5'] },
+      peerMoves: [{ uci: 'c1e3', san: 'Be3', games: 4000, share: 0.45, score: 0.56 }],
+      peerBracketLabel: 'Lichess 1800–2000',
+    });
+
+    expect(diag.kind).toBe('weak_move');
+    expect(diag.recommendedMode).toBe('replace');
+    expect(diag.smallSample).toBe(false);
+    expect(diag.flawedMove.cpDrop).toBe(127);
+    expect(diag.explanation).toContain('1.3 pawns');
+    expect(diag.candidates[0].san).toBe('Be3');
+  });
+
+  it('diagnoses a moderate ~0.45 pawn inaccuracy as dubious_move', () => {
+    const { fen, moves } = buildPrefix(NAJDORF_PREFIX);
+    const diag = diagnoseFlawMove({
+      fen,
+      ply: moves.length,
+      color: 'w',
+      flawedUci: 'a2a4',
+      flawedSan: 'a4',
+      flawedStats: { total: 9, wins: 2, draws: 2, losses: 5, scorePct: 33 },
+      engineLines: [
+        { uci: 'c1e3', san: 'Be3', whiteCp: 32, mate: null, pvSan: ['Be3', 'e5'] },
+      ],
+      flawedEval: { uci: 'a2a4', san: 'a4', whiteCp: -14, mate: null, pvSan: ['a4', 'e5'] },
+      peerMoves: [{ uci: 'c1e3', san: 'Be3', games: 3000, share: 0.4, score: 0.55 }],
+    });
+
+    expect(diag.kind).toBe('dubious_move');
+    expect(diag.recommendedMode).toBe('replace');
+    expect(diag.flawedMove.cpDrop).toBe(46);
+  });
+});
+
+describe('move selection helpers', () => {
+  it('filters out unsound high-winrate Explorer traps using Stockfish soundness gate', () => {
+    const { fen } = buildPrefix(NAJDORF_PREFIX);
+    const pick = pickBestUserMove({
+      fen,
+      color: 'w',
+      explorerMoves: [
+        // Unsound trap not even in Stockfish's sound candidates
+        { uci: 'g2g4', san: 'g4', games: 200, share: 0.05, score: 0.68 },
+        // Sound practical main move
+        { uci: 'c1e3', san: 'Be3', games: 5000, share: 0.45, score: 0.56 },
+      ],
+      engineLines: [
+        { uci: 'c1g5', san: 'Bg5', whiteCp: 35, mate: null, pvSan: ['Bg5'] },
+        { uci: 'c1e3', san: 'Be3', whiteCp: 30, mate: null, pvSan: ['Be3'] },
+      ],
+    });
+    expect(pick?.san).toBe('Be3');
+    expect(pick?.source).toBe('explorer+engine');
+  });
+
+  it('prioritizes opponent replies that actually beat the user over generic Explorer replies', () => {
+    const { fen } = buildPrefix([...NAJDORF_PREFIX, 'f3']);
+    const replies = pickOpponentReplies({
+      fen,
+      maxReplies: 2,
+      minShare: 0.12,
+      minGames: 5,
+      personalOppMoves: [{ uci: 'd8b6', san: 'Qb6', games: 2, losses: 2 }],
+      explorerMoves: [
+        { uci: 'e7e5', san: 'e5', games: 800, share: 0.52 },
+        { uci: 'e7e6', san: 'e6', games: 400, share: 0.26 },
+        { uci: 'd8b6', san: 'Qb6', games: 100, share: 0.07 },
+      ],
+      engineLines: [],
+    });
+
+    expect(replies.map((r) => r.san)).toEqual(['Qb6', 'e5']);
+    expect(replies[0].personalLosses).toBe(2);
+    expect(replies[0].source).toBe('personal');
+  });
+
+  it('indexes opponent replies from both Insights records and Studio Explorer PGNs', () => {
+    const map = buildPersonalOppMap(
+      [
+        {
+          color: 'w',
+          res: 0,
+          moves: 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 f3 Qb6 Be3 e5',
+        },
+        {
+          winner: 'black',
+          pgn: '[Result "0-1"]\n\n1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6 6. f3 e5 0-1',
+        },
+      ],
+      'w'
+    );
+    const { fen } = buildPrefix([...NAJDORF_PREFIX, 'f3']);
+    const afterF3 = map.get(normalizeFen(fen)) || [];
+    expect(afterF3.map((r) => r.san).sort()).toEqual(['Qb6', 'e5']);
+    expect(afterF3.every((r) => r.losses === 1)).toBe(true);
+  });
+});
+
+describe('generateFlawRepertoire end-to-end compilation & merging', () => {
+  // Deterministic legal-move mock engine + explorer keyed by FEN turn.
+  function makeMocks(scriptByNormFen = new Map()) {
+    const evaluateFn = async (fen, { multipv = 3 } = {}) => {
+      const nf = normalizeFen(fen);
+      const scripted = scriptByNormFen.get(nf)?.engine;
+      if (scripted) return scripted.slice(0, multipv);
+      const chess = new Chess(fen);
+      const legal = chess.moves({ verbose: true }).slice(0, multipv);
+      return legal.map((mv, i) => ({
+        uci: mv.from + mv.to + (mv.promotion || ''),
+        san: mv.san,
+        whiteCp: 25 - i * 10,
+        mate: null,
+        pvSan: [mv.san],
+      }));
+    };
+
+    const fetchExplorerFn = async (fen) => {
+      const nf = normalizeFen(fen);
+      const scripted = scriptByNormFen.get(nf)?.explorer;
+      if (scripted) return { status: 'ok', poolLabel: 'Mock 1800–2000', ...scripted };
+      return { status: 'ok', poolLabel: 'Mock 1800–2000', totalGames: 0, moves: [] };
+    };
+
+    return { evaluateFn, fetchExplorerFn };
+  }
+
+  it('builds a valid replacement repertoire with habit warnings, theory alts, and clean merge', async () => {
+    const { moves: prefixMoves, fen: najdorfFen } = buildPrefix(NAJDORF_PREFIX);
+    const afterBe3 = buildPrefix([...NAJDORF_PREFIX, 'Be3']).fen;
+    const afterBe3E5 = buildPrefix([...NAJDORF_PREFIX, 'Be3', 'e5']).fen;
+    const afterBe3E6 = buildPrefix([...NAJDORF_PREFIX, 'Be3', 'e6']).fen;
+
+    const script = new Map([
+      [
+        normalizeFen(najdorfFen),
+        {
+          engine: [
+            { uci: 'c1e3', san: 'Be3', whiteCp: 32, mate: null, pvSan: ['Be3', 'e5', 'Nb3'] },
+            { uci: 'c1g5', san: 'Bg5', whiteCp: 28, mate: null, pvSan: ['Bg5', 'e6', 'f4'] },
+          ],
+        },
+      ],
+      [
+        normalizeFen(afterBe3),
+        {
+          explorer: {
+            totalGames: 1000,
+            moves: [
+              { uci: 'e7e5', san: 'e5', games: 550, share: 0.55, score: 0.54 },
+              { uci: 'e7e6', san: 'e6', games: 300, share: 0.3, score: 0.56 },
+            ],
+          },
+        },
+      ],
+      [
+        normalizeFen(afterBe3E5),
+        {
+          engine: [{ uci: 'd4b3', san: 'Nb3', whiteCp: 35, mate: null, pvSan: ['Nb3', 'Be6', 'f3'] }],
+          explorer: {
+            totalGames: 500,
+            moves: [{ uci: 'd4b3', san: 'Nb3', games: 420, share: 0.84, score: 0.56 }],
+          },
+        },
+      ],
+      [
+        normalizeFen(afterBe3E6),
+        {
+          engine: [{ uci: 'f2f3', san: 'f3', whiteCp: 38, mate: null, pvSan: ['f3', 'b5', 'Qd2'] }],
+          explorer: {
+            totalGames: 300,
+            moves: [{ uci: 'f2f3', san: 'f3', games: 210, share: 0.7, score: 0.57 }],
+          },
+        },
+      ],
+    ]);
+
+    const { evaluateFn, fetchExplorerFn } = makeMocks(script);
+    const result = await generateFlawRepertoire({
+      prefixMoves,
+      startFen: START_FEN,
+      fen: najdorfFen,
+      color: 'w',
+      openingName: 'Sicilian Defense: Najdorf Variation',
+      flawedUci: 'f2f3',
+      flawedSan: 'f3',
+      flawedStats: { total: 3, wins: 0, draws: 1, losses: 2, scorePct: 17 },
+      mode: 'replace',
+      anchorMove: { uci: 'c1e3', san: 'Be3', evLabel: '+0.3', peerScore: 56 },
+      presetKey: 'quick',
+      evaluateFn,
+      fetchExplorerFn,
+    });
+
+    // Strict tichess-repertoire v1 validation
+    const validated = parseRepertoireFile(buildExportFile(result.repertoire, {}, 'Flaw Fix', Date.now()));
+    expect(validated.ok).toBe(true);
+    expect(result.stats.lines).toBeGreaterThanOrEqual(2);
+    expect(result.drillCardIds.length).toBeGreaterThan(0);
+
+    // Every drill card should be at or after the flaw ply (move 6), not 1.e4/2.Nf3
+    const earlyUcis = new Set(['e2e4', 'g1f3', 'd2d4']);
+    for (const cid of result.drillCardIds) {
+      expect(earlyUcis.has(result.repertoire.cards[cid].u)).toBe(false);
+    }
+
+    // Habit warnings attached to both the flawed move (f2f3) and the preceding opponent move (a7a6)
+    const warnValues = Object.values(result.repertoire.warn);
+    expect(warnValues.some((w) => w.includes('Old habit') && w.includes('6.f3'))).toBe(true);
+    expect(warnValues.some((w) => w.includes('Watch out') && w.includes('6.Be3'))).toBe(true);
+
+    // Theory alts populated at the Najdorf root
+    const najdorfPosIdx = result.repertoire.pos.findIndex((p) => normalizeFen(p.f) === normalizeFen(najdorfFen));
+    expect(najdorfPosIdx).toBeGreaterThanOrEqual(0);
+    const th = result.repertoire.theory[result.repertoire.pos[najdorfPosIdx].t];
+    expect(th.alts.length).toBeGreaterThanOrEqual(2);
+    expect(th.alts[0].san).toBe('Be3');
+    expect(th.alts[0].pv[0]).toBe('Be3');
+
+    // Merges non-destructively into an existing repertoire AND preserves the avoided-habit warn!
+    const existing = buildRepertoireFromPgn('1. d4 d5 2. c4 e6 *', { color: 'w', sectionName: 'Queen Gambit' });
+    expect(existing.ok).toBe(true);
+    const merged = mergeRepertoires(existing.repertoire, result.repertoire);
+    const mergedValid = parseRepertoireFile(buildExportFile(merged, {}, 'Merged', Date.now()));
+    expect(mergedValid.ok).toBe(true);
+    expect(merged.secs.length).toBe(2);
+    expect(Object.values(merged.warn).some((w) => w.includes('Old habit') && w.includes('6.f3'))).toBe(true);
+  });
+
+  it('builds a repair repertoire keeping 6.f3 and covering personal loss replies without warning against 6.f3', async () => {
+    const { moves: prefixMoves, fen: najdorfFen } = buildPrefix(NAJDORF_PREFIX);
+    const afterF3 = buildPrefix([...NAJDORF_PREFIX, 'f3']).fen;
+    const afterF3Qb6 = buildPrefix([...NAJDORF_PREFIX, 'f3', 'Qb6']).fen;
+
+    const script = new Map([
+      [
+        normalizeFen(afterF3),
+        {
+          explorer: {
+            totalGames: 800,
+            moves: [{ uci: 'e7e5', san: 'e5', games: 500, share: 0.62, score: 0.52 }],
+          },
+        },
+      ],
+      [
+        normalizeFen(afterF3Qb6),
+        {
+          engine: [{ uci: 'd1d2', san: 'Qd2', whiteCp: 42, mate: null, pvSan: ['Qd2', 'e5', 'Nb3'] }],
+        },
+      ],
+    ]);
+
+    const { evaluateFn, fetchExplorerFn } = makeMocks(script);
+    const result = await generateFlawRepertoire({
+      prefixMoves,
+      startFen: START_FEN,
+      fen: najdorfFen,
+      color: 'w',
+      openingName: 'Sicilian Defense: Najdorf Variation',
+      flawedUci: 'f2f3',
+      flawedSan: 'f3',
+      flawedStats: { total: 3, wins: 0, draws: 1, losses: 2, scorePct: 17 },
+      mode: 'repair',
+      anchorMove: { uci: 'f2f3', san: 'f3', evLabel: '+0.2', peerScore: 52 },
+      presetKey: 'quick',
+      personalGames: [
+        {
+          color: 'w',
+          res: 0,
+          moves: 'e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 f3 Qb6 Qd2 e5',
+        },
+      ],
+      evaluateFn,
+      fetchExplorerFn,
+    });
+
+    const validated = parseRepertoireFile(buildExportFile(result.repertoire, {}, 'Repair Fix', Date.now()));
+    expect(validated.ok).toBe(true);
+    // In repair mode, 6.f3 is kept (no "Old habit" warn against it)
+    expect(Object.keys(result.repertoire.warn).length).toBe(0);
+    // Personal loss reply 6...Qb6 must be covered and tagged
+    expect(result.linesPreview.some((ln) => ln.movesText.includes('Qb6') && ln.personalLosses === 1)).toBe(true);
+    // Anchor card note explains 6.f3 is sound and the leak starts after it
+    const anchorCard = Object.values(result.repertoire.cards).find((c) => c.u === 'f2f3');
+    expect(anchorCard?.n).toContain('objectively sound');
+  });
+});

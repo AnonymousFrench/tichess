@@ -555,24 +555,45 @@ export function mergeRepertoires(existing, incoming) {
 
   const theoryNameToIdx = new Map();
   out.theory.forEach((t, idx) => {
+    const hasEngine = Boolean(
+      t && ((t.ev !== null && t.ev !== undefined) || (Array.isArray(t.alts) && t.alts.length))
+    );
     const k = (t?.name || '').trim();
-    if (!theoryNameToIdx.has(k)) theoryNameToIdx.set(k, idx);
+    if (!hasEngine && !theoryNameToIdx.has(k)) theoryNameToIdx.set(k, idx);
   });
+
+  function hasTheoryEngine(t) {
+    return Boolean(
+      t && ((t.ev !== null && t.ev !== undefined) || (Array.isArray(t.alts) && t.alts.length))
+    );
+  }
 
   function mapTheory(inTheoryIdx) {
     const t = incoming.theory?.[inTheoryIdx];
     const nameKey = (t?.name || '').trim();
-    if (theoryNameToIdx.has(nameKey)) return theoryNameToIdx.get(nameKey);
+    const withEngine = hasTheoryEngine(t);
+    if (!withEngine && theoryNameToIdx.has(nameKey)) return theoryNameToIdx.get(nameKey);
     const idx = out.theory.length;
     out.theory.push(t ? structuredClone(t) : { ev: null, name: nameKey, alts: [] });
-    theoryNameToIdx.set(nameKey, idx);
+    if (!withEngine) theoryNameToIdx.set(nameKey, idx);
     return idx;
   }
+
+  const inToOutPos = new Map();
 
   function ensureOutPos(color, inPi) {
     const src = incoming.pos[inPi];
     const key = `${color}|${normalizeFen(src.f)}`;
-    if (posKeyToIdx.has(key)) return posKeyToIdx.get(key);
+    if (posKeyToIdx.has(key)) {
+      const existingIdx = posKeyToIdx.get(key);
+      inToOutPos.set(inPi, existingIdx);
+      const inTh = incoming.theory?.[src.t];
+      const curTh = out.theory?.[out.pos[existingIdx]?.t];
+      if (hasTheoryEngine(inTh) && !hasTheoryEngine(curTh)) {
+        out.pos[existingIdx].t = mapTheory(src.t);
+      }
+      return existingIdx;
+    }
     const idx = out.pos.length;
     out.pos.push({
       f: src.f,
@@ -580,6 +601,7 @@ export function mergeRepertoires(existing, incoming) {
       e: [],
     });
     posKeyToIdx.set(key, idx);
+    inToOutPos.set(inPi, idx);
     return idx;
   }
 
@@ -723,6 +745,17 @@ export function mergeRepertoires(existing, incoming) {
       }
       targetSec.startPly = ply;
       targetSec.start = firstLn.pos[ply];
+    }
+  }
+
+  for (const [warnKey, warnMsg] of Object.entries(incoming.warn || {})) {
+    const sep = warnKey.indexOf('|');
+    if (sep <= 0) continue;
+    const inPi = Number(warnKey.slice(0, sep));
+    const uci = warnKey.slice(sep + 1);
+    const outPi = inToOutPos.get(inPi);
+    if (outPi !== undefined && uci && !out.warn[`${outPi}|${uci}`]) {
+      out.warn[`${outPi}|${uci}`] = warnMsg;
     }
   }
 

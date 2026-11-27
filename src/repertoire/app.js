@@ -324,7 +324,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(kind==="review"){ const due=ALLCARDS.filter(c=>status(c)==="due").sort((a,b)=>prog[a].d-prog[b].d); runs=buildReviewRuns(due,"review"); title="Review"; }
     else if(kind==="weak"){ runs=buildReviewRuns(weakCards().slice(0,12),"weak"); title="Weak moves"; }
     else if(kind==="redo"){ runs=buildReviewRuns(opt.cards,"weak"); title="Missed moves"; }
-    else if(kind==="prep"){ const valid=(opt.cards||[]).filter(c=>CARDS[c]); runs=buildReviewRuns(valid,"review"); title=opt.title||"Opponent Prep"; }
+    else if(kind==="prep"){ const valid=(opt.cards||[]).filter(c=>CARDS[c]); runs=buildReviewRuns(valid,opt.mode==="learn"?"learn":"review"); title=opt.title||"Opponent Prep"; }
     else if(kind==="learn"){ const ln=opt.line!==undefined?LINES[opt.line]:nextLearnLine(learnSec); if(!ln) return; const newC=ln.cards.filter(x=>status(x.c)==="new"); const from=Math.max(0,(newC[0]?newC[0].p:0)-1); runs=[{line:ln.i,from,mode:"learn"},{line:ln.i,from,mode:"recall",gradeSet:new Set(newC.map(x=>x.c))}]; title="Learn · "+ln.id; }
     else if(kind==="play"){ runs=[{tree:true,sec:opt.sec,startPos:opt.pos,prefixSan:opt.prefix,color:opt.color||(SECBY[opt.sec]||{}).color,mode:"play"}]; title="Play · "+(opt.pos!==undefined?"from this position":SECBY[opt.sec].name); }
     if(!runs.length) return;
@@ -641,13 +641,19 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(uci===card.u.slice(0,4)){ correct(fen,r); return; }
     // wrong but legal: show it briefly, then take it back
     const prevLast=sb.last; sb.set(r.fen,{last:[from,to],anim:false}); sb.movable=()=>false;
-    const v=altVerdict(fen,uci);
+    const pi=S.run.tree?S.run.pos:LINES[S.run.line].pos[S.run.p];
+    const habitWarn=WARN[pi+"|"+r.uci]||WARN[pi+"|"+uci]||null;
+    const v=habitWarn?null:altVerdict(fen,uci);
     setTimeout(()=>{ if(!S||S.run!==run) return;
       sb.set(fen,{anim:false,sound:false,last:prevLast}); sb.movable=ownPiece(fen,sb);
       if(v==="otherline"){ setCoach({fb:"That's your other repertoire move here. This drill is "+(run.tree?"the main line":LINES[run.line].name)+". Try again."}); return; }
       if(v){ setCoach({fb:"Good move ("+fmtEv(v.ev)+"), but not your repertoire move. Try again."}); return; }
       run.tries++; if(!run.teach) noteMiss(); Snd.play("err"); sb.shake();
       sb.mark(from,"bad"); setTimeout(()=>{ if(S&&S.run===run){ sb.mark(from,null); } },700);
+      if(habitWarn){
+        setCoach({prompt:"Old habit",cls:"err",warn:habitWarn,fb:run.teach?"Follow the arrow for your new repertoire move.":"Try your new repertoire move, or use a hint."});
+        return;
+      }
       if(run.teach){ setCoach({fb:"Not that one: follow the arrow or tap ›."}); return; }
       if(run.tries===1) setCoach({prompt:"Not this one",cls:"err",fb:"Try again, or use a hint."});
       else if(run.tries===2) giveHint(1);
@@ -1197,7 +1203,8 @@ export function startTrainer({ data: D, progress, saveProgress }) {
         if (valid.length) {
           startSession("prep", {
             cards: valid,
-            title: spec.opponentName ? `Prep vs ${spec.opponentName}` : "Opponent Prep",
+            mode: spec.mode === "learn" ? "learn" : "review",
+            title: spec.title || (spec.opponentName ? `Prep vs ${spec.opponentName}` : "Opponent Prep"),
           });
         }
       }

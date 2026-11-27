@@ -285,7 +285,7 @@ function renderPlanSub(ctx, plan, diag, cliffs) {
       'Opening cliff moves',
       `<div class="divide-y divide-borderSubtle/50">${cliffs
         .slice(0, 4)
-        .map((c) => {
+        .map((c, ci) => {
           const mvNum = Math.floor(c.ply / 2) + 1;
           const mvLbl = `${mvNum}${c.color === 'w' ? '.' : '...'}${c.playedSan}`;
           return `<div class="py-1.5 first:pt-0 last:pb-0 flex items-center justify-between gap-2 text-[11.5px]">
@@ -294,6 +294,7 @@ function renderPlanSub(ctx, plan, diag, cliffs) {
               <span class="text-txtMuted">${c.n}g</span>
               <span style="color:${scoreColor(c.score)}">${Math.round(c.score * 100)}%</span>
               ${linkBtn('Compare', `data-act="coach-bench-jump" data-prefix="${esc(c.childPrefix)}"`)}
+              ${smBtn('Fix →', `data-act="coach-flaw-rep" data-i="${ci}"`, 'em')}
             </span>
           </div>`;
         })
@@ -581,7 +582,8 @@ function renderBenchmarkCard(ctx, cliffs, currentRating) {
       <div class="min-w-0 grid gap-2">
         <div class="text-[11px] font-mono text-txtMuted truncate" title="${esc(movesText(cliff.path))}">${esc(movesText(cliff.path))}</div>
         ${peerHtml}
-        <div class="flex items-center gap-3 pt-1">
+        <div class="flex items-center gap-3 pt-1 flex-wrap">
+          ${smBtn('Generate repertoire →', `data-act="coach-flaw-rep" data-i="${idx}"`, 'em')}
           ${linkBtn('Explore line', `data-act="explore" data-color="${cliff.color}" data-prefix="${esc(cliff.prefix)}"`)}
           ${linkBtn('Open in Studio', `data-act="coach-bench-studio" data-i="${idx}"`)}
         </div>

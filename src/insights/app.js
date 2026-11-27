@@ -33,6 +33,7 @@ import { scanGamesWithStockfish } from './scanner.js';
 import { fetchPeerBenchmark, clearBenchmarkCache } from './benchmark.js';
 import { loadDrillProgress, saveDrillProgress, recordDrillOutcome, checkDrillAttempt } from './drills.js';
 import { loadRepertoire } from '../repertoire/storage.js';
+import { openFlawRepertoireModal } from '../repertoire/flawModal.js';
 import { encodeMoveLine } from '../chess/shareUrl.js';
 import { initCloudSync, onCloudSyncState, getCloudSyncState, getLoginUrl } from '../sync/cloudSync.js';
 import { mountAccount } from '../shared/account.js';
@@ -1357,6 +1358,32 @@ function onClick(e) {
     case 'coach-bench-studio': {
       const cliff = S.coachData?.cliffs?.[Number(el.dataset.i) || 0];
       if (cliff) openInStudio(cliff.path, { flipped: cliff.color === 'b', title: cliff.opening || 'Opening benchmark' });
+      break;
+    }
+    case 'coach-flaw-rep': {
+      const cliff = S.coachData?.cliffs?.[Number(el.dataset.i) || 0];
+      if (!cliff) break;
+      openFlawRepertoireModal({
+        pathSans: cliff.path,
+        fen: cliff.fen,
+        color: cliff.color,
+        flawedUci: cliff.playedUci,
+        flawedSan: cliff.playedSan,
+        flawedStats: {
+          total: cliff.n,
+          scorePct: Math.round((cliff.score || 0) * 100),
+        },
+        openingName: cliff.opening || '',
+        rating: S.coachData?.plan?.currentRating || null,
+        tc: ui.filters.tc || 'all',
+        personalGames: currentFiltered(),
+        notify: (msg, isErr) => toast(msg, Boolean(isErr)),
+        onSaved: (saved) => {
+          S.repertoire = saved.repertoire;
+          S.repDiffKey = '';
+          render();
+        },
+      });
       break;
     }
     case 'coach-drill-open':

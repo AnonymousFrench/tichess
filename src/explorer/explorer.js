@@ -14,6 +14,9 @@ import { playMoveOnTree, renderArrows } from '../board/board.js';
 import { addBoardTab } from '../board/tabs.js';
 import { fetchMineExplorer, invalidateMyGamesCache } from './mineSource.js';
 import { pullInsightsFromServer } from '../insights/cloudInsights.js';
+import { extractPathToNode } from '../repertoire/pgnImport.js';
+import { openFlawRepertoireModal } from '../repertoire/flawModal.js';
+import { initStudioRepertoire } from '../repertoire/studioPanel.js';
 
 /** Sources that show the user's own games (results read from their side). */
 const isPersonal = () => state.refSource === 'player' || state.refSource === 'mine';
@@ -297,16 +300,24 @@ export function renderRefTable(moves, meta = {}) {
 
   const isPlayerMode = isPersonal();
   const pCol = state.refPlayerColor || 'white';
+  const curFen = getCurrentFen();
+  const fenTurn = curFen.split(' ')[1] === 'b' ? 'black' : 'white';
+  const isMyTurn = fenTurn === pCol;
+  const flawMetaByIdx = new Map();
 
   tbody.innerHTML =
     moves
-      .map((m) => {
+      .map((m, idx) => {
         const cnt = m.white + m.draws + m.black;
         let badgeHtml = '';
         if (isPlayerMode) {
           const perf = classifyPlayerMovePerformance(m, pCol);
           if (perf.badge === 'flaw') {
             badgeHtml = `<span class="ml-1 px-1 py-[0.5px] rounded bg-ro/20 text-ro border border-ro/35 font-sans text-[8.5px] font-bold uppercase tracking-wide" title="Low score (${perf.scorePct}% across ${perf.total} games)">Flaw</span>`;
+            if (isMyTurn) {
+              flawMetaByIdx.set(idx, { move: m, perf });
+              badgeHtml += `<button type="button" class="flaw-fix-btn ml-1 px-1.5 py-[0.5px] rounded bg-em/15 hover:bg-em/25 text-em border border-em/40 font-sans text-[8.5px] font-bold uppercase tracking-wide" data-flaw-idx="${idx}" title="Diagnose ${escapeHtml(m.san)} (weak move vs. weak follow-up) and generate a repertoire">Fix →</button>`;
+            }
           } else if (perf.badge === 'strong') {
             badgeHtml = `<span class="ml-1 px-1 py-[0.5px] rounded bg-em/15 text-em border border-em/35 font-sans text-[8.5px] font-bold uppercase tracking-wide" title="Strong score (${perf.scorePct}% across ${perf.total} games)">Strong</span>`;
           }
@@ -314,6 +325,34 @@ export function renderRefTable(moves, meta = {}) {
         return `<tr class="db-mv cursor-pointer" data-uci="${escapeHtml(m.uci)}" data-san="${escapeHtml(m.san)}"><td class="font-bold text-txt whitespace-nowrap">${escapeHtml(m.san)}${badgeHtml}</td><td class="text-txtMuted">${formatCount(cnt)}</td><td>${renderWdbBar(m.white, m.draws, m.black)}</td></tr>`;
       })
       .join('') + footerRow;
+
+  tbody.querySelectorAll('.flaw-fix-btn').forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const entry = flawMetaByIdx.get(Number(btn.dataset.flawIdx));
+      if (!entry) return;
+      const tab = getActiveTab();
+      const { startFen, moves: prefixMoves } = extractPathToNode(tab?.current);
+      const openingName = document.getElementById('openingName')?.textContent || '';
+      openFlawRepertoireModal({
+        prefixMoves,
+        startFen,
+        fen: getCurrentFen(),
+        color: pCol === 'black' ? 'b' : 'w',
+        flawedUci: entry.move.uci,
+        flawedSan: entry.move.san,
+        flawedStats: entry.perf,
+        openingName,
+        personalGames: state.mastersGamesCache || [],
+        notify: (msg, isErr) => showToast(msg, Boolean(isErr)),
+        onSaved: async () => {
+          try {
+            await initStudioRepertoire();
+          } catch (_) {}
+        },
+      });
+    };
+  });
 
   tbody.querySelectorAll('.db-mv').forEach((r) => {
     r.onclick = () => playMoveOnTree(r.dataset.uci || r.dataset.san);

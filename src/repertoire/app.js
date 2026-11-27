@@ -360,24 +360,32 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(warn!==undefined){ $("se-warn").hidden=!warn; $("se-warn").textContent=warn||""; }
     if(acts!==undefined){ const a=$("se-act"); a.innerHTML=""; acts.forEach(x=>{ const b=document.createElement("button"); b.className="btn"+(x.primary?" primary":""); b.textContent=x.label; b.onclick=x.fn; if(x.id) b.id=x.id; a.appendChild(b); }); }
   }
-  function buildTreeFrames(prefix, fallbackFen){
+  function buildTreeFrames(prefix, fallbackFen, prefixLine, startPly, fallbackPi){
+    if(prefixLine && startPly!==undefined && startPly!==null && prefixLine.pos.length>startPly){
+      const out=[];
+      for(let k=0;k<=startPly;k++){
+        const u=k>0?prefixLine.uci[k-1]:null;
+        out.push({fen:POS[prefixLine.pos[k]].f,last:u?[u.slice(0,2),u.slice(2,4)]:null,pi:prefixLine.pos[k],prevPi:k>0?prefixLine.pos[k-1]:null,uci:u,san:k>0?prefixLine.san[k-1]:null,card:k>0?cardAt(prefixLine,k-1):null,ply:k});
+      }
+      return out;
+    }
     if(prefix && prefix.length){
       const mv=movesFromSan(prefix);
       if(mv && mv.length && mv[mv.length-1].fen.split(" ").slice(0,4).join(" ")===fallbackFen.split(" ").slice(0,4).join(" ")){
-        return [{fen:START,last:null}].concat(mv.map(m=>({fen:m.fen,last:[m.from,m.to]})));
+        return [{fen:START,last:null,pi:null,prevPi:null,uci:null,san:null,card:null,ply:0}].concat(mv.map((m,i)=>({fen:m.fen,last:[m.from,m.to],pi:i===mv.length-1?(fallbackPi??null):null,prevPi:null,uci:m.from+m.to+(m.promotion||""),san:m.san,card:null,ply:i+1})));
       }
     }
-    return [{fen:fallbackFen,last:null}];
+    return [{fen:fallbackFen,last:null,pi:fallbackPi??null,prevPi:null,uci:null,san:null,card:null,ply:0}];
   }
   function sessionFrames(run){
     if(!run) return [];
-    if(run.tree) return run.frames||[{fen:POS[run.pos].f,last:null}];
+    if(run.tree) return run.frames||[{fen:POS[run.pos].f,last:null,pi:run.pos,prevPi:null,uci:null,san:null,card:null,ply:0}];
     const ln=LINES[run.line];
     const tip=Math.min(ln.pos.length-1, run.p+(run.justPlayed?1:0));
     const out=[];
     for(let k=0;k<=tip;k++){
       const u=k>0?ln.uci[k-1]:null;
-      out.push({fen:POS[ln.pos[k]].f,last:u?[u.slice(0,2),u.slice(2,4)]:null});
+      out.push({fen:POS[ln.pos[k]].f,last:u?[u.slice(0,2),u.slice(2,4)]:null,pi:ln.pos[k],prevPi:k>0?ln.pos[k-1]:null,uci:u,san:k>0?ln.san[k-1]:null,card:k>0?cardAt(ln,k-1):null,ply:k});
     }
     return out;
   }
@@ -479,13 +487,47 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const ck=checkSq(f.fen); if(ck) sb.mark(ck,"check");
     if(idx===tip){
       run.viewIdx=null;
+      if(run.savedTipCoach){
+        const sc=run.savedTipCoach; run.savedTipCoach=null;
+        $("se-note").hidden=sc.noteHidden; $("se-note-h").textContent=sc.noteHead; $("se-note-t").textContent=sc.noteText;
+        $("se-warn").hidden=sc.warnHidden; $("se-warn").textContent=sc.warnText;
+      }
+      if(run.liveHabitArrows) run.liveHabitArrows.forEach(a=>sb.arrow(a[0],a[1],"#e11d48",{width:15,opacity:0.72,dashed:true}));
       if(run.liveArrow) sb.arrow(run.liveArrow[0],run.liveArrow[1],run.liveArrow[2]);
       if(run.liveHintSq) sb.mark(run.liveHintSq,"hint");
       if(run.awaitingMove){ sb.dests=chessDests(f.fen); sb.movable=ownPiece(f.fen,sb); }
       else sb.movable=()=>false;
     } else {
+      if(!run.savedTipCoach){
+        run.savedTipCoach={
+          noteHidden:$("se-note").hidden,
+          noteHead:$("se-note-h").textContent,
+          noteText:$("se-note-t").textContent,
+          warnHidden:$("se-warn").hidden,
+          warnText:$("se-warn").textContent
+        };
+      }
       run.viewIdx=idx;
       sb.movable=()=>false;
+      const nextF=frames[idx+1]||null;
+      const canShowNext=Boolean(nextF && (!run.awaitingMove || run.teach || idx+1<tip));
+      const curCard=f.card?CARDS[f.card]:null;
+      const nextCard=canShowNext && nextF.card?CARDS[nextF.card]:null;
+      const hereHabits=f.pi!==null&&f.pi!==undefined?habitWarnsAtPos(f.pi):[];
+      const prevHabits=f.prevPi!==null&&f.prevPi!==undefined?habitWarnsAtPos(f.prevPi):[];
+      const oppWarn=f.prevPi!==null&&f.prevPi!==undefined&&f.uci?WARN[f.prevPi+"|"+f.uci]||null:null;
+      if(canShowNext && (nextCard || hereHabits.length)){
+        hereHabits.slice(0,2).forEach(h=>sb.arrow(h.uci.slice(0,2),h.uci.slice(2,4),"#e11d48",{width:15,opacity:0.72,dashed:true}));
+        if(nextF.uci) sb.arrow(nextF.uci.slice(0,2),nextF.uci.slice(2,4),"#1f5f8b");
+      }
+      const noteCard=(curCard&&curCard.n)?curCard:(nextCard&&nextCard.n)?nextCard:null;
+      const viewWarn=curCard
+        ?(prevHabits[0]?.text||oppWarn||null)
+        :(canShowNext?(oppWarn||hereHabits[0]?.text||null):oppWarn);
+      $("se-note").hidden=!noteCard;
+      if(noteCard){ $("se-note-h").textContent="Why "+noteCard.s; $("se-note-t").textContent=noteCard.n; }
+      $("se-warn").hidden=!viewWarn;
+      $("se-warn").textContent=viewWarn||"";
     }
     syncSessionNav();
     renderMini();
@@ -526,15 +568,16 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     updHead();
     if(S.ri>=S.runs.length){ showSummary(false); return; }
     const run=S.runs[S.ri];
-    run.viewIdx=null; run.justPlayed=false; run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
+    run.viewIdx=null; run.savedTipCoach=null; run.justPlayed=false; run.awaitingMove=false; run.liveArrow=null; run.liveHabitArrows=[]; run.liveHintSq=null; run.pendingAdvance=null;
     renderSessionSibs(null);
     if(run.tree){
       const sec=SECBY[run.sec];
       run.pos = run.startPos!==undefined ? run.startPos : sec.start;
       run.color = run.startPos!==undefined ? run.color : sec.color;
-      run.hist=[]; run.prefix = run.startPos!==undefined ? (run.prefixSan||[]) : LINES[sec.lines[0]].san.slice(0,sec.startPly);
+      const prefixLine = run.startPos===undefined && sec && sec.lines.length ? LINES[sec.lines[0]] : null;
+      run.hist=[]; run.prefix = run.startPos!==undefined ? (run.prefixSan||[]) : prefixLine.san.slice(0,sec.startPly);
       run.me = run.color==="w"?"w":"b";
-      run.frames = buildTreeFrames(run.prefix, POS[run.pos].f);
+      run.frames = buildTreeFrames(run.prefix, POS[run.pos].f, prefixLine, prefixLine?sec.startPly:null, run.pos);
       sb.setOrient(run.color==="w"?"w":"b"); sb.clearArrows(); sb.clearMarks();
       const lastF=run.frames[run.frames.length-1];
       sb.set(POS[run.pos].f,{anim:false,last:lastF?lastF.last:null});
@@ -588,7 +631,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   /* line runs */
   function lineStep(){
     if(!S) return; const run=S.run, ln=LINES[run.line];
-    run.viewIdx=null; run.justPlayed=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
+    run.viewIdx=null; run.savedTipCoach=null; run.justPlayed=false; run.liveArrow=null; run.liveHabitArrows=[]; run.liveHintSq=null; run.pendingAdvance=null;
     if(run.p>=ln.uci.length){ run.awaitingMove=false; renderSessionSibs(ln.pos[ln.pos.length-1],null); syncSessionNav(); finishRun(); return; }
     const fen=POS[ln.pos[run.p]].f;
     if(run.p%2!==meIdx(ln)){
@@ -616,9 +659,27 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     }
     return out;
   }
+  function collectLineHabitWarns(run, ln){
+    const posList=ln?ln.pos:(run&&run.frames?run.frames.map(f=>f.pi).filter(pi=>pi!==null&&pi!==undefined):[]);
+    const seen=new Set();
+    const out=[];
+    for(const pi of posList){
+      for(const h of habitWarnsAtPos(pi)){
+        if(!seen.has(h.text)){
+          seen.add(h.text);
+          out.push(h.text);
+          if(out.length>=2) return out.join(" · ");
+        }
+      }
+    }
+    return out.length?out.join(" · "):null;
+  }
+  function findEndedTreeLine(run){
+    return (run.sec && LINES.find(l=>l.sec===run.sec && l.pos[l.pos.length-1]===run.pos)) || LINES.find(l=>l.pos[l.pos.length-1]===run.pos) || null;
+  }
   function askLineMove(){
     const run=S.run, ln=LINES[run.line], pi=ln.pos[run.p], fen=POS[pi].f, c=cardAt(ln,run.p), card=CARDS[c];
-    run.tries=0; run.cur=c; run.hinted=false; run.viewIdx=null; run.awaitingMove=true; run.liveHintSq=null; run.pendingAdvance=null;
+    run.tries=0; run.cur=c; run.hinted=false; run.viewIdx=null; run.savedTipCoach=null; run.awaitingMove=true; run.liveHintSq=null; run.pendingAdvance=null;
     const isNew = status(c)==="new";
     const teach = (run.mode==="learn"&&isNew) || (run.mode==="play"&&isNew);
     run.teach=teach;
@@ -626,11 +687,13 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const coachWarn=run.warn||(teach&&habits.length?habits[0].text:null);
     sb.clearArrows();
     if(teach){
-      habits.slice(0,2).forEach(h=>sb.arrow(h.uci.slice(0,2),h.uci.slice(2,4),"#e11d48",{width:15,opacity:0.72,dashed:true}));
+      run.liveHabitArrows=habits.slice(0,2).map(h=>[h.uci.slice(0,2),h.uci.slice(2,4)]);
+      run.liveHabitArrows.forEach(a=>sb.arrow(a[0],a[1],"#e11d48",{width:15,opacity:0.72,dashed:true}));
       run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#1f5f8b"];
       sb.arrow(...run.liveArrow);
       setCoach({prompt:"New move: "+moveNo(run.p)+card.s,cls:"new",fb:"Play the move or tap › to step forward.",note:card.n,noteHead:"Why "+card.s,warn:coachWarn,acts:[]});
     } else {
+      run.liveHabitArrows=[];
       run.liveArrow=null;
       setCoach({prompt:"Your move",cls:"",fb:run.mode==="recall"?"Play the move you just learned.":"",note:null,warn:run.warn,acts:[
         {label:"Hint",fn:()=>giveHint(1)},{label:"Show move",fn:()=>giveHint(2)} ]});
@@ -646,7 +709,16 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(run.viewIdx!==null) goSessionView(Infinity);
     if(!run.hinted && !run.teach){ run.hinted=true; noteMiss(); }
     if(level===1){ run.liveHintSq=card.u.slice(0,2); sb.clearMarks(); sb.mark(run.liveHintSq,"hint"); setCoach({fb:"This piece moves."}); }
-    else { run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#b0382e"]; sb.clearArrows(); sb.arrow(...run.liveArrow); setCoach({fb:"Play "+esc(card.s)+" or tap ›.",note:card.n,noteHead:"Why "+card.s}); }
+    else {
+      const pi=run.tree?run.pos:LINES[run.line].pos[run.p];
+      const habits=habitWarnsAtPos(pi);
+      run.liveHabitArrows=habits.slice(0,2).map(h=>[h.uci.slice(0,2),h.uci.slice(2,4)]);
+      run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#b0382e"];
+      sb.clearArrows();
+      run.liveHabitArrows.forEach(a=>sb.arrow(a[0],a[1],"#e11d48",{width:15,opacity:0.72,dashed:true}));
+      sb.arrow(...run.liveArrow);
+      setCoach({fb:"Play "+esc(card.s)+" or tap ›.",note:card.n,noteHead:"Why "+card.s,warn:habits.length?habits[0].text:undefined});
+    }
     syncSessionNav();
   }
   function noteMiss(){ const run=S.run; if(run.missed) return; run.missed=true; S.stats.miss++; S.missed.add(run.cur); }
@@ -689,14 +761,19 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   function correct(fen,r){
     const run=S.run, c=run.cur, card=CARDS[c];
+    const piBefore=run.tree?run.pos:LINES[run.line].pos[run.p];
+    const habitsBefore=habitWarnsAtPos(piBefore);
     clearAutoTimer();
-    run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.viewIdx=null; run.pendingAdvance=null;
+    run.awaitingMove=false; run.liveArrow=null; run.liveHabitArrows=[]; run.liveHintSq=null; run.viewIdx=null; run.savedTipCoach=null; run.pendingAdvance=null;
     sb.movable=()=>false; sb.clearArrows(); sb.clearMarks();
     const last=[card.u.slice(0,2),card.u.slice(2,4)];
     sb.set(r.fen,{last,anim:false});
     const ck=checkSq(r.fen); if(ck) sb.mark(ck,"check");
     run.justPlayed=true; run.pendingSan=card.s;
-    if(run.tree && run.frames) run.frames.push({fen:r.fen,last});
+    if(run.tree && run.frames){
+      const nextEd=POS[run.pos]?.e?.find(e=>e[0]===card.u);
+      run.frames.push({fen:r.fen,last,pi:nextEd?nextEd[2]:null,prevPi:run.pos,uci:card.u,san:card.s,card:c,ply:run.frames.length});
+    }
     renderMini();
     S.stats.asked++;
     let shouldGrade;
@@ -714,7 +791,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const advance=()=>{
       clearAutoTimer();
       if(!S||S.run!==run) return;
-      run.justPlayed=false; run.pendingSan=null; run.viewIdx=null; run.pendingAdvance=null;
+      run.justPlayed=false; run.pendingSan=null; run.viewIdx=null; run.savedTipCoach=null; run.pendingAdvance=null;
       if(run.tree){
         run.hist.push(card.s);
         run.pos=POS[run.pos].e.find(e=>e[0]===card.u)[2];
@@ -731,7 +808,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(wasMiss){
       Snd.play("move");
       run.pendingAdvance=advance;
-      setCoach({prompt:card.s,cls:"err",fb:"Got it. This move comes back in 10 minutes.",note:card.n,noteHead:"Why "+card.s,acts:[]});
+      setCoach({prompt:card.s,cls:"err",fb:"Got it. This move comes back in 10 minutes.",note:card.n,noteHead:"Why "+card.s,warn:habitsBefore.length?habitsBefore[0].text:undefined,acts:[]});
       syncSessionNav();
     } else if(run.teach){
       run.pendingAdvance=advance;
@@ -748,11 +825,13 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   function finishRun(){
     clearAutoTimer();
     const run=S.run;
-    run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
+    run.awaitingMove=false; run.liveArrow=null; run.liveHabitArrows=[]; run.liveHintSq=null; run.savedTipCoach=null; run.pendingAdvance=null;
     syncSessionNav();
     if(run.tree){
       S.ri++; updHead();
-      setCoach({prompt:"Line complete",cls:"ok",fb:esc(run.endName||"You reached the end of your repertoire here."),note:(()=>{ const ln=LINES.find(l=>l.pos[l.pos.length-1]===run.pos); return ln?ln.note:null; })(),noteHead:"The plan",warn:null,acts:[
+      const ln=findEndedTreeLine(run);
+      const lineHabitWarn=collectLineHabitWarns(run,ln);
+      setCoach({prompt:"Line complete",cls:"ok",fb:esc(run.endName||"You reached the end of your repertoire here."),note:ln?ln.note:null,noteHead:"The plan",warn:lineHabitWarn,acts:[
         {label:"Play another",primary:true,fn:()=>{ S.runs.push({tree:true,sec:run.sec,startPos:run.startPos,color:run.color,mode:"play"}); startRun(); }},
         {label:"Play on vs engine",fn:()=>sessionToExplore(run.prefix.concat(run.hist),POS[run.pos].f,run.color,openingName(run.pos)||"From your line",true)},
         {label:"Analyze",fn:()=>sessionToExplore(run.prefix.concat(run.hist),POS[run.pos].f,run.color,openingName(run.pos)||"From your line",false)},
@@ -760,28 +839,29 @@ export function startTrainer({ data: D, progress, saveProgress }) {
       return;
     }
     const ln=LINES[run.line];
+    const lineHabitWarn=collectLineHabitWarns(run,ln);
     S.ri++; updHead();
     const isLast=S.ri>=S.runs.length;
     const next=()=>startRun();
     if(run.mode==="learn"){
-      setCoach({prompt:"Line learned",cls:"ok",fb:"Now play it once from memory.",note:ln.note,noteHead:"The plan",acts:[{label:"Play from memory",primary:true,fn:next}]});
+      setCoach({prompt:"Line learned",cls:"ok",fb:"Now play it once from memory.",note:ln.note,noteHead:"The plan",warn:lineHabitWarn,acts:[{label:"Play from memory",primary:true,fn:next}]});
       return;
     }
     const endFen=POS[ln.pos[ln.pos.length-1]].f, lbl=openingName(ln.pos[ln.pos.length-1])||lineLabel(ln);
-    setCoach({prompt:"Line complete",cls:"ok",fb:"",note:ln.note,noteHead:"The plan",acts:[{label:isLast?"See results":"Next line",primary:true,fn:next},
+    setCoach({prompt:"Line complete",cls:"ok",fb:"",note:ln.note,noteHead:"The plan",warn:lineHabitWarn,acts:[{label:isLast?"See results":"Next line",primary:true,fn:next},
       {label:"Play on vs engine",fn:()=>sessionToExplore(ln.san,endFen,ln.color,lbl,true)},
       {label:"Analyze",fn:()=>sessionToExplore(ln.san,endFen,ln.color,lbl,false)}]});
   }
   /* tree (play) runs */
   function treeStep(){
     if(!S) return; const run=S.run, node=POS[run.pos], fen=node.f, stm=sideToMove(fen);
-    run.viewIdx=null; run.justPlayed=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
+    run.viewIdx=null; run.savedTipCoach=null; run.justPlayed=false; run.liveArrow=null; run.liveHabitArrows=[]; run.liveHintSq=null; run.pendingAdvance=null;
     $("se-open").textContent=openingName(run.pos)||$("se-open").textContent;
     renderMini(); syncSessionNav();
     const mine = stm===run.me;
     const inSec = e => !run.sec || e[4].some(li=>LINES[li].sec===run.sec);
     const edges = node.e.filter(e=> (mine ? (e[3]&1)&&!(e[3]&2) : true) && inSec(e));
-    if(!edges.length){ const ln=LINES.find(l=>l.pos[l.pos.length-1]===run.pos); run.endName=ln?"End of "+lineLabel(ln)+".":""; renderSessionSibs(run.pos,null); finishRun(); return; }
+    if(!edges.length){ const ln=findEndedTreeLine(run); run.endName=ln?"End of "+lineLabel(ln)+".":""; renderSessionSibs(run.pos,null); finishRun(); return; }
     if(!mine){
       run.awaitingMove=false;
       sb.movable=()=>false;
@@ -789,7 +869,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
       const ws=edges.map(e=>{ let w=1; subCards(e[2]).forEach(c=>{ const s=status(c); if(s==="due") w+=3; else if(s==="new") w+=1; }); return w; });
       let tot=ws.reduce((a,b)=>a+b,0), r=Math.random()*tot, pick=edges[0];
       for(let i=0;i<edges.length;i++){ r-=ws[i]; if(r<=0){ pick=edges[i]; break; } }
-      setTimeout(()=>{ if(!S||S.run!==run) return; const nextFen=playAuto(fen,pick[0]); run.warn=WARN[run.pos+"|"+pick[0]]||null; run.hist.push(pick[1]); run.pos=pick[2]; if(run.frames) run.frames.push({fen:nextFen,last:[pick[0].slice(0,2),pick[0].slice(2,4)]}); treeStep(); },250);
+      setTimeout(()=>{ if(!S||S.run!==run) return; const prevPi=run.pos; const nextFen=playAuto(fen,pick[0]); run.warn=WARN[prevPi+"|"+pick[0]]||null; run.hist.push(pick[1]); run.pos=pick[2]; if(run.frames) run.frames.push({fen:nextFen,last:[pick[0].slice(0,2),pick[0].slice(2,4)],pi:pick[2],prevPi,uci:pick[0],san:pick[1],card:pick[5]||null,ply:run.frames.length}); treeStep(); },250);
       return;
     }
     const ed=edges[0]; run.cur=ed[5]; run.tries=0; run.hinted=false; run.missed=false; run.awaitingMove=true;
@@ -799,11 +879,13 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const coachWarn=run.warn||(isNew&&habits.length?habits[0].text:null);
     sb.clearArrows();
     if(isNew){
-      habits.slice(0,2).forEach(h=>sb.arrow(h.uci.slice(0,2),h.uci.slice(2,4),"#e11d48",{width:15,opacity:0.72,dashed:true}));
+      run.liveHabitArrows=habits.slice(0,2).map(h=>[h.uci.slice(0,2),h.uci.slice(2,4)]);
+      run.liveHabitArrows.forEach(a=>sb.arrow(a[0],a[1],"#e11d48",{width:15,opacity:0.72,dashed:true}));
       run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#1f5f8b"];
       sb.arrow(...run.liveArrow);
       setCoach({prompt:"New move: "+card.s,cls:"new",fb:"Play the move or tap › to step forward.",note:card.n,noteHead:"Why "+card.s,warn:coachWarn,acts:[]});
     } else {
+      run.liveHabitArrows=[];
       run.liveArrow=null;
       setCoach({prompt:"Your move",cls:"",fb:"",note:null,warn:run.warn,acts:[{label:"Hint",fn:()=>giveHint(1)},{label:"Show move",fn:()=>giveHint(2)}]});
     }

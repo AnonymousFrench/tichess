@@ -528,7 +528,8 @@ export function buildRepertoireFromPgn(
  * Merge `incoming` repertoire into `existing` repertoire, preserving all existing sections,
  * lines, warnings, notes, and card IDs (so SRS review progress stays intact).
  */
-export function mergeRepertoires(existing, incoming, { refreshNotes = false } = {}) {
+export function mergeRepertoires(existing, incoming, { refreshNotes = false, preferIncomingMeta = false } = {}) {
+  const shouldRefresh = Boolean(refreshNotes || preferIncomingMeta);
   if (!existing || !existing.pos?.length || !existing.lines?.length) {
     return structuredClone(incoming);
   }
@@ -627,9 +628,11 @@ export function mergeRepertoires(existing, incoming, { refreshNotes = false } = 
     }
   }
 
-  const existingLineSigs = new Set(
-    out.lines.map((ln) => `${ln.color}|${normalizeFen(out.pos[ln.pos[0]]?.f || START_FEN)}|${ln.uci.join(' ')}`)
-  );
+  const existingLineBySig = new Map();
+  for (const ln of out.lines) {
+    const sig = `${ln.color}|${normalizeFen(out.pos[ln.pos[0]]?.f || START_FEN)}|${ln.uci.join(' ')}`;
+    if (!existingLineBySig.has(sig)) existingLineBySig.set(sig, ln);
+  }
 
   for (const inSec of incoming.secs) {
     const matchKey = `${inSec.color}|${inSec.name.trim().toLowerCase()}`;
@@ -642,23 +645,43 @@ export function mergeRepertoires(existing, incoming, { refreshNotes = false } = 
 
       const startFen = incoming.pos[inLn.pos[0]]?.f || START_FEN;
       const sig = `${inLn.color}|${normalizeFen(startFen)}|${inLn.uci.join(' ')}`;
-      if (existingLineSigs.has(sig)) {
-        if (refreshNotes) {
-          for (let p = 0; p < inLn.uci.length; p++) {
-            const inFrom = inLn.pos[p];
-            const outFrom = ensureOutPos(inLn.color, inFrom);
-            const uci = inLn.uci[p];
-            const inEdge = incoming.pos[inFrom]?.e?.find((e) => e[0] === uci);
-            const inCardId = inEdge?.[5];
-            const outEdge = out.pos[outFrom]?.e?.find((e) => e[0] === uci);
-            if (inCardId && incoming.cards?.[inCardId]?.n && outEdge?.[5] && out.cards[outEdge[5]]) {
-              out.cards[outEdge[5]].n = incoming.cards[inCardId].n;
+      const existingLn = existingLineBySig.get(sig);
+      if (existingLn) {
+        // Enrich matching existing line with newly generated notes, warnings, and theory
+        // so regenerating a Fix repertoire refreshes habit explanations instead of dropping them.
+        for (let p = 0; p < inLn.pos.length && p < existingLn.pos.length; p++) {
+          const inPi = inLn.pos[p];
+          const outPi = existingLn.pos[p];
+          inToOutPos.set(inPi, outPi);
+          const inTh = incoming.theory?.[incoming.pos[inPi]?.t];
+          const curTh = out.theory?.[out.pos[outPi]?.t];
+          if (hasTheoryEngine(inTh) && !hasTheoryEngine(curTh)) {
+            out.pos[outPi].t = mapTheory(incoming.pos[inPi].t);
+          }
+        }
+        for (let p = 0; p < inLn.uci.length && p < existingLn.pos.length; p++) {
+          const inFrom = inLn.pos[p];
+          const outFrom = existingLn.pos[p];
+          const uci = inLn.uci[p];
+          const inEdge = incoming.pos[inFrom]?.e?.find((e) => e[0] === uci);
+          const inCardId = inEdge?.[5];
+          if (inCardId && incoming.cards?.[inCardId]?.n) {
+            const existingEdge = out.pos[outFrom]?.e?.find((e) => e[0] === uci);
+            const outCardId = existingEdge?.[5];
+            if (outCardId && out.cards[outCardId] && (shouldRefresh || !out.cards[outCardId].n)) {
+              out.cards[outCardId].n = incoming.cards[inCardId].n;
             }
           }
+          const inWarn = incoming.warn?.[`${inFrom}|${uci}`];
+          if (inWarn && (shouldRefresh || !out.warn[`${outFrom}|${uci}`])) {
+            out.warn[`${outFrom}|${uci}`] = inWarn;
+          }
+        }
+        if (inLn.note && (shouldRefresh || !existingLn.note)) {
+          existingLn.note = inLn.note;
         }
         continue;
       }
-      existingLineSigs.add(sig);
 
       const outPosIndices = inLn.pos.map((pi) => ensureOutPos(inLn.color, pi));
       const newLineIdx = out.lines.length;
@@ -679,7 +702,7 @@ export function mergeRepertoires(existing, incoming, { refreshNotes = false } = 
           const existingEdge = out.pos[outFrom].e.find((e) => e[0] === uci);
           if (existingEdge?.[5] && out.cards[existingEdge[5]]) {
             outCardId = existingEdge[5];
-            if (incoming.cards[inCardId].n && (refreshNotes || !out.cards[outCardId].n)) {
+            if (incoming.cards[inCardId].n && (shouldRefresh || !out.cards[outCardId].n)) {
               out.cards[outCardId].n = incoming.cards[inCardId].n;
             }
           } else {
@@ -696,7 +719,7 @@ export function mergeRepertoires(existing, incoming, { refreshNotes = false } = 
         }
 
         const inWarn = incoming.warn?.[`${inFrom}|${uci}`];
-        if (inWarn && (refreshNotes || !out.warn[`${outFrom}|${uci}`])) {
+        if (inWarn && (shouldRefresh || !out.warn[`${outFrom}|${uci}`])) {
           out.warn[`${outFrom}|${uci}`] = inWarn;
         }
 
@@ -729,7 +752,7 @@ export function mergeRepertoires(existing, incoming, { refreshNotes = false } = 
       }
 
       const lineNum = targetSec.lines.length + 1;
-      out.lines.push({
+      const newLine = {
         id: `${targetSec.id}${lineNum}`,
         name: inLn.name,
         sec: targetSec.id,
@@ -740,7 +763,9 @@ export function mergeRepertoires(existing, incoming, { refreshNotes = false } = 
         uci: [...inLn.uci],
         pos: outPosIndices,
         alt: Boolean(inLn.alt),
-      });
+      };
+      out.lines.push(newLine);
+      existingLineBySig.set(sig, newLine);
       targetSec.lines.push(newLineIdx);
       addedLineIndices.push(newLineIdx);
     }
@@ -768,8 +793,15 @@ export function mergeRepertoires(existing, incoming, { refreshNotes = false } = 
     if (sep <= 0) continue;
     const inPi = Number(warnKey.slice(0, sep));
     const uci = warnKey.slice(sep + 1);
-    const outPi = inToOutPos.get(inPi);
-    if (outPi !== undefined && uci && (refreshNotes || !out.warn[`${outPi}|${uci}`])) {
+    let outPi = inToOutPos.get(inPi);
+    if (outPi === undefined && incoming.pos?.[inPi]?.f) {
+      const nf = normalizeFen(incoming.pos[inPi].f);
+      const secColor = incoming.secs?.[0]?.color;
+      if (secColor && posKeyToIdx.has(`${secColor}|${nf}`)) {
+        outPi = posKeyToIdx.get(`${secColor}|${nf}`);
+      }
+    }
+    if (outPi !== undefined && uci && (shouldRefresh || !out.warn[`${outPi}|${uci}`])) {
       out.warn[`${outPi}|${uci}`] = warnMsg;
     }
   }

@@ -290,6 +290,10 @@ export async function pullInsightsFromServer({ onBatch, onSources, signal, syncL
     }
   }
 
+  if (pulledCount > 0 && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('tichess:insights-updated', { detail: { pulledCount } }));
+  }
+
   return { ok: true, status: 200, sources: serverSources, accounts: mergedAccounts, pulledCount };
 }
 

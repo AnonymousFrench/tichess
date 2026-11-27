@@ -15,6 +15,12 @@ let gamesPromise = null;
 let cachedAt = 0;
 const CACHE_MS = 60_000;
 
+/** Clear the in-memory IndexedDB cache after background Neon sync saves new games. */
+export function invalidateMyGamesCache() {
+  gamesPromise = null;
+  cachedAt = 0;
+}
+
 /** Lazily load (and briefly cache) the Insights game store. */
 export async function loadMyGames() {
   if (!gamesPromise || Date.now() - cachedAt > CACHE_MS) {
@@ -58,13 +64,24 @@ const resultToWdb = (g) => {
  * Explorer data in the same shape the Lichess explorer returns:
  * { moves: [{san, uci, white, draws, black}], white, draws, black, recentGames }.
  */
-export async function fetchMineExplorer(node, { color = 'white', sinceKey = '' } = {}) {
+export async function fetchMineExplorer(node, { color = 'white', sinceKey = '', maxGames = 'all' } = {}) {
   const path = sanPathTo(node);
-  if (!path) return { moves: [], white: 0, draws: 0, black: 0, recentGames: [], unsupported: true };
+  if (!path) return { moves: [], white: 0, draws: 0, black: 0, recentGames: [], unsupported: true, totalInDb: 0 };
   const all = await loadMyGames();
+  const totalInDb = all.length;
+  if (!totalInDb) {
+    return { moves: [], white: 0, draws: 0, black: 0, recentGames: [], total: 0, totalInDb: 0, sampledGames: 0 };
+  }
   const { sinceMs } = computeSinceFilter(sinceKey);
-  const games = sinceMs ? all.filter((g) => g.t >= sinceMs) : all;
-  const res = explorerNode(games, path, { color: color === 'black' ? 'b' : 'w' });
+  const col = color === 'black' ? 'b' : 'w';
+  let games = all.filter((g) => g.color === col && (!sinceMs || g.t >= sinceMs));
+  if (maxGames && maxGames !== 'all') {
+    const cap = Math.max(1, Number(maxGames) || 200);
+    if (games.length > cap) {
+      games = [...games].sort((a, b) => (b.t || 0) - (a.t || 0)).slice(0, cap);
+    }
+  }
+  const res = explorerNode(games, path, { color: col });
   const fen = node.fen;
   // One pass: White / Draw / Black tallies for each next move.
   const pre = path.join(' ');
@@ -99,7 +116,16 @@ export async function fetchMineExplorer(node, { color = 'white', sinceKey = '' }
     .sort((a, b) => b.t - a.t)
     .slice(0, 20)
     .map((g) => toExplorerGame(g));
-  return { moves, white: totals.w, draws: totals.d, black: totals.b, recentGames, total: res.reached.length };
+  return {
+    moves,
+    white: totals.w,
+    draws: totals.d,
+    black: totals.b,
+    recentGames,
+    total: res.reached.length,
+    sampledGames: games.length,
+    totalInDb,
+  };
 }
 
 function toExplorerGame(g) {

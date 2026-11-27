@@ -62,7 +62,7 @@ import {
   startLivePollTimer,
 } from './live/liveEvents.js';
 import { refreshReferenceExplorer, renderMasterGamesTable } from './explorer/explorer.js';
-import { countMyGames } from './explorer/mineSource.js';
+import { countMyGames, invalidateMyGamesCache } from './explorer/mineSource.js';
 import {
   refreshPlayerScout,
   renderScoutedGamesTable,
@@ -525,7 +525,7 @@ function bindEvents() {
   // Explorers
   const setRefSource = (src) => {
     state.refSource = src;
-    const base = 'px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap';
+    const base = 'px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap shrink-0';
     const inactive = `${base} text-txtMuted hover:text-txt`;
     const mBtn = document.getElementById('refSrcMasters');
     const lBtn = document.getElementById('refSrcLichess');
@@ -552,18 +552,33 @@ function bindEvents() {
       pFilterBar.classList.toggle('hidden', !personal);
       pFilterBar.classList.toggle('flex', personal);
     }
-    document.getElementById('refPlayerMax')?.classList.toggle('hidden', src === 'mine');
+    document.getElementById('refPlayerMax')?.classList.remove('hidden');
     refreshReferenceExplorer();
   };
   document.getElementById('refSrcMasters').onclick = () => setRefSource('masters');
   document.getElementById('refSrcLichess').onclick = () => setRefSource('lichess');
   document.getElementById('refSrcPlayer').onclick = () => setRefSource('player');
   document.getElementById('refSrcMine').onclick = () => setRefSource('mine');
-  countMyGames().then((n) => {
-    const btn = document.getElementById('refSrcMine');
-    if (!btn || !n) return;
-    btn.classList.remove('hidden');
-    btn.title = `Your ${n.toLocaleString('en-US')} games downloaded in Insights (all accounts, works offline)`;
+  const refreshMineTabVisibility = () => {
+    countMyGames().then((n) => {
+      const btn = document.getElementById('refSrcMine');
+      if (!btn) return;
+      const signedIn = Boolean(getCloudSyncState().authenticated);
+      // When signed in, "My Games" already reads directly from the Neon/IndexedDB database,
+      // so hide the duplicate "Mine" button to keep the Explorer header clean.
+      btn.classList.toggle('hidden', signedIn || !n);
+      if (n) {
+        btn.title = `Your ${n.toLocaleString('en-US')} games downloaded in Insights (all accounts, works offline)`;
+      }
+    });
+  };
+  refreshMineTabVisibility();
+  window.addEventListener('tichess:insights-updated', () => {
+    invalidateMyGamesCache();
+    refreshMineTabVisibility();
+    if (state.refSource === 'player' || state.refSource === 'mine') {
+      refreshReferenceExplorer();
+    }
   });
   document.querySelectorAll('.ref-pcol-btn').forEach((b) => {
     b.onclick = () => {
@@ -937,13 +952,28 @@ async function bootstrap() {
     renderCloudSyncUI(snap);
     renderSyncedScoutTargets();
     const pBtn = document.getElementById('refSrcPlayer');
+    const meBtn = document.getElementById('refSrcMine');
+    const signedIn = Boolean(snap.authenticated && snap.user);
     if (pBtn) {
-      const signedIn = Boolean(snap.authenticated && snap.user);
       pBtn.classList.toggle('hidden', !signedIn);
       if (signedIn) {
-        pBtn.title = `Your Lichess games (${snap.user.username})`;
+        pBtn.title = `Your synced games (${snap.user.username})`;
       } else if (state.refSource === 'player') {
         document.getElementById('refSrcMasters')?.click();
+      }
+    }
+    if (meBtn) {
+      if (signedIn) {
+        meBtn.classList.add('hidden');
+        if (state.refSource === 'mine') {
+          document.getElementById('refSrcPlayer')?.click();
+        }
+      } else {
+        countMyGames().then((n) => {
+          if (!getCloudSyncState().authenticated) {
+            meBtn.classList.toggle('hidden', !n);
+          }
+        });
       }
     }
     if (snap.authenticated && !wasAuthenticated) {

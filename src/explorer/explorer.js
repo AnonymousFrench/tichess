@@ -12,7 +12,8 @@ import { fetchExplorer, fetchExplorerGamePgn } from '../api/lichess.js';
 import { getCloudSyncState, getLoginUrl } from '../sync/cloudSync.js';
 import { playMoveOnTree, renderArrows } from '../board/board.js';
 import { addBoardTab } from '../board/tabs.js';
-import { fetchMineExplorer } from './mineSource.js';
+import { fetchMineExplorer, invalidateMyGamesCache } from './mineSource.js';
+import { pullInsightsFromServer } from '../insights/cloudInsights.js';
 
 /** Sources that show the user's own games (results read from their side). */
 const isPersonal = () => state.refSource === 'player' || state.refSource === 'mine';
@@ -94,16 +95,66 @@ export async function refreshReferenceExplorer() {
 
   const sync = getCloudSyncState();
   const tbodyEl = document.getElementById('refTableBody');
+  const activeColor = state.refPlayerColor || 'white';
+  const activeSince = state.refPlayerSince || '';
+  const activeMax = state.refPlayerMax || '200';
+
   if (state.refSource === 'player' && tbodyEl) {
     if (summaryEl) summaryEl.textContent = 'Loading…';
-    tbodyEl.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">Loading ${escapeHtml(sync.user?.username || 'your')} ${state.refPlayerColor === 'black' ? 'Black' : 'White'} games…</td></tr>`;
+    tbodyEl.innerHTML = `<tr><td colspan="3" class="py-5 text-center font-sans text-txtMuted">Loading ${escapeHtml(sync.user?.username || 'your')} ${activeColor === 'black' ? 'Black' : 'White'} games…</td></tr>`;
+
+    // 1. Prefer our synced Insights database (IndexedDB hydrated from Neon) — instant, works offline,
+    //    includes both Lichess and Chess.com games, and never stalls on Lichess rate limits.
+    try {
+      let dbData = await fetchMineExplorer(getActiveTab()?.current, {
+        color: activeColor,
+        sinceKey: activeSince,
+        maxGames: activeMax,
+      });
+      if (reqId !== state.refReqId) return;
+
+      if (!dbData.unsupported && dbData.totalInDb === 0 && sync.authenticated) {
+        const pulled = await pullInsightsFromServer({ syncLocalOnly: false, signal: ctrl.signal }).catch(() => ({
+          ok: false,
+          pulledCount: 0,
+        }));
+        if (reqId !== state.refReqId) return;
+        if (pulled.ok && pulled.pulledCount > 0) {
+          invalidateMyGamesCache();
+          dbData = await fetchMineExplorer(getActiveTab()?.current, {
+            color: activeColor,
+            sinceKey: activeSince,
+            maxGames: activeMax,
+          });
+          if (reqId !== state.refReqId) return;
+        }
+      }
+
+      if (!dbData.unsupported && dbData.totalInDb > 0) {
+        renderRefTable(dbData.moves, {
+          sinceKey: activeSince,
+          maxGames: activeMax,
+          sampledGames: dbData.sampledGames,
+          posTotals: { white: dbData.white, draws: dbData.draws, black: dbData.black },
+        });
+        const fb = getFallbackOpeningForCurrentPosition(fen);
+        setOpeningPill(fb.eco, fb.name);
+        state.mastersGamesCache = dbData.recentGames;
+        renderMasterGamesTable();
+        return;
+      }
+    } catch (_) {
+      if (reqId !== state.refReqId) return;
+      // Fall through to live Lichess explorer fallback if local DB read fails
+    }
   }
 
   if (state.refSource === 'mine' && tbodyEl) {
     try {
       const data = await fetchMineExplorer(getActiveTab()?.current, {
-        color: state.refPlayerColor || 'white',
-        sinceKey: state.refPlayerSince || '',
+        color: activeColor,
+        sinceKey: activeSince,
+        maxGames: activeMax,
       });
       if (reqId !== state.refReqId) return;
       if (data.unsupported) {
@@ -113,7 +164,9 @@ export async function refreshReferenceExplorer() {
         return;
       }
       renderRefTable(data.moves, {
-        sinceKey: state.refPlayerSince || '',
+        sinceKey: activeSince,
+        maxGames: activeMax,
+        sampledGames: data.sampledGames,
         posTotals: { white: data.white, draws: data.draws, black: data.black },
       });
       const fb = getFallbackOpeningForCurrentPosition(fen);

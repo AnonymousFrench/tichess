@@ -441,4 +441,20 @@ test('Lichess token triggers immediate background sync and Insights reuses DB ca
   await expect(page.locator('#hdrRight')).toContainText('3');
   await expect(page.locator('#view')).toContainText('RivalGM');
   expect(directLichessCalls).toBe(0);
+
+  // 4. Studio "My Games" reads directly from the database (no live lichess.org/api/games call),
+  //    hides duplicate "Mine" tab when signed in, and never overlaps on 390px mobile.
+  await page.setViewportSize({ width: 390, height: 780 });
+  await page.goto('/');
+  await expect(page.locator('#refSrcPlayer')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('#refSrcMine')).toBeHidden();
+  await page.click('#refSrcPlayer');
+  await expect(page.locator('#refTableBody')).toContainText('e4');
+  await expect(page.locator('#refTotalGames')).toContainText('2 games');
+  const expHdr = await page.evaluate(() => {
+    const pBtn = document.getElementById('refSrcPlayer').getBoundingClientRect();
+    const tot = document.getElementById('refTotalGames').getBoundingClientRect();
+    return { tabRight: Math.round(pBtn.right), totLeft: Math.round(tot.left) };
+  });
+  expect(expHdr.tabRight).toBeLessThanOrEqual(expHdr.totLeft + 1);
 });

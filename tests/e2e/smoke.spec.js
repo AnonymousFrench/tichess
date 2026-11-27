@@ -818,6 +818,23 @@ test('mobile board moves never scroll the screen, repertoire tree jumps on click
   await expect(page.locator('#se-next')).toBeEnabled();
   await page.click('#se-last');
   await expect(page.locator('#se-next')).toBeDisabled();
+  await page.click('#se-x');
+
+  // Learn session: no Continue button; forward arrow is highlighted and clickable instead of greyed out
+  await page.click('.tabbar button[data-tab="train"]');
+  await page.click('#b-learn');
+  await expect(page.locator('#session')).toBeVisible();
+  await expect(page.locator('#se-prompt')).toContainText('New move', { timeout: 5_000 });
+  await expect(page.locator('#se-cont')).toHaveCount(0);
+  await expect(page.locator('#se-next')).toBeEnabled();
+  await expect(page.locator('#se-next')).toHaveClass(/board-btn-primary/);
+  await page.click('#se-next');
+  await expect(page.locator('#se-prompt')).toContainText('✓');
+  await expect(page.locator('#se-cont')).toHaveCount(0);
+  await expect(page.locator('#se-next')).toBeEnabled();
+  await expect(page.locator('#se-next')).toHaveClass(/board-btn-primary/);
+  await page.click('#se-next');
+  await expect(page.locator('#se-prompt')).toContainText('New move', { timeout: 5_000 });
   expect(pageErrors).toEqual([]);
 });
 

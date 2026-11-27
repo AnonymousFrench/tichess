@@ -356,8 +356,15 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const frames=sessionFrames(run);
     const tip=Math.max(0,frames.length-1);
     const cur=run&&run.viewIdx!==null&&run.viewIdx!==undefined?Math.min(run.viewIdx,tip):tip;
-    $("se-first").disabled=$("se-prev").disabled=!run||cur<=0;
-    $("se-next").disabled=$("se-last").disabled=!run||cur>=tip;
+    const canBack=Boolean(run && cur>0);
+    const canStepFwd=Boolean(run && cur<tip);
+    const canAdvance=Boolean(run && cur===tip && (run.pendingAdvance || run.awaitingMove));
+    const highlightNext=Boolean(run && cur===tip && (run.pendingAdvance || (run.awaitingMove && (run.teach || run.liveArrow))));
+    $("se-first").disabled=$("se-prev").disabled=!canBack;
+    $("se-next").disabled=!(canStepFwd || canAdvance);
+    $("se-next").classList.toggle("board-btn-primary",highlightNext);
+    $("se-next").setAttribute("aria-label",run&&run.pendingAdvance?"Continue to next move":"Next move");
+    $("se-last").disabled=!(canStepFwd || Boolean(run && cur===tip && run.pendingAdvance));
   }
   function goSessionView(targetIdx){
     if(!S||!S.run) return;
@@ -381,17 +388,40 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     syncSessionNav();
     renderMini();
   }
+  function sessionNextAction(){
+    const run=S&&S.run; if(!run) return;
+    const frames=sessionFrames(run), tip=frames.length-1;
+    const cur=run.viewIdx!==null&&run.viewIdx!==undefined?Math.min(run.viewIdx,tip):tip;
+    if(cur<tip){ goSessionView(cur+1); return; }
+    if(run.pendingAdvance){ const fn=run.pendingAdvance; run.pendingAdvance=null; fn(); return; }
+    if(run.awaitingMove){
+      const card=CARDS[run.cur]; if(!card) return;
+      const fen=frames[tip]&&frames[tip].fen; if(!fen) return;
+      if(run.teach || run.liveArrow){
+        const r=tryMove(fen,card.u.slice(0,2),card.u.slice(2,4));
+        if(r) correct(fen,r);
+      } else {
+        giveHint(2);
+      }
+    }
+  }
   $("se-first").onclick=()=>goSessionView(0);
   $("se-prev").onclick=()=>{ const run=S&&S.run; if(!run) return; const tip=sessionFrames(run).length-1; goSessionView((run.viewIdx??tip)-1); };
-  $("se-next").onclick=()=>{ const run=S&&S.run; if(!run) return; const tip=sessionFrames(run).length-1; goSessionView((run.viewIdx??tip)+1); };
-  $("se-last").onclick=()=>goSessionView(Infinity);
+  $("se-next").onclick=sessionNextAction;
+  $("se-last").onclick=()=>{
+    const run=S&&S.run; if(!run) return;
+    const frames=sessionFrames(run), tip=frames.length-1;
+    const cur=run.viewIdx!==null&&run.viewIdx!==undefined?Math.min(run.viewIdx,tip):tip;
+    if(cur<tip){ goSessionView(tip); return; }
+    if(run.pendingAdvance){ const fn=run.pendingAdvance; run.pendingAdvance=null; fn(); }
+  };
   $("se-flip").onclick=()=>{ sb.setOrient(sb.orient==="w"?"b":"w"); };
 
   function startRun(){
     updHead();
     if(S.ri>=S.runs.length){ showSummary(false); return; }
     const run=S.runs[S.ri];
-    run.viewIdx=null; run.justPlayed=false; run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null;
+    run.viewIdx=null; run.justPlayed=false; run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
     if(run.tree){
       const sec=SECBY[run.sec];
       run.pos = run.startPos!==undefined ? run.startPos : sec.start;
@@ -452,7 +482,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   /* line runs */
   function lineStep(){
     if(!S) return; const run=S.run, ln=LINES[run.line];
-    run.viewIdx=null; run.justPlayed=false; run.liveArrow=null; run.liveHintSq=null;
+    run.viewIdx=null; run.justPlayed=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
     if(run.p>=ln.uci.length){ run.awaitingMove=false; syncSessionNav(); finishRun(); return; }
     const fen=POS[ln.pos[run.p]].f;
     if(run.p%2!==meIdx(ln)){
@@ -470,7 +500,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   function askLineMove(){
     const run=S.run, ln=LINES[run.line], fen=POS[ln.pos[run.p]].f, c=cardAt(ln,run.p), card=CARDS[c];
-    run.tries=0; run.cur=c; run.hinted=false; run.viewIdx=null; run.awaitingMove=true; run.liveHintSq=null;
+    run.tries=0; run.cur=c; run.hinted=false; run.viewIdx=null; run.awaitingMove=true; run.liveHintSq=null; run.pendingAdvance=null;
     const isNew = status(c)==="new";
     const teach = (run.mode==="learn"&&isNew) || (run.mode==="play"&&isNew);
     run.teach=teach;
@@ -478,7 +508,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(teach){
       run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#1f5f8b"];
       sb.arrow(...run.liveArrow);
-      setCoach({prompt:"New move: "+moveNo(run.p)+card.s,cls:"new",fb:"Play the arrow move on the board.",note:card.n,noteHead:"Why "+card.s,warn:run.warn,acts:[]});
+      setCoach({prompt:"New move: "+moveNo(run.p)+card.s,cls:"new",fb:"Play the move or tap › to step forward.",note:card.n,noteHead:"Why "+card.s,warn:run.warn,acts:[]});
     } else {
       run.liveArrow=null;
       setCoach({prompt:"Your move",cls:"",fb:run.mode==="recall"?"Play the move you just learned.":"",note:null,warn:run.warn,acts:[
@@ -494,7 +524,8 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(run.viewIdx!==null) goSessionView(Infinity);
     if(!run.hinted && !run.teach){ run.hinted=true; noteMiss(); }
     if(level===1){ run.liveHintSq=card.u.slice(0,2); sb.clearMarks(); sb.mark(run.liveHintSq,"hint"); setCoach({fb:"This piece moves."}); }
-    else { run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#b0382e"]; sb.clearArrows(); sb.arrow(...run.liveArrow); setCoach({fb:"Play "+esc(card.s)+".",note:card.n,noteHead:"Why "+card.s}); }
+    else { run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#b0382e"]; sb.clearArrows(); sb.arrow(...run.liveArrow); setCoach({fb:"Play "+esc(card.s)+" or tap ›.",note:card.n,noteHead:"Why "+card.s}); }
+    syncSessionNav();
   }
   function noteMiss(){ const run=S.run; if(run.missed) return; run.missed=true; S.stats.miss++; S.missed.add(run.cur); }
   function altVerdict(fen,uci){
@@ -522,7 +553,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
       if(v){ setCoach({fb:"Good move ("+fmtEv(v.ev)+"), but not your repertoire move. Try again."}); return; }
       run.tries++; if(!run.teach) noteMiss(); Snd.play("err"); sb.shake();
       sb.mark(from,"bad"); setTimeout(()=>{ if(S&&S.run===run){ sb.mark(from,null); } },700);
-      if(run.teach){ setCoach({fb:"Not that one: follow the arrow."}); return; }
+      if(run.teach){ setCoach({fb:"Not that one: follow the arrow or tap ›."}); return; }
       if(run.tries===1) setCoach({prompt:"Not this one",cls:"err",fb:"Try again, or use a hint."});
       else if(run.tries===2) giveHint(1);
       else giveHint(2);
@@ -530,14 +561,14 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   }
   function correct(fen,r){
     const run=S.run, c=run.cur, card=CARDS[c];
-    run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.viewIdx=null;
+    run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.viewIdx=null; run.pendingAdvance=null;
     sb.movable=()=>false; sb.clearArrows(); sb.clearMarks();
     const last=[card.u.slice(0,2),card.u.slice(2,4)];
     sb.set(r.fen,{last,anim:false});
     const ck=checkSq(r.fen); if(ck) sb.mark(ck,"check");
     run.justPlayed=true; run.pendingSan=card.s;
     if(run.tree && run.frames) run.frames.push({fen:r.fen,last});
-    renderMini(); syncSessionNav();
+    renderMini();
     S.stats.asked++;
     let shouldGrade;
     if(run.teach){ learnCard(c); S.stats.learned++; }
@@ -553,7 +584,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     const wasMiss=run.missed; run.missed=false;
     const advance=()=>{
       if(!S||S.run!==run) return;
-      run.justPlayed=false; run.pendingSan=null; run.viewIdx=null;
+      run.justPlayed=false; run.pendingSan=null; run.viewIdx=null; run.pendingAdvance=null;
       if(run.tree){
         run.hist.push(card.s);
         run.pos=POS[run.pos].e.find(e=>e[0]===card.u)[2];
@@ -569,19 +600,23 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     };
     if(wasMiss){
       Snd.play("move");
-      setCoach({prompt:card.s,cls:"err",fb:"Got it. This move comes back in 10 minutes.",note:card.n,noteHead:"Why "+card.s,acts:[{label:"Continue",primary:true,fn:advance,id:"se-cont"}]});
-      setTimeout(()=>{ const b=$("se-cont"); b&&b.focus(); },50);
+      run.pendingAdvance=advance;
+      setCoach({prompt:card.s,cls:"err",fb:"Got it. This move comes back in 10 minutes.",note:card.n,noteHead:"Why "+card.s,acts:[]});
+      syncSessionNav();
     } else if(run.teach){
-      setCoach({prompt:"✓ "+card.s,cls:"ok",fb:"",note:card.n,noteHead:"Why "+card.s,acts:[{label:"Continue",primary:true,fn:advance,id:"se-cont"}]});
+      run.pendingAdvance=advance;
+      setCoach({prompt:"✓ "+card.s,cls:"ok",fb:"",note:card.n,noteHead:"Why "+card.s,acts:[]});
+      syncSessionNav();
     } else {
       Snd.play("ok");
       setCoach({prompt:"✓ "+card.s,cls:"ok",fb:"",note:SET.notes?card.n:null,noteHead:"Why "+card.s,acts:[]});
+      syncSessionNav();
       setTimeout(advance,SET.notes?300:150);
     }
   }
   function finishRun(){
     const run=S.run;
-    run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null;
+    run.awaitingMove=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
     syncSessionNav();
     if(run.tree){
       S.ri++; updHead();
@@ -608,7 +643,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
   /* tree (play) runs */
   function treeStep(){
     if(!S) return; const run=S.run, node=POS[run.pos], fen=node.f, stm=sideToMove(fen);
-    run.viewIdx=null; run.justPlayed=false; run.liveArrow=null; run.liveHintSq=null;
+    run.viewIdx=null; run.justPlayed=false; run.liveArrow=null; run.liveHintSq=null; run.pendingAdvance=null;
     $("se-open").textContent=openingName(run.pos)||$("se-open").textContent;
     renderMini(); syncSessionNav();
     const mine = stm===run.me;
@@ -632,7 +667,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(isNew){
       run.liveArrow=[card.u.slice(0,2),card.u.slice(2,4),"#1f5f8b"];
       sb.arrow(...run.liveArrow);
-      setCoach({prompt:"New move: "+card.s,cls:"new",fb:"Play the arrow move.",note:card.n,noteHead:"Why "+card.s,warn:run.warn,acts:[]});
+      setCoach({prompt:"New move: "+card.s,cls:"new",fb:"Play the move or tap › to step forward.",note:card.n,noteHead:"Why "+card.s,warn:run.warn,acts:[]});
     } else {
       run.liveArrow=null;
       setCoach({prompt:"Your move",cls:"",fb:"",note:null,warn:run.warn,acts:[{label:"Hint",fn:()=>giveHint(1)},{label:"Show move",fn:()=>giveHint(2)}]});
@@ -803,6 +838,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     if(S && !S.done){
       if(e.key==="ArrowLeft"){ $("se-prev").click(); e.preventDefault(); }
       else if(e.key==="ArrowRight"){ $("se-next").click(); e.preventDefault(); }
+      else if((e.key==="Enter"||e.key===" ") && S.run && S.run.pendingAdvance){ $("se-next").click(); e.preventDefault(); }
       else if(e.key==="Home"){ $("se-first").click(); e.preventDefault(); }
       else if(e.key==="End"){ $("se-last").click(); e.preventDefault(); }
       else if(e.key==="f"||e.key==="F"){ $("se-flip").click(); e.preventDefault(); }

@@ -80,6 +80,15 @@
 .board-btn-em:hover:not(:disabled) {
   background-color: rgba(16, 185, 129, 0.25);
 }
+.board-btn-primary {
+  background-color: #06b6d4;
+  border-color: #06b6d4;
+  color: #04161a;
+}
+.board-btn-primary:hover:not(:disabled) {
+  background-color: #22d3ee;
+  border-color: #22d3ee;
+}
 .board-ico {
   width: 16px;
   height: 16px;

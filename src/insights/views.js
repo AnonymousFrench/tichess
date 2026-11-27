@@ -263,7 +263,7 @@ export function renderOverview(ctx) {
   const change = seriesChange(series);
 
   const kpi = (label, value, sub = '') =>
-    `<div class="min-w-0"><div class="text-[11px] text-txtMuted">${label}</div><div class="text-[24px] font-bold leading-tight tabular-nums">${value}</div><div class="text-[11px] text-txtMuted truncate min-h-[16px]">${sub}</div></div>`;
+    `<div class="min-w-0"><div class="text-[11px] text-txtMuted">${label}</div><div class="text-[24px] font-bold leading-tight tabular-nums">${value}</div><div class="text-[11px] text-txtMuted leading-snug md:truncate min-h-[16px]">${sub}</div></div>`;
 
   const kpis = `<section class="bg-panel border border-borderSubtle rounded-xl p-3 grid gap-3">
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">

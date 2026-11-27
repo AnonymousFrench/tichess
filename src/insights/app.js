@@ -57,6 +57,7 @@ const TABS = [
   ['opponents', 'Opponents'],
   ['progress', 'Progress'],
 ];
+const MOBILE_MORE_TABS = new Set(['games', 'opponents', 'progress']);
 // Views that were merged: old saved tabs and links land on their new home.
 const TAB_ALIAS = { explorer: 'openings', rating: 'progress', activity: 'progress' };
 const AUTO_ADDED_KEY = 'tichess_insights_auto_added_v1';
@@ -283,8 +284,8 @@ function renderHeader() {
 /* Toolbar: tabs + filters                                            */
 /* ------------------------------------------------------------------ */
 
-function segmented(key, items, value, label) {
-  return `<div class="inline-flex p-0.5 rounded-lg bg-surface border border-borderSubtle text-[11px] shrink-0" role="group" aria-label="${label}">${items
+function segmented(key, items, value, label, extraCls = '') {
+  return `<div class="${extraCls || 'inline-flex'} p-0.5 rounded-lg bg-surface border border-borderSubtle text-[11px] shrink-0" role="group" aria-label="${label}">${items
     .map(
       ([v, l]) =>
         `<button data-act="set-filter" data-k="${key}" data-v="${esc(v)}" aria-pressed="${value === v}" class="px-2 py-0.5 rounded-md font-semibold whitespace-nowrap ${value === v ? 'bg-txt text-bg' : 'text-txtMuted hover:text-txt'}">${esc(l)}</button>`
@@ -303,32 +304,75 @@ function renderToolbar() {
   const f = S.ui.filters;
   const moreCount = SECONDARY_FILTERS.filter((k) => f[k] !== 'all').length;
   const anyFilter = Object.entries(f).some(([k, v]) => v !== DEFAULT_UI.filters[k]);
-  tb.innerHTML = `<div class="max-w-[1400px] mx-auto px-3 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-    <nav class="flex items-center gap-0.5 overflow-x-auto -mx-1 px-1 max-w-full" aria-label="Insights views">${TABS.map(
+  const activeMoreTab = MOBILE_MORE_TABS.has(S.ui.tab) ? TABS.find(([id]) => id === S.ui.tab) : null;
+  const mobileSelCls =
+    'md:hidden flex-1 min-w-0 px-2 py-1 rounded-lg border text-[11.5px] font-medium focus:outline-none focus:border-em bg-surface border-borderSubtle text-txt';
+  tb.innerHTML = `<div class="max-w-[1400px] mx-auto px-3 py-1.5 flex flex-col md:flex-row md:flex-wrap md:items-center gap-x-3 gap-y-1.5">
+    <nav class="flex items-center justify-between md:justify-start gap-0.5 w-full md:w-auto" aria-label="Insights views">${TABS.map(
       ([id, label]) =>
-        `<button data-act="tab" data-v="${id}" class="px-2 sm:px-2.5 py-1 rounded-lg text-[12px] font-semibold whitespace-nowrap ${
+        `<button data-act="tab" data-v="${id}" class="${MOBILE_MORE_TABS.has(id) ? 'hidden md:inline-flex' : 'inline-flex'} items-center px-2 sm:px-2.5 py-1 rounded-lg text-[12px] font-semibold whitespace-nowrap ${
           S.ui.tab === id ? 'bg-surface text-txt border border-borderBright' : 'text-txtMuted hover:text-txt border border-transparent'
         }" ${S.ui.tab === id ? 'aria-current="page"' : ''}>${label}</button>`
-    ).join('')}</nav>
-    <div class="flex items-center gap-1.5 overflow-x-auto max-w-full -mx-1 px-1 lg:mx-0 lg:px-0 lg:ml-auto">
-      ${tcsPresent.length > 1 ? segmented('tc', [['all', 'All'], ...tcsPresent.map((t) => [t, TC_LABEL[t]])], f.tc, 'Time control') : ''}
-      ${segmented('color', [['all', 'Both'], ['w', 'White'], ['b', 'Black']], f.color, 'Color')}
+    ).join('')}<button id="btnMoreTabs" data-act="more-tabs" aria-haspopup="menu" class="md:hidden inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[12px] font-semibold whitespace-nowrap ${
+      activeMoreTab ? 'bg-surface text-txt border border-borderBright' : 'text-txtMuted hover:text-txt border border-transparent'
+    }">${activeMoreTab ? esc(activeMoreTab[1]) : 'More'}<span class="text-[10px] opacity-75" aria-hidden="true">▾</span></button></nav>
+    <div id="insFiltersRow" class="flex items-center gap-1.5 w-full md:w-auto md:flex-wrap lg:ml-auto">
+      ${
+        tcsPresent.length > 1
+          ? `<label class="sr-only" for="flt-tc">Time control</label><select id="flt-tc" data-act="filter" data-k="tc" class="${mobileSelCls}">${[
+              ['all', 'All speeds'],
+              ...tcsPresent.map((t) => [t, TC_LABEL[t]]),
+            ]
+              .map(([v, l]) => `<option value="${esc(v)}"${v === f.tc ? ' selected' : ''}>${esc(l)}</option>`)
+              .join('')}</select>`
+          : ''
+      }
+      <label class="sr-only" for="flt-color">Color</label>
+      <select id="flt-color" data-act="filter" data-k="color" class="${mobileSelCls}">${[
+        ['all', 'Both'],
+        ['w', 'White'],
+        ['b', 'Black'],
+      ]
+        .map(([v, l]) => `<option value="${esc(v)}"${v === f.color ? ' selected' : ''}>${esc(l)}</option>`)
+        .join('')}</select>
+      ${tcsPresent.length > 1 ? segmented('tc', [['all', 'All'], ...tcsPresent.map((t) => [t, TC_LABEL[t]])], f.tc, 'Time control', 'hidden md:inline-flex') : ''}
+      ${segmented('color', [['all', 'Both'], ['w', 'White'], ['b', 'Black']], f.color, 'Color', 'hidden md:inline-flex')}
       <label class="sr-only" for="flt-period">Period</label>
-      <select id="flt-period" data-act="filter" data-k="period" class="shrink-0 px-2 py-1 rounded-lg border text-[11.5px] font-medium focus:outline-none focus:border-em bg-surface border-borderSubtle text-txt">${Object.entries(PERIODS)
+      <select id="flt-period" data-act="filter" data-k="period" class="flex-1 min-w-0 md:flex-none md:shrink-0 px-2 py-1 rounded-lg border text-[11.5px] font-medium focus:outline-none focus:border-em bg-surface border-borderSubtle text-txt">${Object.entries(PERIODS)
         .map(([k, v]) => `<option value="${k}"${k === f.period ? ' selected' : ''}>${esc(v.label)}</option>`)
         .join('')}</select>
       <button id="btnMoreFilters" data-act="more-filters" aria-haspopup="dialog" class="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg border text-[11.5px] font-medium ${
         moreCount ? 'bg-em/15 border-em/40 text-em' : 'bg-surface border-borderSubtle text-txt hover:bg-surfaceHover'
       }">Filters${moreCount ? ` <span class="font-mono">${moreCount}</span>` : ''}</button>
-      ${anyFilter ? '<button data-act="clear-filters" class="shrink-0 text-[11px] text-txtMuted hover:text-txt underline">Reset</button>' : ''}
+      ${anyFilter ? '<button data-act="clear-filters" class="hidden md:inline-block shrink-0 text-[11px] text-txtMuted hover:text-txt underline">Reset</button>' : ''}
     </div>
   </div>`;
+}
+
+function openMoreTabs() {
+  const btn = $('btnMoreTabs');
+  const r = btn?.getBoundingClientRect();
+  const right = r ? Math.max(12, window.innerWidth - r.right) : 12;
+  const top = r ? r.bottom + 6 : 92;
+  const items = TABS.filter(([id]) => MOBILE_MORE_TABS.has(id));
+  $('popover').innerHTML = `<div class="fixed inset-0 z-40" data-act="close-popover"></div>
+    <div id="moreTabsMenu" class="fixed z-50 w-44 bg-panel border border-borderBright rounded-xl shadow-2xl p-1 grid gap-0.5" style="top:${top}px;right:${right}px" role="menu" aria-label="More views">
+      ${items
+        .map(
+          ([id, label]) =>
+            `<button type="button" role="menuitem" data-act="tab" data-v="${id}" class="w-full text-left px-2.5 py-2 rounded-lg text-[12.5px] font-semibold flex items-center justify-between ${
+              S.ui.tab === id ? 'bg-surface text-txt' : 'text-txtMuted hover:text-txt hover:bg-surface/60'
+            }"><span>${esc(label)}</span>${S.ui.tab === id ? '<span class="text-em text-[10px]" aria-hidden="true">●</span>' : ''}</button>`
+        )
+        .join('')}
+    </div>`;
 }
 
 function openMoreFilters() {
   const f = S.ui.filters;
   const btn = $('btnMoreFilters');
   const r = btn?.getBoundingClientRect();
+  const anyFilter = Object.entries(f).some(([k, v]) => v !== DEFAULT_UI.filters[k]);
   const sel = (k, opts, label) =>
     `<label class="grid gap-1 text-[11px] text-txtMuted">${label}<select id="flt-${k}" data-act="filter" data-k="${k}" class="px-2 py-1.5 rounded-lg border text-[12px] focus:outline-none focus:border-em ${
       f[k] !== 'all' ? 'bg-em/15 border-em/40 text-em' : 'bg-surface border-borderSubtle text-txt'
@@ -340,6 +384,7 @@ function openMoreFilters() {
       ${sel('opp', [['all', 'Any opponent'], ['higher', 'Stronger (50+ above you)'], ['similar', 'Similar rating'], ['lower', 'Weaker (50+ below you)']], 'Opponent strength')}
       ${sel('rated', [['all', 'Rated and casual'], ['rated', 'Rated only'], ['casual', 'Casual only']], 'Rated')}
       ${S.accounts.length > 1 ? sel('account', [['all', 'All accounts'], ...S.accounts.map((a) => [accountKey(a), a.name])], 'Account') : ''}
+      ${anyFilter ? '<div class="pt-1 border-t border-borderSubtle flex justify-end"><button type="button" data-act="clear-filters" class="text-[11.5px] text-txtMuted hover:text-txt underline">Reset all filters</button></div>' : ''}
     </div>`;
   S.moreOpen = true;
 }
@@ -1065,6 +1110,8 @@ function exportPgn() {
 /* ------------------------------------------------------------------ */
 
 function setTab(tab) {
+  closePopover();
+  S.moreOpen = false;
   S.ui.tab = TAB_ALIAS[tab] || tab;
   saveUi();
   render();
@@ -1092,6 +1139,9 @@ function onClick(e) {
     case 'tab':
       setTab(el.dataset.v);
       break;
+    case 'more-tabs':
+      openMoreTabs();
+      break;
     case 'set-filter':
       ui.filters[el.dataset.k] = ui.filters[el.dataset.k] === el.dataset.v && el.dataset.k !== 'color' ? 'all' : el.dataset.v;
       ui.games.limit = 50;
@@ -1099,6 +1149,8 @@ function onClick(e) {
       render();
       break;
     case 'clear-filters':
+      closePopover();
+      S.moreOpen = false;
       ui.filters = { ...DEFAULT_UI.filters };
       saveUi();
       render();

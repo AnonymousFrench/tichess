@@ -547,6 +547,13 @@ function renderProgressOrPreview(ctx) {
       ${gen.linesPreview
         .map((ln) => {
           const tags = [];
+          if (ln.fixedHabits?.length) {
+            for (const h of ln.fixedHabits.slice(0, 2)) {
+              tags.push(
+                `<span class="px-1.5 py-[1px] rounded bg-am/15 text-am border border-am/30 text-[9.5px] font-semibold">Fixes ${escapeHtml(h.label)} (${h.scorePct}%, ${h.games}g)</span>`
+              );
+            }
+          }
           if (ln.personalLosses > 0) {
             tags.push(
               `<span class="px-1.5 py-[1px] rounded bg-ro/20 text-ro text-[9.5px] font-semibold">Beat you ${ln.personalLosses}×</span>`
@@ -565,7 +572,7 @@ function renderProgressOrPreview(ctx) {
           return `<div class="px-2.5 py-1.5 flex flex-col gap-0.5">
             <div class="flex items-center justify-between gap-2 flex-wrap">
               <span class="text-[11px] font-semibold text-txt">${escapeHtml(ln.name)}</span>
-              <span class="flex items-center gap-1">${tags.join('')}</span>
+              <span class="flex items-center gap-1 flex-wrap">${tags.join('')}</span>
             </div>
             <div class="font-mono text-[11px] text-txtMuted break-words">${escapeHtml(ln.movesText)}</div>
           </div>`;

@@ -11,6 +11,7 @@ import { PREP_DRILL_STORAGE_KEY } from './opponentPrep.js';
 import {
   FLAW_PRESETS,
   formatMoveLabel,
+  createStockfishSession,
   diagnoseFlawPosition,
   generateFlawRepertoire,
 } from './flawGenerator.js';
@@ -20,13 +21,14 @@ const MODAL_ID = 'flawRepertoireModal';
 let modalEl = null;
 let abortCtrl = null;
 let activeCtx = null;
+let elapsedTimer = 0;
 
 function ensureModalMounted() {
   if (modalEl && document.body.contains(modalEl)) return modalEl;
   modalEl = document.createElement('div');
   modalEl.id = MODAL_ID;
   modalEl.className =
-    'hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-[2px] flex items-center justify-center p-2.5 sm:p-4';
+    'hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-[2px] flex items-center justify-center p-2 sm:p-4';
   modalEl.setAttribute('role', 'dialog');
   modalEl.setAttribute('aria-modal', 'true');
   modalEl.setAttribute('aria-label', 'Generate Repertoire from Opening Flaw');
@@ -42,16 +44,45 @@ function ensureModalMounted() {
   return modalEl;
 }
 
+function stopElapsedTimer() {
+  if (elapsedTimer) {
+    clearInterval(elapsedTimer);
+    elapsedTimer = 0;
+  }
+}
+
 export function closeFlawRepertoireModal() {
+  stopElapsedTimer();
   if (abortCtrl) {
     abortCtrl.abort();
     abortCtrl = null;
   }
+  if (activeCtx?.sfSession) {
+    try {
+      activeCtx.sfSession.close();
+    } catch (_) {}
+  }
+  const prevCtx = activeCtx;
   activeCtx = null;
+  if (prevCtx?.onBusyChange) {
+    try {
+      prevCtx.onBusyChange(false);
+    } catch (_) {}
+  }
   if (modalEl) {
     modalEl.classList.add('hidden');
     modalEl.innerHTML = '';
   }
+}
+
+function nextPaint() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => setTimeout(resolve, 0));
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
 }
 
 function buildPrefixMovesFromSan(pathSans, startFen = START_FEN) {
@@ -95,7 +126,11 @@ function findExistingRepMovesAtFen(repertoire, fen) {
 function triggerLabel(ctx) {
   if (ctx.triggerType === 'opponent_reply') {
     const oppColor = ctx.color === 'w' ? 'b' : 'w';
-    return formatMoveLabel(ctx.oppMove?.ply ?? Math.max(0, ctx.ply - 1), oppColor, ctx.oppMove?.san || ctx.flawedSan);
+    return formatMoveLabel(
+      ctx.oppMove?.ply ?? Math.max(0, ctx.ply - 1),
+      oppColor,
+      ctx.oppMove?.san || ctx.flawedSan
+    );
   }
   return formatMoveLabel(ctx.ply, ctx.color, ctx.flawedSan);
 }
@@ -129,6 +164,12 @@ function inferRatingFromGames(games, color) {
   return ratings[Math.floor(ratings.length / 2)];
 }
 
+async function ensureSfSession(ctx) {
+  if (ctx.sfSession) return ctx.sfSession;
+  ctx.sfSession = await createStockfishSession({ multipv: 4 });
+  return ctx.sfSession;
+}
+
 async function runDiagnosis(ctx) {
   if (abortCtrl) abortCtrl.abort();
   const ctrl = new AbortController();
@@ -137,9 +178,16 @@ async function runDiagnosis(ctx) {
   ctx.stage = 'diagnosing';
   ctx.error = '';
   ctx.generated = null;
+  ctx.streamLines = [];
   renderModal(ctx);
+  await nextPaint();
+  if (ctx !== activeCtx || ctrl.signal.aborted) return;
 
   try {
+    ctx.onBusyChange?.(true);
+    const sfSession = await ensureSfSession(ctx);
+    if (ctx !== activeCtx || ctrl.signal.aborted) return;
+
     const res = await diagnoseFlawPosition({
       fen: ctx.fen,
       ply: ctx.ply,
@@ -152,6 +200,7 @@ async function runDiagnosis(ctx) {
       pool: ctx.pool,
       rating: ctx.rating,
       tc: ctx.tc,
+      sfSession,
       signal: ctrl.signal,
     });
     if (ctx !== activeCtx || ctrl.signal.aborted) return;
@@ -201,12 +250,43 @@ async function runGeneration(ctx) {
     return;
   }
 
+  const preset = FLAW_PRESETS[ctx.presetKey] || FLAW_PRESETS.standard;
   ctx.stage = 'generating';
   ctx.error = '';
-  ctx.progress = { step: 0, totalEstimate: 16, label: 'Starting Stockfish & Explorer…' };
+  ctx.generated = null;
+  ctx.streamLines = [];
+  ctx.genStartedAt = Date.now();
+  ctx.progress = {
+    step: 0,
+    linesBuilt: 0,
+    maxLines: preset.maxLines,
+    totalEstimate: preset.maxLines * 2,
+    label: 'Preparing your games & engine…',
+  };
   renderModal(ctx);
+  scrollModalBodyToBottom();
+
+  stopElapsedTimer();
+  elapsedTimer = setInterval(() => {
+    if (ctx !== activeCtx || ctx.stage !== 'generating') {
+      stopElapsedTimer();
+      return;
+    }
+    updateProgressUi(ctx.progress, ctx);
+  }, 500);
+
+  // Guarantee the browser paints the "Generating…" progress bar before any work runs.
+  await nextPaint();
+  if (ctx !== activeCtx || ctrl.signal.aborted) {
+    stopElapsedTimer();
+    return;
+  }
 
   try {
+    ctx.onBusyChange?.(true);
+    const sfSession = await ensureSfSession(ctx);
+    if (ctx !== activeCtx || ctrl.signal.aborted) return;
+
     const result = await generateFlawRepertoire({
       prefixMoves: ctx.prefixMoves,
       startFen: ctx.startFen,
@@ -227,19 +307,34 @@ async function runGeneration(ctx) {
       existingRepertoire: ctx.existingRepertoire,
       personalGames: ctx.personalGames,
       sectionName: ctx.sectionName,
+      sfSession,
       signal: ctrl.signal,
       onProgress: (p) => {
         if (ctx !== activeCtx || ctrl.signal.aborted) return;
         ctx.progress = p;
-        updateProgressUi(p);
+        updateProgressUi(p, ctx);
+      },
+      onLineReady: (lineItem, builtCount, maxLines) => {
+        if (ctx !== activeCtx || ctrl.signal.aborted) return;
+        ctx.streamLines.push(lineItem);
+        ctx.progress = {
+          ...(ctx.progress || {}),
+          linesBuilt: builtCount,
+          maxLines,
+        };
+        appendStreamLineUi(lineItem, builtCount, maxLines);
+        updateProgressUi(ctx.progress, ctx);
       },
     });
     if (ctx !== activeCtx || ctrl.signal.aborted) return;
 
+    stopElapsedTimer();
     ctx.generated = result;
     ctx.stage = 'preview';
     renderModal(ctx);
+    scrollModalBodyToBottom();
   } catch (err) {
+    stopElapsedTimer();
     if (err?.name === 'AbortError' || ctx !== activeCtx) {
       if (ctx === activeCtx) {
         ctx.stage = 'ready';
@@ -250,6 +345,7 @@ async function runGeneration(ctx) {
     ctx.stage = 'ready';
     ctx.error = err?.message || 'Could not generate repertoire lines.';
     renderModal(ctx);
+    scrollModalBodyToBottom();
   }
 }
 
@@ -261,7 +357,7 @@ async function saveGenerated(ctx, { launchDrill = false } = {}) {
   try {
     const existingDoc = await loadRepertoire();
     const merged = existingDoc?.repertoire
-      ? mergeRepertoires(existingDoc.repertoire, ctx.generated.repertoire)
+      ? mergeRepertoires(existingDoc.repertoire, ctx.generated.repertoire, { refreshNotes: true })
       : ctx.generated.repertoire;
     const repName = existingDoc?.name || ctx.generated.sectionName || 'My Repertoire';
     const updatedAt = Date.now();
@@ -305,15 +401,77 @@ async function saveGenerated(ctx, { launchDrill = false } = {}) {
   }
 }
 
-function updateProgressUi(p) {
+function scrollModalBodyToBottom() {
   if (!modalEl) return;
+  const body = modalEl.querySelector('#flawModalBody');
+  if (body) {
+    body.scrollTop = body.scrollHeight;
+  }
+}
+
+function updateProgressUi(p, ctx) {
+  if (!modalEl || !p) return;
   const lbl = modalEl.querySelector('#flawGenProgressLabel');
+  const countEl = modalEl.querySelector('#flawGenProgressCount');
   const bar = modalEl.querySelector('#flawGenProgressBar');
+  const sec = ctx?.genStartedAt ? Math.max(0, Math.floor((Date.now() - ctx.genStartedAt) / 1000)) : 0;
   if (lbl) lbl.textContent = p.label || 'Generating…';
+  if (countEl) {
+    const built = Number(p.linesBuilt) || 0;
+    const max = Number(p.maxLines) || 0;
+    countEl.textContent = max ? `${built}/${max} lines · ${sec}s` : `${sec}s`;
+  }
   if (bar) {
-    const pct = Math.min(95, Math.max(8, Math.round((p.step / Math.max(1, p.totalEstimate)) * 100)));
+    const linePct = p.maxLines ? Math.round(((p.linesBuilt || 0) / p.maxLines) * 90) : 0;
+    const stepPct = Math.round(((p.step || 0) / Math.max(1, p.totalEstimate || 16)) * 88);
+    const pct = Math.min(96, Math.max(10, linePct, stepPct));
     bar.style.width = `${pct}%`;
   }
+}
+
+function renderLinePreviewRow(ln) {
+  const tags = [];
+  if (ln.fixedHabits?.length) {
+    for (const h of ln.fixedHabits.slice(0, 2)) {
+      tags.push(
+        `<span class="px-1.5 py-[1px] rounded bg-am/15 text-am border border-am/30 text-[9.5px] font-semibold">Fixes ${escapeHtml(h.label)} (${h.scorePct}%, ${h.games}g)</span>`
+      );
+    }
+  }
+  if (ln.personalLosses > 0) {
+    tags.push(
+      `<span class="px-1.5 py-[1px] rounded bg-ro/20 text-ro text-[9.5px] font-semibold">Beat you ${ln.personalLosses}×</span>`
+    );
+  }
+  if (ln.oppSharePct) {
+    tags.push(
+      `<span class="px-1.5 py-[1px] rounded bg-surface text-txtMuted text-[9.5px] font-mono">${ln.oppSharePct}% played</span>`
+    );
+  }
+  if (ln.stoppedBy === 'repertoire') {
+    tags.push(
+      `<span class="px-1.5 py-[1px] rounded bg-cy/15 text-cy text-[9.5px] font-semibold">Transposes to your rep</span>`
+    );
+  }
+  return `<div class="px-2.5 py-1.5 flex flex-col gap-0.5">
+    <div class="flex items-center justify-between gap-2 flex-wrap">
+      <span class="text-[11px] font-semibold text-txt">${escapeHtml(ln.name || `Line ${(ln.index ?? 0) + 1}`)}</span>
+      <span class="flex items-center gap-1 flex-wrap">${tags.join('')}</span>
+    </div>
+    <div class="font-mono text-[11px] text-txtMuted break-words">${escapeHtml(ln.movesText)}</div>
+  </div>`;
+}
+
+function appendStreamLineUi(lineItem, builtCount, maxLines) {
+  if (!modalEl) return;
+  const list = modalEl.querySelector('#flawStreamList');
+  if (!list) return;
+  const wrap = modalEl.querySelector('#flawStreamWrap');
+  if (wrap) wrap.classList.remove('hidden');
+  const head = modalEl.querySelector('#flawStreamHead');
+  if (head) head.textContent = `Building lines live (${builtCount}/${maxLines})…`;
+  list.insertAdjacentHTML('beforeend', renderLinePreviewRow(lineItem));
+  list.scrollTop = list.scrollHeight;
 }
 
 function toneClasses(tone) {
@@ -365,7 +523,7 @@ function renderDiagnosisBlock(ctx) {
   const bm = d.bestMove;
   const isOppReply = ctx.triggerType === 'opponent_reply';
 
-  return `<div class="p-3 rounded-lg border ${tc.box} flex flex-col gap-2">
+  return `<div class="p-3 rounded-lg border ${tc.box} flex flex-col gap-1.5">
     <div class="flex items-start justify-between gap-2 flex-wrap">
       <div class="flex items-center gap-1.5 flex-wrap">
         <span class="px-1.5 py-0.5 rounded border font-sans text-[10px] font-bold uppercase tracking-wide ${tc.pill}">${escapeHtml(d.badge)}</span>
@@ -389,7 +547,7 @@ function renderDiagnosisBlock(ctx) {
     ${d.sampleNote ? `<div class="text-[10.5px] text-am bg-am/10 border border-am/25 rounded px-2 py-1">${escapeHtml(d.sampleNote)}</div>` : ''}
     ${
       ctx.existingMoves.length
-        ? `<div class="text-[10.5px] text-cy bg-cy/10 border border-cy/25 rounded px-2 py-1">Already in your saved repertoire here: <b class="font-mono">${escapeHtml(ctx.existingMoves.map((m) => m.san).join(', '))}</b>. Generated lines will merge cleanly alongside your existing prep.</div>`
+        ? `<div class="text-[10.5px] text-cy bg-cy/10 border border-cy/25 rounded px-2 py-1">Already in your saved repertoire (<b class="font-mono">${escapeHtml(ctx.existingMoves.map((m) => m.san).join(', '))}</b>). Regenerating will refresh notes, add your past wrong-move warnings, and expand deeper lines while keeping your SRS progress.</div>`
         : ''
     }
   </div>`;
@@ -514,22 +672,13 @@ function renderConfigBlock(ctx) {
   </div>`;
 }
 
-function renderProgressOrPreview(ctx) {
+function renderStreamingOrPreviewBlock(ctx) {
   if (ctx.stage === 'generating') {
-    const pct = Math.min(
-      95,
-      Math.max(8, Math.round(((ctx.progress?.step || 1) / Math.max(1, ctx.progress?.totalEstimate || 16)) * 100))
-    );
-    return `<div class="p-3 rounded-lg bg-surface/70 border border-borderSubtle flex flex-col gap-2">
-      <div class="flex items-center justify-between gap-2 text-xs">
-        <span class="flex items-center gap-2 text-txt">
-          <span class="w-2 h-2 rounded-full bg-em animate-pulse shrink-0"></span>
-          <span id="flawGenProgressLabel">${escapeHtml(ctx.progress?.label || 'Building lines…')}</span>
-        </span>
-        <button type="button" id="btnFlawCancelGen" class="px-2 py-0.5 rounded bg-ro/15 hover:bg-ro/25 text-ro border border-ro/35 text-[11px] font-semibold">Cancel</button>
-      </div>
-      <div class="w-full h-1.5 rounded-full bg-panel overflow-hidden">
-        <div id="flawGenProgressBar" class="h-full bg-em transition-all duration-200" style="width:${pct}%"></div>
+    const hasStream = ctx.streamLines.length > 0;
+    return `<div id="flawStreamWrap" class="${hasStream ? '' : 'hidden '}p-2.5 rounded-lg bg-surface/60 border border-borderSubtle flex flex-col gap-1.5">
+      <div id="flawStreamHead" class="text-[11px] font-semibold text-em">Building lines live (${ctx.streamLines.length}/${ctx.progress?.maxLines || 10})…</div>
+      <div id="flawStreamList" class="max-h-40 overflow-y-auto divide-y divide-borderSubtle/50 rounded border border-borderSubtle/70 bg-panel/70">
+        ${ctx.streamLines.map((ln) => renderLinePreviewRow(ln)).join('')}
       </div>
     </div>`;
   }
@@ -537,47 +686,40 @@ function renderProgressOrPreview(ctx) {
   const gen = ctx.generated;
   if (!gen) return '';
 
-  return `<div class="p-3 rounded-lg bg-surface/60 border border-em/35 flex flex-col gap-2">
+  return `<div id="flawPreviewBox" class="p-3 rounded-lg bg-surface/60 border border-em/35 flex flex-col gap-2">
     <div class="flex items-center justify-between gap-2 flex-wrap">
-      <div class="text-xs font-semibold text-em">Generated ${gen.stats.lines} line${gen.stats.lines === 1 ? '' : 's'} · ${gen.stats.cards} move card${gen.stats.cards === 1 ? '' : 's'} to learn</div>
+      <div class="text-xs font-semibold text-em">Ready: ${gen.stats.lines} line${gen.stats.lines === 1 ? '' : 's'} · ${gen.stats.cards} move card${gen.stats.cards === 1 ? '' : 's'} to learn</div>
       <span class="text-[10.5px] font-mono text-txtMuted">${escapeHtml(gen.poolLabel || '')}</span>
     </div>
     ${gen.explorerFallbackNote ? `<div class="text-[10.5px] text-am bg-am/10 border border-am/25 rounded px-2 py-1">${escapeHtml(gen.explorerFallbackNote)}</div>` : ''}
-    <div class="max-h-48 overflow-y-auto divide-y divide-borderSubtle/50 rounded border border-borderSubtle/70 bg-panel/70">
-      ${gen.linesPreview
-        .map((ln) => {
-          const tags = [];
-          if (ln.fixedHabits?.length) {
-            for (const h of ln.fixedHabits.slice(0, 2)) {
-              tags.push(
-                `<span class="px-1.5 py-[1px] rounded bg-am/15 text-am border border-am/30 text-[9.5px] font-semibold">Fixes ${escapeHtml(h.label)} (${h.scorePct}%, ${h.games}g)</span>`
-              );
-            }
-          }
-          if (ln.personalLosses > 0) {
-            tags.push(
-              `<span class="px-1.5 py-[1px] rounded bg-ro/20 text-ro text-[9.5px] font-semibold">Beat you ${ln.personalLosses}×</span>`
-            );
-          }
-          if (ln.oppSharePct) {
-            tags.push(
-              `<span class="px-1.5 py-[1px] rounded bg-surface text-txtMuted text-[9.5px] font-mono">${ln.oppSharePct}% played</span>`
-            );
-          }
-          if (ln.stoppedBy === 'repertoire') {
-            tags.push(
-              `<span class="px-1.5 py-[1px] rounded bg-cy/15 text-cy text-[9.5px] font-semibold">Transposes to your rep</span>`
-            );
-          }
-          return `<div class="px-2.5 py-1.5 flex flex-col gap-0.5">
-            <div class="flex items-center justify-between gap-2 flex-wrap">
-              <span class="text-[11px] font-semibold text-txt">${escapeHtml(ln.name)}</span>
-              <span class="flex items-center gap-1 flex-wrap">${tags.join('')}</span>
-            </div>
-            <div class="font-mono text-[11px] text-txtMuted break-words">${escapeHtml(ln.movesText)}</div>
-          </div>`;
-        })
-        .join('')}
+    <div class="max-h-52 overflow-y-auto divide-y divide-borderSubtle/50 rounded border border-borderSubtle/70 bg-panel/70">
+      ${gen.linesPreview.map((ln) => renderLinePreviewRow(ln)).join('')}
+    </div>
+  </div>`;
+}
+
+function renderStickyProgressStrip(ctx) {
+  if (ctx.stage !== 'generating') return '';
+  const p = ctx.progress || {};
+  const sec = ctx.genStartedAt ? Math.max(0, Math.floor((Date.now() - ctx.genStartedAt) / 1000)) : 0;
+  const pct = Math.min(
+    96,
+    Math.max(10, Math.round(((p.step || 1) / Math.max(1, p.totalEstimate || 16)) * 88))
+  );
+  const countTxt = p.maxLines ? `${p.linesBuilt || 0}/${p.maxLines} lines · ${sec}s` : `${sec}s`;
+  return `<div class="px-4 py-2 bg-surface/90 border-t border-em/30 flex flex-col gap-1.5 shrink-0">
+    <div class="flex items-center justify-between gap-2 text-[11.5px]">
+      <span class="flex items-center gap-2 text-txt min-w-0">
+        <span class="w-2 h-2 rounded-full bg-em animate-pulse shrink-0"></span>
+        <span id="flawGenProgressLabel" class="truncate">${escapeHtml(p.label || 'Building lines…')}</span>
+      </span>
+      <span class="flex items-center gap-2 shrink-0">
+        <span id="flawGenProgressCount" class="font-mono text-[10.5px] text-txtMuted">${escapeHtml(countTxt)}</span>
+        <button type="button" id="btnFlawCancelGen" class="px-2 py-0.5 rounded bg-ro/15 hover:bg-ro/25 text-ro border border-ro/35 text-[10.5px] font-semibold">Cancel</button>
+      </span>
+    </div>
+    <div class="w-full h-1.5 rounded-full bg-panel overflow-hidden">
+      <div id="flawGenProgressBar" class="h-full bg-em transition-all duration-200" style="width:${pct}%"></div>
     </div>
   </div>`;
 }
@@ -590,9 +732,10 @@ function renderModal(ctx) {
   const scorePct = Math.round(ctx.flawedStats?.scorePct ?? 0);
   const total = Number(ctx.flawedStats?.total) || 0;
   const busy = ctx.stage === 'diagnosing' || ctx.stage === 'generating' || ctx.saving;
+  const prevScroll = modalEl?.querySelector('#flawModalBody')?.scrollTop || 0;
 
-  host.innerHTML = `<div class="bg-panel border border-borderBright rounded-xl w-full max-w-xl max-h-[92vh] overflow-y-auto p-4 shadow-2xl flex flex-col gap-3">
-    <div class="flex items-start justify-between gap-2">
+  host.innerHTML = `<div class="bg-panel border border-borderBright rounded-xl w-full max-w-xl max-h-[92vh] shadow-2xl flex flex-col overflow-hidden">
+    <div class="px-4 py-3 border-b border-borderSubtle flex items-start justify-between gap-2 shrink-0 bg-panel">
       <div class="min-w-0">
         <h2 class="font-bold text-sm text-txt">${isOppReply ? `Prepare vs ${escapeHtml(flawLbl)} → Generate Repertoire` : 'Learn from Flaw → Generate Repertoire'}</h2>
         <div class="text-[11px] text-txtMuted mt-0.5 truncate">
@@ -602,25 +745,33 @@ function renderModal(ctx) {
           ${ctx.openingName ? `<span> · ${escapeHtml(ctx.openingName)}</span>` : ''}
         </div>
       </div>
-      <button type="button" id="btnFlawClose" class="text-txtMuted hover:text-txt px-1.5 py-0.5 text-sm" aria-label="Close modal">✕</button>
+      <button type="button" id="btnFlawClose" class="text-txtMuted hover:text-txt px-1.5 py-0.5 text-sm shrink-0" aria-label="Close modal">✕</button>
     </div>
 
-    ${renderDiagnosisBlock(ctx)}
-    ${ctx.explorerNote && ctx.stage === 'ready' && !ctx.generated ? `<div class="text-[10.5px] text-txtMuted bg-surface/60 border border-borderSubtle rounded px-2.5 py-1.5">${escapeHtml(ctx.explorerNote)}</div>` : ''}
-    ${ctx.error ? `<div class="text-xs text-ro bg-ro/10 border border-ro/35 rounded-lg px-3 py-2">${escapeHtml(ctx.error)}</div>` : ''}
-    ${renderConfigBlock(ctx)}
-    ${renderProgressOrPreview(ctx)}
+    <div id="flawModalBody" class="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+      ${renderDiagnosisBlock(ctx)}
+      ${ctx.explorerNote && ctx.stage === 'ready' && !ctx.generated ? `<div class="text-[10.5px] text-txtMuted bg-surface/60 border border-borderSubtle rounded px-2.5 py-1.5">${escapeHtml(ctx.explorerNote)}</div>` : ''}
+      ${ctx.error ? `<div class="text-xs text-ro bg-ro/10 border border-ro/35 rounded-lg px-3 py-2">${escapeHtml(ctx.error)}</div>` : ''}
+      ${renderConfigBlock(ctx)}
+      ${renderStreamingOrPreviewBlock(ctx)}
+    </div>
 
-    <div class="flex items-center justify-between gap-2 pt-2 border-t border-borderSubtle flex-wrap">
+    ${renderStickyProgressStrip(ctx)}
+
+    <div class="px-4 py-3 border-t border-borderSubtle bg-panel flex items-center justify-between gap-2 flex-wrap shrink-0">
       <button type="button" id="btnFlawCancel" class="px-3 py-1.5 rounded-md bg-surface hover:bg-surfaceHover border border-borderSubtle text-xs text-txtMuted">Close</button>
       <div class="flex items-center gap-2 flex-wrap">
         ${
           ctx.stage === 'preview' && ctx.generated
             ? `<button type="button" id="btnFlawRegen" ${busy ? 'disabled' : ''} class="px-3 py-1.5 rounded-md bg-surface hover:bg-surfaceHover border border-borderSubtle text-xs font-medium text-txt">Regenerate</button>
-               <button type="button" id="btnFlawSaveOnly" ${busy ? 'disabled' : ''} class="px-3 py-1.5 rounded-md bg-cy/20 hover:bg-cy/30 border border-cy/45 text-cy text-xs font-semibold">Save to Repertoire</button>
+               <button type="button" id="btnFlawSaveOnly" ${busy ? 'disabled' : ''} class="px-3 py-1.5 rounded-md bg-cy/20 hover:bg-cy/30 border border-cy/45 text-cy text-xs font-semibold">Save</button>
                <button type="button" id="btnFlawSaveDrill" ${busy ? 'disabled' : ''} class="px-3.5 py-1.5 rounded-md bg-em hover:bg-emerald-400 text-[#041f15] text-xs font-bold">${ctx.saving ? 'Saving…' : 'Save & Drill Now →'}</button>`
             : `<button type="button" id="btnFlawGenerate" ${busy || !ctx.diagnosis ? 'disabled' : ''} class="px-4 py-1.5 rounded-md bg-em hover:bg-emerald-400 disabled:opacity-50 text-[#041f15] text-xs font-bold">${
-                ctx.stage === 'generating' ? 'Generating…' : 'Generate Repertoire'
+                ctx.stage === 'generating'
+                  ? 'Generating…'
+                  : ctx.existingMoves.length
+                    ? 'Regenerate Repertoire'
+                    : 'Generate Repertoire'
               }</button>`
         }
       </div>
@@ -628,6 +779,8 @@ function renderModal(ctx) {
   </div>`;
 
   host.classList.remove('hidden');
+  const bodyEl = host.querySelector('#flawModalBody');
+  if (bodyEl && prevScroll > 0) bodyEl.scrollTop = prevScroll;
 
   host.querySelector('#btnFlawClose')?.addEventListener('click', closeFlawRepertoireModal);
   host.querySelector('#btnFlawCancel')?.addEventListener('click', closeFlawRepertoireModal);
@@ -714,8 +867,10 @@ export async function openFlawRepertoireModal({
   tc = 'all',
   personalGames = [],
   onSaved = null,
+  onBusyChange = null,
   notify = null,
 }) {
+  if (activeCtx) closeFlawRepertoireModal();
   const normColor = color === 'b' || color === 'black' ? 'b' : 'w';
 
   let resolvedPrefix = Array.isArray(prefixMoves) ? prefixMoves : [];
@@ -769,6 +924,9 @@ export async function openFlawRepertoireModal({
     sectionEdited: false,
     diagnosis: null,
     generated: null,
+    streamLines: [],
+    genStartedAt: 0,
+    sfSession: null,
     explorerNote: '',
     poolLabel: '',
     existingRepertoire,
@@ -779,6 +937,7 @@ export async function openFlawRepertoireModal({
     error: '',
     saving: false,
     onSaved,
+    onBusyChange,
     notify,
   };
 

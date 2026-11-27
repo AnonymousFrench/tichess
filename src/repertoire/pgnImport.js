@@ -528,7 +528,7 @@ export function buildRepertoireFromPgn(
  * Merge `incoming` repertoire into `existing` repertoire, preserving all existing sections,
  * lines, warnings, notes, and card IDs (so SRS review progress stays intact).
  */
-export function mergeRepertoires(existing, incoming) {
+export function mergeRepertoires(existing, incoming, { refreshNotes = false } = {}) {
   if (!existing || !existing.pos?.length || !existing.lines?.length) {
     return structuredClone(incoming);
   }
@@ -642,7 +642,22 @@ export function mergeRepertoires(existing, incoming) {
 
       const startFen = incoming.pos[inLn.pos[0]]?.f || START_FEN;
       const sig = `${inLn.color}|${normalizeFen(startFen)}|${inLn.uci.join(' ')}`;
-      if (existingLineSigs.has(sig)) continue;
+      if (existingLineSigs.has(sig)) {
+        if (refreshNotes) {
+          for (let p = 0; p < inLn.uci.length; p++) {
+            const inFrom = inLn.pos[p];
+            const outFrom = ensureOutPos(inLn.color, inFrom);
+            const uci = inLn.uci[p];
+            const inEdge = incoming.pos[inFrom]?.e?.find((e) => e[0] === uci);
+            const inCardId = inEdge?.[5];
+            const outEdge = out.pos[outFrom]?.e?.find((e) => e[0] === uci);
+            if (inCardId && incoming.cards?.[inCardId]?.n && outEdge?.[5] && out.cards[outEdge[5]]) {
+              out.cards[outEdge[5]].n = incoming.cards[inCardId].n;
+            }
+          }
+        }
+        continue;
+      }
       existingLineSigs.add(sig);
 
       const outPosIndices = inLn.pos.map((pi) => ensureOutPos(inLn.color, pi));
@@ -664,7 +679,7 @@ export function mergeRepertoires(existing, incoming) {
           const existingEdge = out.pos[outFrom].e.find((e) => e[0] === uci);
           if (existingEdge?.[5] && out.cards[existingEdge[5]]) {
             outCardId = existingEdge[5];
-            if (incoming.cards[inCardId].n && !out.cards[outCardId].n) {
+            if (incoming.cards[inCardId].n && (refreshNotes || !out.cards[outCardId].n)) {
               out.cards[outCardId].n = incoming.cards[inCardId].n;
             }
           } else {
@@ -681,7 +696,7 @@ export function mergeRepertoires(existing, incoming) {
         }
 
         const inWarn = incoming.warn?.[`${inFrom}|${uci}`];
-        if (inWarn && !out.warn[`${outFrom}|${uci}`]) {
+        if (inWarn && (refreshNotes || !out.warn[`${outFrom}|${uci}`])) {
           out.warn[`${outFrom}|${uci}`] = inWarn;
         }
 
@@ -754,7 +769,7 @@ export function mergeRepertoires(existing, incoming) {
     const inPi = Number(warnKey.slice(0, sep));
     const uci = warnKey.slice(sep + 1);
     const outPi = inToOutPos.get(inPi);
-    if (outPi !== undefined && uci && !out.warn[`${outPi}|${uci}`]) {
+    if (outPi !== undefined && uci && (refreshNotes || !out.warn[`${outPi}|${uci}`])) {
       out.warn[`${outPi}|${uci}`] = warnMsg;
     }
   }

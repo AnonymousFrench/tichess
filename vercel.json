@@ -100,10 +100,11 @@
       "maxDuration": 30
     }
   },
-  "crons": [
-    {
+  "schedules": {
+    "insights-sync": {
+      "schedule": "0 4 * * *",
       "path": "/api/insights/cron",
-      "schedule": "0 4 * * *"
+      "requestMethod": "GET"
     }
-  ]
+  }
 }

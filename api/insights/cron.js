@@ -22,8 +22,8 @@ export function isCronSecretConfigured(env = process.env) {
 
 /**
  * Authorize scheduled cron runs. Fails closed: the request must carry
- * `Authorization: Bearer <CRON_SECRET>`, which Vercel Cron sends automatically
- * once CRON_SECRET is set. Without a configured secret every call is rejected.
+ * `Authorization: Bearer <CRON_SECRET>`, which the `insights-sync` Vercel Schedule
+ * (a path schedule in vercel.json) sends automatically once CRON_SECRET is set. Without a configured secret every call is rejected.
  * Request headers such as `x-vercel-cron` are never trusted, because any caller
  * can set them.
  */

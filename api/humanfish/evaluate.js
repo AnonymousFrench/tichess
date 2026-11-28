@@ -3,11 +3,27 @@ import { readSessionFromRequest, isSameOriginRequest } from '../_lib/session.js'
 const DEFAULT_UPSTREAM = 'https://humanfish.vercel.app';
 
 /**
- * The proxy is off unless HUMANFISH_ENABLED=true, and even then only serves
- * signed-in users of this site, so it can't be used as an open relay.
+ * The proxy is on unless HUMANFISH_ENABLED=false, and only ever serves
+ * same-origin requests from signed-in users, so it can't be used as an open relay.
  */
 export function isHumanfishApiEnabled(env = process.env) {
-  return String(env?.HUMANFISH_ENABLED || '').trim().toLowerCase() === 'true';
+  return String(env?.HUMANFISH_ENABLED ?? '').trim().toLowerCase() !== 'false';
+}
+
+/**
+ * Anyone can sign in to tichess with Lichess. Set HUMANFISH_ALLOWED_USERS to a
+ * comma-separated list of Lichess usernames to keep the proxy for those accounts only.
+ */
+export function isHumanfishUserAllowed(userId, env = process.env) {
+  const raw = String(env?.HUMANFISH_ALLOWED_USERS ?? '').trim();
+  if (!raw) return true;
+  const allowed = new Set(
+    raw
+      .split(',')
+      .map((u) => u.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  return allowed.has(String(userId || '').toLowerCase());
 }
 const REQUEST_TIMEOUT_MS = 25000;
 const ALLOWED_TC_CATEGORIES = new Set(['classical', 'rapid', 'blitz']);
@@ -78,8 +94,12 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: 'Cross-origin request rejected' });
   }
 
-  if (!readSessionFromRequest(req)) {
+  const user = readSessionFromRequest(req);
+  if (!user) {
     return res.status(401).json({ error: 'Sign in with Lichess to use HumanFish' });
+  }
+  if (!isHumanfishUserAllowed(user.id)) {
+    return res.status(403).json({ error: 'HumanFish is limited to the site owner on this deployment' });
   }
 
   let body = req.body;

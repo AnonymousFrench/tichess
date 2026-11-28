@@ -95,6 +95,7 @@ import {
   bindStudioRepertoireSync,
   renderStudioRepertoirePanel,
   syncRepertoireBoardArrows,
+  openOpponentPrepDrawer,
 } from './repertoire/studioPanel.js';
 import {
   initCloudSync,
@@ -189,6 +190,20 @@ function resetCurrentBoard() {
   state.legalTargets = [];
   emitPositionChanged();
   showToast('New board');
+}
+
+/** `/?panel=prep` (from Insights → Today) opens Opponent Prep in the Repertoire hub. */
+function openPanelFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('panel') !== 'prep') return;
+    url.searchParams.delete('panel');
+    window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+    switchHub('repertoire');
+    openOpponentPrepDrawer();
+  } catch (_) {
+    /* ignore malformed URLs */
+  }
 }
 
 function switchHub(hubName) {
@@ -1041,6 +1056,7 @@ async function bootstrap() {
   await reloadCollections();
   await initStudioRepertoire();
   bindStudioRepertoireSync();
+  openPanelFromUrl();
 
   let wasAuthenticated = false;
   onCloudSyncState((snap) => {

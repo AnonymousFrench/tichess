@@ -91,18 +91,21 @@ test('Insights downloads a Lichess account, explains it, and hands positions to 
     await expect(page.locator('#view')).not.toBeEmpty();
   }
 
-  // Coach: Plan, Diagnostics (ingested from Lichess evals+clocks), and playable Blunder Drill.
+  // Coach: Today, Plan, Diagnostics (ingested from Lichess evals+clocks), and a playable mistake drill.
   await page.click('#toolbar [data-act=tab][data-v=coach]');
+  await expect(page.locator('#view')).toContainText('About 20 minutes');
+  await page.click('[data-act=coach-sub][data-v=plan]');
   await expect(page.locator('#view')).toContainText('Where your +100 Elo comes from');
   await page.click('[data-act=coach-sub][data-v=diagnostics]');
   await expect(page.locator('#view')).toContainText('Accuracy by phase');
   await expect(page.locator('#view')).toContainText('Conversion & resilience');
   await page.click('[data-act=coach-sub][data-v=drills]');
-  await expect(page.locator('#view')).toContainText('Drill your mistakes');
-  // Solve the blunder puzzle by clicking g1 -> f3 (best move for 4.c3?? in the mocked French games).
-  await page.click('[data-act=drill-sq][data-sq=g1]');
-  await page.click('[data-act=drill-sq][data-sq=f3]');
-  await expect(page.locator('#view')).toContainText('✓ Nf3');
+  await expect(page.locator('#view')).toContainText('Mistake drills');
+  await expect(page.locator('#view')).toContainText('Find the best move', { timeout: 30_000 });
+  // Solve the puzzle by clicking g1 -> f3 (best move for 4.c3?? in the mocked French games); Stockfish grades it.
+  await page.click('[data-act=trn-sq][data-sq=g1]');
+  await page.click('[data-act=trn-sq][data-sq=f3]');
+  await expect(page.locator('#view')).toContainText(/Nf3: good|Nf3 works too/, { timeout: 30_000 });
   await page.click('#toolbar [data-act=tab][data-v=overview]');
 
   // A finding leads straight to the games behind it.

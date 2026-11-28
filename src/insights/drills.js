@@ -3,48 +3,20 @@
  * Uses the same Leitner box schedule as src/repertoire/model.js.
  */
 import { Chess } from 'chess.js';
-import { IVL, MISS_DELAY, DAY, MASTERED_BOX } from '../repertoire/model.js';
+import { IVL, MASTERED_BOX } from '../repertoire/model.js';
 import { normalizeCastlingUci } from '../engines/uci.js';
 import { BLUNDER_TAG_LABEL, PHASE_LABEL } from './coach.js';
 
-const STORAGE_KEY = 'tichess_insights_drills_v1';
+export {
+  DRILL_PROGRESS_KEY,
+  loadDrillProgress,
+  saveDrillProgress,
+  recordDrillOutcome,
+} from '../train/progressStore.js';
 
 /** Unique stable ID for a blunder puzzle card. */
 export function drillId(issue) {
   return `${issue.gameId}:${issue.ply}`;
-}
-
-export function loadDrillProgress() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    return raw && typeof raw === 'object' ? raw : {};
-  } catch (_) {
-    return {};
-  }
-}
-
-export function saveDrillProgress(progress) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
-  } catch (_) {
-    /* private mode */
-  }
-}
-
-/** Update a card's Leitner state after an attempt (`ok === true` promotes, `false` resets). */
-export function recordDrillOutcome(progress, id, ok, now = Date.now()) {
-  const prev = progress[id] || { box: 0, due: 0, ok: 0, miss: 0 };
-  const next = { ...prev, last: now };
-  if (ok) {
-    next.box = Math.min(IVL.length - 1, (prev.box || 0) + 1);
-    next.due = now + IVL[next.box] * DAY;
-    next.ok = (prev.ok || 0) + 1;
-  } else {
-    next.box = 0;
-    next.due = now + MISS_DELAY;
-    next.miss = (prev.miss || 0) + 1;
-  }
-  return { ...progress, [id]: next };
 }
 
 /**

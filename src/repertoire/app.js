@@ -584,7 +584,8 @@ export function startTrainer({ data: D, progress, saveProgress }) {
       $("se-line").textContent=sec?sec.name:"From this position"; $("se-open").textContent=openingName(run.pos)||"";
       run.tries=0; S.run=run;
       syncSessionNav();
-      setTimeout(()=>treeStep(),250);
+      // The session may have been closed or moved on before this fires.
+      setTimeout(()=>{ if(S&&S.run===run) treeStep(); },250);
       return;
     }
     const ln=LINES[run.line]; run.p=run.from; run.tries=0; S.run=run;
@@ -595,7 +596,7 @@ export function startTrainer({ data: D, progress, saveProgress }) {
     $("se-open").textContent=openingName(ln.pos[run.p])||"";
     renderMini(); syncSessionNav();
     setCoach({prompt:run.mode==="recall"?"Now from memory":"",fb:"",note:null,warn:null,acts:[]});
-    setTimeout(()=>lineStep(),run.mode==="recall"?700:350);
+    setTimeout(()=>{ if(S&&S.run===run) lineStep(); },run.mode==="recall"?700:350);
   }
   function renderMini(){
     const run=S&&S.run; if(!run) return;

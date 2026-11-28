@@ -1,6 +1,11 @@
 import { getDb, isDbConfigured } from '../_lib/db.js';
 import { readSessionFromRequest, isSameOriginRequest } from '../_lib/session.js';
 import { mergeProgress } from '../../src/repertoire/model.js';
+import {
+  mergeDrillProgress,
+  sanitizeDrillProgress,
+  MAX_DRILL_PROGRESS_BYTES,
+} from '../../src/train/progressStore.js';
 import { ensureSourceInDb } from '../_lib/insightsSync.js';
 
 const MAX_REPERTOIRE_BYTES = 4 * 1024 * 1024;
@@ -71,15 +76,17 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     try {
       const sql = await getDb();
-      const [repRows, progRows, targetRows] = await Promise.all([
+      const [repRows, progRows, targetRows, drillRows] = await Promise.all([
         sql`SELECT name, repertoire_json, updated_at FROM user_repertoires WHERE lichess_id = ${user.id}`,
         sql`SELECT progress_json, updated_at FROM user_progress WHERE lichess_id = ${user.id}`,
         sql`SELECT targets_json, updated_at FROM user_scout_targets WHERE lichess_id = ${user.id}`,
+        sql`SELECT progress_json, updated_at FROM user_drill_progress WHERE lichess_id = ${user.id}`,
       ]);
 
       const repRow = repRows[0] || null;
       const progRow = progRows[0] || null;
       const targetRow = targetRows[0] || null;
+      const drillRow = drillRows[0] || null;
 
       return res.status(200).json({
         user,
@@ -90,6 +97,8 @@ export default async function handler(req, res) {
         progressUpdatedAt: progRow ? Number(progRow.updated_at) || 0 : 0,
         scoutTargets: targetRow ? targetRow.targets_json || [] : [],
         scoutTargetsUpdatedAt: targetRow ? Number(targetRow.updated_at) || 0 : 0,
+        drillProgress: drillRow ? sanitizeDrillProgress(drillRow.progress_json) : {},
+        drillProgressUpdatedAt: drillRow ? Number(drillRow.updated_at) || 0 : 0,
       });
     } catch (err) {
       console.error('[api/sync] GET failed:', err);
@@ -183,6 +192,27 @@ export default async function handler(req, res) {
           updatedAt,
           ...(mergedProg ? { progress: mergedProg } : {}),
         });
+      }
+
+      if (body.type === 'drillProgress') {
+        const incoming = body.drillProgress;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+          return res.status(400).json({ error: 'Missing drill progress object' });
+        }
+        if (JSON.stringify(incoming).length > MAX_DRILL_PROGRESS_BYTES) {
+          return res.status(413).json({ error: 'Drill progress payload too large' });
+        }
+        const existingRows = await sql`
+          SELECT progress_json FROM user_drill_progress WHERE lichess_id = ${user.id}
+        `;
+        const merged = mergeDrillProgress(existingRows[0]?.progress_json || {}, incoming);
+        await sql`
+          INSERT INTO user_drill_progress (lichess_id, progress_json, updated_at)
+          VALUES (${user.id}, ${JSON.stringify(merged)}::jsonb, ${now})
+          ON CONFLICT (lichess_id)
+          DO UPDATE SET progress_json = EXCLUDED.progress_json, updated_at = EXCLUDED.updated_at
+        `;
+        return res.status(200).json({ ok: true, drillProgress: merged, updatedAt: now });
       }
 
       if (body.type === 'scoutTargets') {

@@ -13,19 +13,25 @@ function timingSafeEq(a, b) {
   return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
 }
 
+export const MIN_CRON_SECRET_LENGTH = 16;
+
+/** True when a usable CRON_SECRET (at least 16 characters) is configured. */
+export function isCronSecretConfigured(env = process.env) {
+  return String(env.CRON_SECRET || '').trim().length >= MIN_CRON_SECRET_LENGTH;
+}
+
 /**
- * Authorize scheduled cron runs:
- * - If CRON_SECRET is configured, require `Authorization: Bearer <CRON_SECRET>`.
- * - Otherwise allow Vercel's native `x-vercel-cron` header.
+ * Authorize scheduled cron runs. Fails closed: the request must carry
+ * `Authorization: Bearer <CRON_SECRET>`, which Vercel Cron sends automatically
+ * once CRON_SECRET is set. Without a configured secret every call is rejected.
+ * Request headers such as `x-vercel-cron` are never trusted, because any caller
+ * can set them.
  */
 export function isCronAuthorized(req, env = process.env) {
-  const secret = String(env.CRON_SECRET || '').trim();
+  if (!isCronSecretConfigured(env)) return false;
+  const secret = String(env.CRON_SECRET).trim();
   const authHeader = String(req?.headers?.authorization || '').trim();
-  if (secret) {
-    return timingSafeEq(authHeader, `Bearer ${secret}`);
-  }
-  const vercelCron = String(req?.headers?.['x-vercel-cron'] || '').trim();
-  return vercelCron === '1' || vercelCron.toLowerCase() === 'true';
+  return timingSafeEq(authHeader, `Bearer ${secret}`);
 }
 
 /**
@@ -39,6 +45,11 @@ export default async function handler(req, res) {
   }
 
   if (!isCronAuthorized(req)) {
+    if (!isCronSecretConfigured()) {
+      console.error(
+        `[api/insights/cron] CRON_SECRET is missing or shorter than ${MIN_CRON_SECRET_LENGTH} characters; refusing all cron calls. Set it in Vercel → Settings → Environment Variables.`
+      );
+    }
     return res.status(401).json({ error: 'Unauthorized cron invocation' });
   }
 

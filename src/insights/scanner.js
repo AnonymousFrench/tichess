@@ -72,7 +72,7 @@ function bootWorker(url, threads, timeoutMs = 5000) {
   });
 }
 
-async function createScanWorker() {
+export async function createScanWorker() {
   const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 2 : 2;
   const threads = canUseMt() ? Math.min(2, Math.max(1, cores - 1)) : 1;
   if (threads > 1) {

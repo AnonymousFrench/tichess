@@ -979,7 +979,7 @@ test('configurable panels close/persist/restore, repertoire shows multi-move arr
 test('HumanFish engine tab renders W/D/L odds, Shapley waterfall, calibrated arrows, and 3-segment eval bar', async ({
   page,
 }) => {
-  test.skip(process.env.VITE_HUMANFISH_ENABLED !== 'true', 'HumanFish is disabled in this build');
+  test.skip(process.env.VITE_HUMANFISH_ENABLED === 'false', 'HumanFish is disabled in this build');
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -1093,13 +1093,13 @@ test('Maia 2 runs real quantized ONNX model locally at 1100-2000 Elo and grades 
 
   await page.goto('/');
 
-  // Maia 2 is first and active by default; HumanFish is hidden unless the build enables it
+  // Maia 2 is first and active by default; HumanFish is visible unless the build disables it
   const tabIds = await page
     .locator('[role="tablist"][aria-label="Engine mode"] [role="tab"]')
     .evaluateAll((els) => els.map((e) => e.id));
   expect(tabIds).toEqual(['btnEngineTabMaia', 'btnEngineTabSf', 'btnEngineTabHf']);
   await expect(page.locator('#btnEngineTabMaia')).toHaveAttribute('aria-selected', 'true');
-  if (process.env.VITE_HUMANFISH_ENABLED === 'true') {
+  if (process.env.VITE_HUMANFISH_ENABLED !== 'false') {
     await expect(page.locator('#btnEngineTabHf')).toBeVisible();
   } else {
     await expect(page.locator('#btnEngineTabHf')).toBeHidden();

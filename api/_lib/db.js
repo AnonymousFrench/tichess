@@ -46,6 +46,13 @@ export async function getDb() {
         )
       `;
       await sql`
+        CREATE TABLE IF NOT EXISTS user_drill_progress (
+          lichess_id TEXT PRIMARY KEY REFERENCES users(lichess_id) ON DELETE CASCADE,
+          progress_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+          updated_at BIGINT NOT NULL
+        )
+      `;
+      await sql`
         CREATE TABLE IF NOT EXISTS user_scout_targets (
           lichess_id TEXT PRIMARY KEY REFERENCES users(lichess_id) ON DELETE CASCADE,
           targets_json JSONB NOT NULL DEFAULT '[]'::jsonb,

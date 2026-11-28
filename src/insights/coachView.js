@@ -5,21 +5,20 @@
  * Matches the compact, calm density of views.js: no oversized hero banners or
  * splashy buttons.
  */
-import { Chess } from 'chess.js';
-import { card, relTime, movesText } from './views.js';
+import { card, movesText } from './views.js';
 import { esc, fmtInt, fmtPct, scoreColor, wdlBar } from './charts.js';
 import { miniBoardHtml } from './miniBoard.js';
-import { TC_LABEL } from './normalize.js';
 import {
   gameLengthProfile,
   findOpeningCliffs,
   aggregateDiagnostics,
   buildEloPlan,
-  BLUNDER_TAG_LABEL,
-  PHASE_LABEL,
 } from './coach.js';
-import { extractDrillDeck, nextIntervalLabel } from './drills.js';
+import { extractDrillDeck } from './drills.js';
 import { targetRatingBrackets } from './benchmark.js';
+import { extractBlunderCheckDeck, extractConvertDeck } from '../train/grading.js';
+import { renderTrainCard } from './trainView.js';
+import { renderToday } from './todayView.js';
 
 const empty = (msg) => `<div class="py-6 text-center text-txtMuted text-[11.5px]">${msg}</div>`;
 
@@ -109,9 +108,10 @@ function coachTopBar(ctx, diag, unanalyzedCount) {
   return `<div class="flex flex-wrap items-center justify-between gap-2">
     ${sectionTabs(
       [
+        ['today', 'Today'],
         ['plan', '+100 Elo'],
         ['diagnostics', 'Diagnostics'],
-        ['drills', 'Benchmark & Drills'],
+        ['drills', 'Train'],
       ],
       ui.sub,
       'coach-sub'
@@ -595,107 +595,6 @@ function renderBenchmarkCard(ctx, cliffs, currentRating) {
   });
 }
 
-function renderDrillCard(ctx, deck) {
-  const ds = ctx.drill; // { cardId, selected, status, hint, lastBad, solvedFen, nextBox }
-  const ui = ctx.ui.coach;
-
-  const filterSel = `<div class="flex items-center gap-1.5">
-    <select data-act="coach-drill-filter" aria-label="Filter mistakes" class="px-1.5 py-0.5 rounded-md bg-surface border border-borderSubtle text-[11px] text-txt">
-      <option value="all"${ui.drillTag === 'all' ? ' selected' : ''}>All mistake types</option>
-      ${Object.entries(BLUNDER_TAG_LABEL)
-        .map(([k, v]) => `<option value="${k}"${ui.drillTag === k ? ' selected' : ''}>${esc(v)}</option>`)
-        .join('')}
-    </select>
-    <span class="font-mono text-[10.5px] text-txtMuted">${deck.dueCount} due · ${deck.masteredCount} mastered</span>
-  </div>`;
-
-  if (!deck.cards.length) {
-    return card(
-      'Drill your mistakes',
-      empty(
-        ctx.analysesCount
-          ? 'No drillable mistakes match this filter.'
-          : 'Scan recent games with Stockfish to generate spaced-repetition puzzles from your own blunders.'
-      ),
-      { right: filterSel }
-    );
-  }
-
-  const active = deck.cards.find((c) => c.id === ds.cardId) || deck.cards[0];
-  const cardIdx = deck.cards.indexOf(active);
-  const fen = ds.status === 'solved' && ds.solvedFen ? ds.solvedFen : active.fenBefore;
-  const arrows =
-    ds.status === 'solved' && active.bestUci?.length >= 4
-      ? [{ from: active.bestUci.slice(0, 2), to: active.bestUci.slice(2, 4), weight: 0.9, color: '#10b981' }]
-      : [];
-
-  let promptLine;
-  if (ds.status === 'solved') {
-    const ivl = nextIntervalLabel(ds.nextBox ?? active.box);
-    promptLine = `<div class="text-[11.5px] text-em font-semibold">✓ ${esc(active.bestSan || active.bestUci)} (${esc(active.evalBeforeLabel)}) <span class="text-txtMuted font-normal">· next review in ${esc(ivl)}</span></div>`;
-  } else if (ds.status === 'wrong') {
-    promptLine = `<div class="text-[11.5px] text-ro font-semibold">Not the best move — try again.</div>`;
-  } else {
-    promptLine = `<div class="text-[11.5px] text-txt">${active.color === 'w' ? 'White' : 'Black'} to move · click piece, then target square.</div>`;
-  }
-
-  const hintSq = ds.hint && ds.status !== 'solved' && active.bestUci?.length >= 2 ? active.bestUci.slice(0, 2) : null;
-  const clockNote =
-    active.timeSpent !== null && active.timeSpent !== undefined
-      ? ` · spent ${active.timeSpent}s (${fmtClockSec(active.clockLeft)} left)`
-      : '';
-
-  let turnSide = active.color;
-  let drillDests = null;
-  try {
-    const ch = new Chess(active.fenBefore);
-    turnSide = ch.turn();
-    if (ds.selected && ds.status !== 'solved') {
-      drillDests = ch.moves({ square: ds.selected, verbose: true }).map((m) => m.to);
-    }
-  } catch (_) {}
-
-  const body = `<div class="grid gap-3 sm:grid-cols-[220px_1fr] items-start">
-    <div class="max-w-[240px] w-full">
-      ${miniBoardHtml(fen, {
-        flipped: turnSide === 'b',
-        interactive: ds.status !== 'solved',
-        sqAct: 'drill-sq',
-        selected: ds.selected,
-        dests: drillDests,
-        hint: hintSq,
-        bad: ds.status === 'wrong' ? ds.lastBad : null,
-        arrows,
-      })}
-    </div>
-    <div class="min-w-0 grid gap-2">
-      <div class="flex items-center justify-between gap-2 text-[11px] text-txtMuted">
-        <span><b class="text-txt">vs ${esc(active.op)}</b>${active.opR ? ` (${active.opR})` : ''} · ${esc(TC_LABEL[active.tc] || active.tc)} · ${esc(relTime(active.t, ctx.now))}</span>
-        <span class="font-mono">${cardIdx + 1}/${deck.cards.length}</span>
-      </div>
-      <div class="text-[11px] text-txtMuted">
-        Move ${active.moveNum} (${esc(PHASE_LABEL[active.phase] || active.phase)} · ${esc(active.tagLabel)})${esc(clockNote)}
-      </div>
-      <div class="text-[11.5px]">
-        In game: <span class="font-mono font-semibold text-ro">${esc(active.playedSan)}${active.kind === 'blunder' ? '??' : '?'}</span>
-        <span class="text-txtMuted font-mono text-[10.5px]">(${esc(active.evalBeforeLabel)} → ${esc(active.evalAfterLabel)})</span>
-      </div>
-      ${promptLine}
-      <div class="flex flex-wrap items-center gap-1.5 pt-1">
-        ${ds.status !== 'solved' ? smBtn('Hint', 'data-act="coach-drill-hint"') : ''}
-        ${ds.status !== 'solved' ? smBtn('Solution', 'data-act="coach-drill-solve"') : ''}
-        ${deck.cards.length > 1 ? smBtn(ds.status === 'solved' ? 'Next puzzle' : 'Skip', 'data-act="coach-drill-next"', ds.status === 'solved' ? 'em' : '') : ''}
-        ${linkBtn('Open game', `data-act="open-game" data-id="${esc(active.gameId)}"`)}
-      </div>
-    </div>
-  </div>`;
-
-  return card('Drill your mistakes', body, {
-    sub: 'Spaced-repetition deck from your own blunders (win-drop ≥ 15%).',
-    right: filterSel,
-  });
-}
-
 /* ------------------------------------------------------------------ */
 /* Main Coach Tab Entrypoint                                           */
 /* ------------------------------------------------------------------ */
@@ -713,19 +612,33 @@ export function renderCoach(ctx) {
   ctx.setCoachData({ cliffs, plan, diag });
 
   const top = coachTopBar(ctx, diag, unanalyzedCount);
+
+  // Trainer decks feed both Today and Train.
+  const sub = ctx.ui.coach.sub;
+  let decks = null;
+  if (sub === 'today' || sub === 'drills') {
+    decks = {
+      mistakes: extractDrillDeck(games, ctx.analyses, ctx.drillProgress, {
+        now: ctx.now,
+        tagFilter: ctx.ui.coach.drillTag || 'all',
+      }),
+      blunder: extractBlunderCheckDeck(games, ctx.analyses, ctx.drillProgress, { now: ctx.now }),
+      convert: extractConvertDeck(games, ctx.analyses, ctx.drillProgress, { now: ctx.now }),
+    };
+    ctx.setCoachDeck(decks.mistakes);
+    ctx.setTrainDecks(decks);
+  }
+
   let body;
-  if (ctx.ui.coach.sub === 'diagnostics') {
+  if (sub === 'diagnostics') {
     body = renderDiagnosticsSub(ctx, diag, unanalyzedCount);
-  } else if (ctx.ui.coach.sub === 'drills') {
-    const deck = extractDrillDeck(games, ctx.analyses, ctx.drillProgress, {
-      now: ctx.now,
-      tagFilter: ctx.ui.coach.drillTag || 'all',
-    });
-    ctx.setCoachDeck(deck);
-    body = `<div class="grid gap-3 lg:grid-cols-2 items-start">
+  } else if (sub === 'drills') {
+    body = `<div class="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] items-start">
+      ${renderTrainCard({ ...ctx, train: ctx.getTrain(decks) })}
       ${renderBenchmarkCard(ctx, cliffs, plan.currentRating)}
-      ${renderDrillCard(ctx, deck)}
     </div>`;
+  } else if (sub === 'today') {
+    body = renderToday({ ...ctx, today: ctx.getToday(decks) });
   } else {
     body = renderPlanSub(ctx, plan, diag, cliffs);
   }

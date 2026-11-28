@@ -1,7 +1,6 @@
 /**
  * Insights page controller: accounts, syncing, filters, tabs and actions.
  */
-import { Chess } from 'chess.js';
 import { filterGames, PERIODS, previousPeriodGames } from './stats.js';
 import { TC_LABEL, TIME_CONTROLS, parsePgnGames, guessPgnOwner, normalizePgnGame, TERM_LABEL } from './normalize.js';
 import {
@@ -31,11 +30,20 @@ import { renderCoach } from './coachView.js';
 import { buildLichessGameAnalysis, compareRepertoireToGames } from './coach.js';
 import { scanGamesWithStockfish } from './scanner.js';
 import { fetchPeerBenchmark, clearBenchmarkCache } from './benchmark.js';
-import { loadDrillProgress, saveDrillProgress, recordDrillOutcome, checkDrillAttempt } from './drills.js';
-import { loadRepertoire } from '../repertoire/storage.js';
+import { loadDrillProgress, saveDrillProgress, recordDrillOutcome } from './drills.js';
+import { loadRepertoire, loadProgress as loadRepProgress } from '../repertoire/storage.js';
+import { createTrainer } from '../train/trainer.js';
+import { computeToday, loadReviewedGames, markGameReviewed } from './todayView.js';
 import { openFlawRepertoireModal } from '../repertoire/flawModal.js';
 import { encodeMoveLine } from '../chess/shareUrl.js';
-import { initCloudSync, onCloudSyncState, getCloudSyncState, getLoginUrl } from '../sync/cloudSync.js';
+import {
+  initCloudSync,
+  onCloudSyncState,
+  onCloudDataPulled,
+  getCloudSyncState,
+  getLoginUrl,
+  loadLocalScoutTargets,
+} from '../sync/cloudSync.js';
 import { mountAccount } from '../shared/account.js';
 import {
   pullInsightsFromServer,
@@ -72,7 +80,7 @@ const DEFAULT_UI = {
   openings: { sort: 'played', group: 'family', min: 5 },
   activity: { years: 3 },
   rating: { tc: '', range: '365' },
-  coach: { sub: 'plan', scanCount: 25, phase: '', benchIdx: 0, drillTag: 'all', excluded: [] },
+  coach: { sub: 'today', scanCount: 25, phase: '', benchIdx: 0, drillTag: 'all', excluded: [], trainMode: 'mistakes', maiaElo: 2200 },
 };
 
 function loadUi() {
@@ -128,8 +136,58 @@ const S = {
   benchmark: null,
   benchCtrl: null,
   drillProgress: loadDrillProgress(),
-  drill: { cardId: '', selected: null, status: 'playing', hint: false, lastBad: null, solvedFen: '', nextBox: 0, failedOnce: false },
+  trainDecks: null,
+  pendingTrainCard: '',
 };
+
+const TRAIN_MODE_SET = new Set(['mistakes', 'blunder', 'convert']);
+
+const trainer = createTrainer({
+  onChange: () => {
+    if (S.ui.tab === 'coach' && S.ui.coach.sub === 'drills') render();
+  },
+  onOutcome: (id, ok) => {
+    S.drillProgress = recordDrillOutcome(S.drillProgress, id, ok);
+    saveDrillProgress(S.drillProgress);
+  },
+});
+
+function trainMode() {
+  const m = S.ui.coach.trainMode;
+  return TRAIN_MODE_SET.has(m) ? m : 'mistakes';
+}
+
+/** Keep the trainer on a card from the current deck (runs after render, never inside it). */
+function ensureTrainerCard() {
+  if (S.ui.tab !== 'coach' || S.ui.coach.sub !== 'drills') return;
+  const mode = trainMode();
+  const deck = S.trainDecks?.[mode];
+  if (!deck?.cards?.length) {
+    if (trainer.cardId) {
+      trainer.reset();
+      render();
+    }
+    return;
+  }
+  if (S.pendingTrainCard) {
+    const want = deck.cards.find((c) => c.id === S.pendingTrainCard);
+    S.pendingTrainCard = '';
+    if (want) {
+      trainer.open(mode, want, { maiaElo: S.ui.coach.maiaElo });
+      return;
+    }
+  }
+  if (trainer.mode === mode && deck.cards.some((c) => c.id === trainer.cardId)) return;
+  trainer.open(mode, deck.cards[0], { maiaElo: S.ui.coach.maiaElo });
+}
+
+function trainDeckCard(offset = 0) {
+  const deck = S.trainDecks?.[trainMode()];
+  const cards = deck?.cards || [];
+  if (!cards.length) return null;
+  const i = Math.max(0, cards.findIndex((c) => c.id === trainer.cardId));
+  return cards[(i + offset + cards.length) % cards.length];
+}
 
 function saveUi() {
   try {
@@ -500,7 +558,6 @@ function render() {
     repertoireDiff: S.repertoireDiff,
     scan: S.scan,
     benchmark: S.benchmark,
-    drill: S.drill,
     drillProgress: S.drillProgress,
     setTakeaways: (t) => {
       S.takeaways = t;
@@ -511,6 +568,27 @@ function render() {
     setCoachDeck: (deck) => {
       S.coachDeck = deck;
     },
+    setTrainDecks: (decks) => {
+      S.trainDecks = decks;
+      queueMicrotask(ensureTrainerCard);
+    },
+    getTrain: (decks) => ({
+      mode: trainMode(),
+      decks,
+      view: trainer.view(),
+      drillTag: S.ui.coach.drillTag || 'all',
+    }),
+    getToday: (decks) =>
+      computeToday({
+        repertoire: S.repertoire,
+        repProgress: loadRepProgress(),
+        decks,
+        drillProgress: S.drillProgress,
+        games,
+        reviewed: loadReviewedGames(),
+        scoutTargets: loadLocalScoutTargets(),
+        now: Date.now(),
+      }),
   };
   const renderers = {
     overview: renderOverview,
@@ -730,97 +808,6 @@ async function ensureBenchmarkLoaded(force = false) {
       if (S.ui.tab === 'coach' && S.ui.coach.sub === 'drills') render();
     }
   }
-}
-
-function resetDrill(cardId = '') {
-  S.drill = {
-    cardId,
-    selected: null,
-    status: 'playing',
-    hint: false,
-    lastBad: null,
-    solvedFen: '',
-    nextBox: 0,
-    failedOnce: false,
-  };
-}
-
-function activeDrillCard() {
-  const cards = S.coachDeck?.cards || [];
-  if (!cards.length) return null;
-  return cards.find((c) => c.id === S.drill.cardId) || cards[0];
-}
-
-function handleDrillSquare(sq) {
-  const card = activeDrillCard();
-  if (!card || S.drill.status === 'solved') return;
-  let chess;
-  try {
-    chess = new Chess(card.fenBefore);
-  } catch (_) {
-    return;
-  }
-  const turn = chess.turn();
-  const piece = chess.get(sq);
-  const isOwnPiece = Boolean(piece && piece.color === turn);
-
-  if (!S.drill.selected) {
-    if (isOwnPiece) {
-      S.drill.selected = sq;
-      S.drill.status = 'playing';
-      S.drill.lastBad = null;
-      render();
-    }
-    return;
-  }
-  if (S.drill.selected === sq) {
-    S.drill.selected = null;
-    render();
-    return;
-  }
-  if (isOwnPiece) {
-    S.drill.selected = sq;
-    S.drill.status = 'playing';
-    S.drill.lastBad = null;
-    render();
-    return;
-  }
-
-  const res = checkDrillAttempt(card, S.drill.selected, sq);
-  if (!res.legal) {
-    S.drill.selected = null;
-    render();
-    return;
-  }
-
-  if (res.correct) {
-    const cleanSolve = !S.drill.failedOnce && !S.drill.hint;
-    S.drillProgress = recordDrillOutcome(S.drillProgress, card.id, cleanSolve);
-    saveDrillProgress(S.drillProgress);
-    S.drill = {
-      ...S.drill,
-      cardId: card.id,
-      selected: null,
-      status: 'solved',
-      solvedFen: res.fenAfter,
-      nextBox: S.drillProgress[card.id]?.box || 0,
-      lastBad: null,
-    };
-  } else {
-    if (!S.drill.failedOnce) {
-      S.drillProgress = recordDrillOutcome(S.drillProgress, card.id, false);
-      saveDrillProgress(S.drillProgress);
-    }
-    S.drill = {
-      ...S.drill,
-      cardId: card.id,
-      selected: null,
-      status: 'wrong',
-      lastBad: sq,
-      failedOnce: true,
-    };
-  }
-  render();
 }
 
 function stopSync() {
@@ -1441,60 +1428,67 @@ function onClick(e) {
     case 'coach-drill-open':
       ui.coach.drillTag = 'all';
       ui.coach.sub = 'drills';
-      resetDrill(el.dataset.id || '');
+      ui.coach.trainMode = 'mistakes';
+      S.pendingTrainCard = el.dataset.id || '';
       saveUi();
       render();
       break;
     case 'coach-drill-tag':
       ui.coach.drillTag = el.dataset.tag || 'all';
       ui.coach.sub = 'drills';
-      resetDrill('');
+      ui.coach.trainMode = 'mistakes';
       saveUi();
       render();
       break;
-    case 'coach-drill-hint': {
-      const card = activeDrillCard();
-      if (card) {
-        S.drill.cardId = card.id;
-        S.drill.hint = true;
+    case 'trn-mode':
+      if (TRAIN_MODE_SET.has(el.dataset.v)) {
+        ui.coach.trainMode = el.dataset.v;
+        saveUi();
         render();
       }
       break;
+    case 'trn-sq':
+      trainer.clickSquare(el.dataset.sq);
+      break;
+    case 'trn-hint':
+      trainer.hint();
+      break;
+    case 'trn-reveal':
+      void trainer.reveal();
+      break;
+    case 'trn-retry': {
+      const cur = trainDeckCard(0);
+      if (cur) void trainer.open(trainMode(), cur, { maiaElo: ui.coach.maiaElo });
+      break;
     }
-    case 'coach-drill-solve': {
-      const card = activeDrillCard();
-      if (card && card.bestUci?.length >= 4) {
-        const res = checkDrillAttempt(card, card.bestUci.slice(0, 2), card.bestUci.slice(2, 4));
-        S.drillProgress = recordDrillOutcome(S.drillProgress, card.id, false);
-        saveDrillProgress(S.drillProgress);
-        S.drill = {
-          cardId: card.id,
-          selected: null,
-          status: 'solved',
-          hint: true,
-          lastBad: null,
-          solvedFen: res.fenAfter || card.fenBefore,
-          nextBox: 0,
-          failedOnce: true,
-        };
+    case 'trn-next': {
+      const nxt = trainDeckCard(1);
+      if (nxt) void trainer.open(trainMode(), nxt, { maiaElo: ui.coach.maiaElo });
+      break;
+    }
+    case 'today-go': {
+      const v = el.dataset.v;
+      if (TRAIN_MODE_SET.has(v)) {
+        ui.coach.sub = 'drills';
+        ui.coach.trainMode = v;
+        saveUi();
         render();
+      } else if (v === 'repertoire') {
+        window.location.href = 'repertoire.html';
+      } else if (v === 'prep') {
+        window.location.href = '/?panel=prep';
       }
       break;
     }
-    case 'coach-drill-next': {
-      const cards = S.coachDeck?.cards || [];
-      if (cards.length > 1) {
-        const cur = activeDrillCard();
-        const i = cur ? cards.findIndex((c) => c.id === cur.id) : 0;
-        const next = cards[(i + 1) % cards.length];
-        resetDrill(next.id);
+    case 'today-review': {
+      const g = S.games.get(el.dataset.v);
+      if (g) {
+        markGameReviewed(g.id);
         render();
+        openInStudio(g.moves ? g.moves.split(' ') : [], { flipped: g.color === 'b', title: `vs ${g.op}` });
       }
       break;
     }
-    case 'drill-sq':
-      handleDrillSquare(el.dataset.sq);
-      break;
     default:
       break;
   }
@@ -1531,9 +1525,13 @@ function onChange(e) {
     render();
   } else if (act === 'coach-drill-filter') {
     S.ui.coach.drillTag = el.value || 'all';
-    resetDrill('');
     saveUi();
     render();
+  } else if (act === 'trn-maia-elo') {
+    const elo = Number(el.value) || 2200;
+    S.ui.coach.maiaElo = elo;
+    trainer.setMaiaElo(elo);
+    saveUi();
   } else if (el.id === 'pgnInput') {
     const file = el.files[0];
     el.value = '';
@@ -1645,6 +1643,12 @@ export async function startInsights() {
     if (!S.accounts.length && $('view').querySelector('[data-act="add-account-form"]')) renderOnboarding('');
     if (!bootReady || !snap.authenticated) return;
     void autoAddSignedInAccount(snap);
+  });
+  onCloudDataPulled((changes) => {
+    if (changes?.drillProgressUpdated) {
+      S.drillProgress = loadDrillProgress();
+      render();
+    }
   });
   const snap = await initCloudSync();
   if (snap.authenticated) {

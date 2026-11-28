@@ -1,5 +1,11 @@
 import { mergeProgress } from '../repertoire/model.js';
 import {
+  loadDrillProgress,
+  saveDrillProgress,
+  mergeDrillProgress,
+  onDrillProgressSaved,
+} from '../train/progressStore.js';
+import {
   loadRepertoire,
   saveRepertoire,
   loadProgress,
@@ -181,7 +187,12 @@ export async function syncNow() {
         throw new Error(data?.error || `Sync failed (${status})`);
       }
 
-      const changes = { repertoireUpdated: false, progressUpdated: false, scoutTargetsUpdated: false };
+      const changes = {
+        repertoireUpdated: false,
+        progressUpdated: false,
+        scoutTargetsUpdated: false,
+        drillProgressUpdated: false,
+      };
 
       // 1. Merge SRS progress (most recent review per card always wins)
       const localProg = loadProgress();
@@ -251,11 +262,32 @@ export async function syncNow() {
         });
       }
 
+      // 4. Merge position-trainer progress (mistake drills, blunder checks, conversions)
+      const localDrills = loadDrillProgress();
+      const cloudDrills = data.drillProgress && typeof data.drillProgress === 'object' ? data.drillProgress : {};
+      const mergedDrills = mergeDrillProgress(cloudDrills, localDrills);
+      const mergedDrillsJson = JSON.stringify(mergedDrills);
+      if (mergedDrillsJson !== JSON.stringify(localDrills)) {
+        saveDrillProgress(mergedDrills, { silent: true });
+        changes.drillProgressUpdated = true;
+      }
+      if (mergedDrillsJson !== JSON.stringify(cloudDrills) && Object.keys(mergedDrills).length) {
+        await apiJson('/api/sync', {
+          method: 'PUT',
+          body: JSON.stringify({ type: 'drillProgress', drillProgress: mergedDrills }),
+        });
+      }
+
       syncState.status = 'synced';
       syncState.lastSyncedAt = Date.now();
       lastAutoPullAt = syncState.lastSyncedAt;
       emitState();
-      if (changes.repertoireUpdated || changes.progressUpdated || changes.scoutTargetsUpdated) {
+      if (
+        changes.repertoireUpdated ||
+        changes.progressUpdated ||
+        changes.scoutTargetsUpdated ||
+        changes.drillProgressUpdated
+      ) {
         emitDataPulled(changes);
       }
       return { ok: true, changes };
@@ -339,6 +371,39 @@ export function scheduleProgressSync(progress) {
   }, 1200);
 }
 
+let drillTimer = null;
+
+/**
+ * Debounced push of trainer progress after a drill, blunder check or conversion
+ * (merged server-side by each card's last training time).
+ */
+export function scheduleDrillProgressSync(progress) {
+  if (!syncState.authenticated) return;
+  clearTimeout(drillTimer);
+  drillTimer = setTimeout(async () => {
+    drillTimer = null;
+    if (!syncState.authenticated) return;
+    try {
+      const { ok, data } = await apiJson('/api/sync', {
+        method: 'PUT',
+        body: JSON.stringify({ type: 'drillProgress', drillProgress: progress || loadDrillProgress() }),
+      });
+      if (!ok) throw new Error(data?.error || 'Drill progress sync failed');
+      if (data?.drillProgress) {
+        const merged = mergeDrillProgress(loadDrillProgress(), data.drillProgress);
+        saveDrillProgress(merged, { silent: true });
+      }
+      syncState.lastSyncedAt = Date.now();
+      syncState.error = '';
+      emitState();
+    } catch (err) {
+      syncState.status = typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error';
+      syncState.error = err?.message || 'Drill progress sync failed';
+      emitState();
+    }
+  }, 1500);
+}
+
 function isInsightsPage() {
   return typeof window !== 'undefined' && /\/insights(\.html)?$/i.test(window.location.pathname || '');
 }
@@ -405,6 +470,7 @@ export async function signOutCloudSync() {
     await apiJson('/api/auth/logout', { method: 'POST' });
   } catch (_) {}
   clearTimeout(progressTimer);
+  clearTimeout(drillTimer);
   syncState.authenticated = false;
   syncState.user = null;
   syncState.status = 'idle';
@@ -426,6 +492,7 @@ export async function initCloudSync() {
 
   if (!lifecycleBound && typeof window !== 'undefined') {
     lifecycleBound = true;
+    onDrillProgressSaved((progress) => scheduleDrillProgressSync(progress));
     document.addEventListener('visibilitychange', () => {
       if (
         document.visibilityState === 'visible' &&

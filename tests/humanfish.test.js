@@ -17,6 +17,7 @@ import handler, {
   sanitizeEvaluatePayload,
   resolveHumanfishUpstreamUrl,
   isHumanfishApiEnabled,
+  isHumanfishUserAllowed,
 } from '../api/humanfish/evaluate.js';
 import { isHumanfishEnabled } from '../src/engines/humanfishFlag.js';
 import { createTreeFromPgn } from '../src/chess/tree.js';
@@ -223,23 +224,24 @@ describe('HumanFish off switch', () => {
   }
   const fenBody = { fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1' };
 
-  it('client and API flags default to off', () => {
-    expect(isHumanfishEnabled({})).toBe(false);
+  it('client and API flags default to on and can be switched off', () => {
+    expect(isHumanfishEnabled({})).toBe(true);
     expect(isHumanfishEnabled({ VITE_HUMANFISH_ENABLED: 'false' })).toBe(false);
     expect(isHumanfishEnabled({ VITE_HUMANFISH_ENABLED: 'true' })).toBe(true);
-    expect(isHumanfishApiEnabled({})).toBe(false);
-    expect(isHumanfishApiEnabled({ HUMANFISH_ENABLED: 'TRUE' })).toBe(true);
+    expect(isHumanfishApiEnabled({})).toBe(true);
+    expect(isHumanfishApiEnabled({ HUMANFISH_ENABLED: 'FALSE' })).toBe(false);
   });
 
-  it('returns 404 when disabled, before reaching the upstream server', async () => {
+  it('returns 404 when switched off, before reaching the upstream server', async () => {
     const prev = process.env.HUMANFISH_ENABLED;
-    delete process.env.HUMANFISH_ENABLED;
+    process.env.HUMANFISH_ENABLED = 'false';
     try {
       const res = mockRes();
       await handler({ method: 'POST', headers: {}, body: fenBody }, res);
       expect(res.statusCode).toBe(404);
     } finally {
-      if (prev !== undefined) process.env.HUMANFISH_ENABLED = prev;
+      if (prev === undefined) delete process.env.HUMANFISH_ENABLED;
+      else process.env.HUMANFISH_ENABLED = prev;
     }
   });
 
@@ -261,5 +263,12 @@ describe('HumanFish off switch', () => {
     } finally {
       process.env = prev;
     }
+  });
+
+  it('can be limited to listed Lichess accounts', () => {
+    expect(isHumanfishUserAllowed('anyone', {})).toBe(true);
+    expect(isHumanfishUserAllowed('tibous', { HUMANFISH_ALLOWED_USERS: 'Tibous, other' })).toBe(true);
+    expect(isHumanfishUserAllowed('stranger', { HUMANFISH_ALLOWED_USERS: 'tibous' })).toBe(false);
+    expect(isHumanfishUserAllowed('', { HUMANFISH_ALLOWED_USERS: 'tibous' })).toBe(false);
   });
 });

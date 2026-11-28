@@ -34,6 +34,8 @@ import {
   analyzeOpponentAgainstRepertoire,
 } from './opponentPrep.js';
 import { dbLookupPositionsBatch } from '../db/indexedDb.js';
+import { findOpponentWeakSpots, sanPathLabel, plyMoveLabel } from './opponentWeakSpots.js';
+import { openFlawRepertoireModal } from './flawModal.js';
 import { pushRepertoireToCloud } from '../sync/cloudSync.js';
 import { playMoveOnTree, renderArrows } from '../board/board.js';
 import { addBoardTab } from '../board/tabs.js';
@@ -61,6 +63,8 @@ let prepState = {
   loading: false,
   result: null,
   reqId: 0,
+  weakSpots: null, // null = not computed yet; [] = none found
+  weakLoading: false,
 };
 
 export function getLoadedRepertoireState() {
@@ -469,6 +473,8 @@ export async function runOpponentPrepCheck({ colId = null, userColor = null } = 
 
   const reqId = ++prepState.reqId;
   prepState.loading = true;
+  prepState.weakLoading = true;
+  prepState.weakSpots = null;
   renderStudioRepertoirePanel();
 
   const fens = collectRepertoireOpponentFens(loadedRep.repertoire, targetColor);
@@ -483,6 +489,74 @@ export async function runOpponentPrepCheck({ colId = null, userColor = null } = 
     progress: loadedProg,
   });
   renderStudioRepertoirePanel();
+
+  // Their weak spots: opening moves they keep choosing and score badly with.
+  let spots;
+  try {
+    spots = await findOpponentWeakSpots({
+      lookupBatch: (keys) => dbLookupPositionsBatch(targetColId, keys),
+      normalize: normalizeFen,
+      maxSpots: 12,
+    });
+  } catch (_) {
+    spots = [];
+  }
+  if (reqId !== prepState.reqId) return;
+  prepState.weakLoading = false;
+  prepState.weakSpots = targetColor === 'both' ? spots : spots.filter((sp) => sp.myColor === targetColor);
+  renderStudioRepertoirePanel();
+}
+
+/** Open Opponent Prep from elsewhere (e.g. Insights → Today). */
+export function openOpponentPrepDrawer() {
+  if (!loadedRep?.repertoire) {
+    showToast('Load your repertoire first to prep against an opponent.', true);
+    return;
+  }
+  activeDrawer = 'prep';
+  runOpponentPrepCheck();
+}
+
+function renderWeakSpotsHtml(colName) {
+  if (prepState.weakLoading) {
+    return `<div class="py-1 text-txtMuted font-mono text-[10px]">Looking for ${escapeHtml(colName)}'s weak spots...</div>`;
+  }
+  const spots = prepState.weakSpots;
+  if (!spots) return '';
+  if (!spots.length) {
+    return `<div class="text-[10.5px] text-txtMuted">No clear weak spots yet: no opening move they chose 3+ times scores 40% or less.</div>`;
+  }
+  return `<div class="flex flex-col gap-1">
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-ro">Their weak spots (${spots.length})</div>
+      <div class="divide-y divide-borderSubtle/50 rounded border border-borderSubtle bg-[#0b101b] max-h-[160px] overflow-y-auto">
+        ${spots
+          .map(
+            (sp, i) => `
+          <div class="px-2 py-1.5 flex items-center justify-between gap-2 text-[10.5px]">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5 flex-wrap font-mono">
+                <span class="px-1 py-[0.5px] rounded bg-ro/20 text-ro font-bold">${escapeHtml(plyMoveLabel(sp.ply, sp.moveSan))}</span>
+                <span class="text-txtMuted text-[10px] truncate">after ${escapeHtml(sanPathLabel(sp.pathSans))}</span>
+              </div>
+              <div class="text-[9.5px] text-txtMuted font-mono mt-0.5">
+                ${sp.games} games · they score ${sp.scorePct}% · you play ${sp.myColor === 'w' ? 'White' : 'Black'}
+              </div>
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
+              <button class="rep-weak-board px-2 py-0.5 rounded bg-surface hover:bg-surfaceHover text-txt border border-borderSubtle font-semibold text-[10px]" data-widx="${i}">Board</button>
+              <button class="rep-weak-prep px-2 py-0.5 rounded bg-ro/15 hover:bg-ro/25 text-ro border border-ro/35 font-semibold text-[10px]" data-widx="${i}">Build prep</button>
+            </div>
+          </div>`
+          )
+          .join('')}
+      </div>
+    </div>`;
+}
+
+function weakSpotPgn(spot) {
+  const sans = [...spot.pathSans, spot.moveSan];
+  const movetext = sans.map((m, idx) => (idx % 2 === 0 ? `${Math.floor(idx / 2) + 1}. ${m}` : m)).join(' ');
+  return `[Event "Opponent prep"]\n[Result "*"]\n\n${movetext} *`;
 }
 
 function renderPrepDrawer() {
@@ -614,6 +688,7 @@ function renderPrepDrawer() {
         </div>
       </div>
       ${bodyHtml}
+      ${renderWeakSpotsHtml(activeCol.name)}
     </div>
   `;
 }
@@ -696,6 +771,40 @@ function bindDrawerEvents(host) {
       } catch (_) {}
       window.location.href = 'repertoire.html?prep=1';
     };
+  }
+
+  if (prepState.weakSpots?.length) {
+    host.querySelectorAll('.rep-weak-board').forEach((btn) => {
+      btn.onclick = () => {
+        const sp = prepState.weakSpots[parseInt(btn.dataset.widx, 10)];
+        if (!sp) return;
+        addBoardTab(`Prep vs ${plyMoveLabel(sp.ply, sp.moveSan)}`, weakSpotPgn(sp), null, { jumpEnd: true });
+        showToast(`Loaded ${plyMoveLabel(sp.ply, sp.moveSan)} — their weak move`);
+      };
+    });
+    host.querySelectorAll('.rep-weak-prep').forEach((btn) => {
+      btn.onclick = () => {
+        const sp = prepState.weakSpots[parseInt(btn.dataset.widx, 10)];
+        if (!sp) return;
+        const col = state.collections.find((c) => c.id === prepState.colId);
+        openFlawRepertoireModal({
+          pathSans: [...sp.pathSans, sp.moveSan],
+          color: sp.myColor,
+          flawedUci: '',
+          flawedSan: sp.moveSan,
+          flawedStats: { total: sp.games, scorePct: sp.scorePct },
+          triggerType: 'opponent_reply',
+          oppMove: { uci: sp.moveUci, san: sp.moveSan, ply: sp.pathSans.length },
+          openingName: col ? `Prep vs ${col.name}` : 'Opponent prep',
+          notify: (msg, isErr) => showToast(msg, Boolean(isErr)),
+          onSaved: async () => {
+            try {
+              await initStudioRepertoire();
+            } catch (_) {}
+          },
+        });
+      };
+    });
   }
 
   if (prepState.result?.gaps?.length) {

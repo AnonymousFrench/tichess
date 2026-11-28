@@ -1,4 +1,14 @@
+import { readSessionFromRequest, isSameOriginRequest } from '../_lib/session.js';
+
 const DEFAULT_UPSTREAM = 'https://humanfish.vercel.app';
+
+/**
+ * The proxy is off unless HUMANFISH_ENABLED=true, and even then only serves
+ * signed-in users of this site, so it can't be used as an open relay.
+ */
+export function isHumanfishApiEnabled(env = process.env) {
+  return String(env?.HUMANFISH_ENABLED || '').trim().toLowerCase() === 'true';
+}
 const REQUEST_TIMEOUT_MS = 25000;
 const ALLOWED_TC_CATEGORIES = new Set(['classical', 'rapid', 'blitz']);
 
@@ -58,6 +68,18 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  if (!isHumanfishApiEnabled()) {
+    return res.status(404).json({ error: 'HumanFish is disabled on this deployment' });
+  }
+
+  if (!isSameOriginRequest(req)) {
+    return res.status(403).json({ error: 'Cross-origin request rejected' });
+  }
+
+  if (!readSessionFromRequest(req)) {
+    return res.status(401).json({ error: 'Sign in with Lichess to use HumanFish' });
   }
 
   let body = req.body;

@@ -7,6 +7,7 @@ import {
 } from '../state.js';
 import { playMoveOnTree, renderArrows } from '../board/board.js';
 import { updateEvalBarFromState } from './uci.js';
+import { HUMANFISH_ENABLED } from './humanfishFlag.js';
 import {
   TC_PRESETS,
   extractGameContextFromTab,
@@ -75,7 +76,7 @@ export function getEffectiveHumanfishParams() {
  * Switch the Engine panel between Stockfish ('sf'), Maia 2 ('maia'), and HumanFish ('hf').
  */
 export function setEngineTab(tabName) {
-  const next = tabName === 'hf' ? 'hf' : tabName === 'maia' ? 'maia' : 'sf';
+  const next = tabName === 'hf' && HUMANFISH_ENABLED ? 'hf' : tabName === 'maia' || tabName === 'hf' ? 'maia' : 'sf';
   state.engineTab = next;
 
   const btnSfTab = document.getElementById('btnEngineTabSf');
@@ -114,6 +115,7 @@ export function setEngineTab(tabName) {
       next === 'hf'
         ? 'px-1.5 py-0.5 rounded bg-em/20 text-em border border-em/40 font-bold text-[11px] transition-colors'
         : inactiveCls;
+    btnHfTab.classList.toggle('hidden', !HUMANFISH_ENABLED);
   }
 
   sfControls?.classList.toggle('hidden', next !== 'sf');
@@ -243,6 +245,7 @@ function renderHumanfishHeaderControls() {
 }
 
 export async function triggerHumanfishAnalysis({ force = false } = {}) {
+  if (!HUMANFISH_ENABLED) return;
   const fen = getCurrentFen();
   state.hf.currentFen = fen;
   state.hf.hoverCandidateUci = null;

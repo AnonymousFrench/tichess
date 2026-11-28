@@ -13,10 +13,12 @@ import {
   computeDivergenceInfo,
   formatSignedPp,
 } from '../src/engines/humanfishMath.js';
-import {
+import handler, {
   sanitizeEvaluatePayload,
   resolveHumanfishUpstreamUrl,
+  isHumanfishApiEnabled,
 } from '../api/humanfish/evaluate.js';
+import { isHumanfishEnabled } from '../src/engines/humanfishFlag.js';
 import { createTreeFromPgn } from '../src/chess/tree.js';
 
 describe('HumanFish math and context extraction', () => {
@@ -208,5 +210,56 @@ describe('HumanFish API proxy validation', () => {
     expect(resolveHumanfishUpstreamUrl({ HUMANFISH_API_URL: 'http://localhost:8842/' })).toBe(
       'http://localhost:8842'
     );
+  });
+});
+
+describe('HumanFish off switch', () => {
+  function mockRes() {
+    const res = { statusCode: 0, body: null, headers: {} };
+    res.status = (c) => ((res.statusCode = c), res);
+    res.json = (b) => ((res.body = b), res);
+    res.setHeader = (k, v) => (res.headers[k] = v);
+    return res;
+  }
+  const fenBody = { fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1' };
+
+  it('client and API flags default to off', () => {
+    expect(isHumanfishEnabled({})).toBe(false);
+    expect(isHumanfishEnabled({ VITE_HUMANFISH_ENABLED: 'false' })).toBe(false);
+    expect(isHumanfishEnabled({ VITE_HUMANFISH_ENABLED: 'true' })).toBe(true);
+    expect(isHumanfishApiEnabled({})).toBe(false);
+    expect(isHumanfishApiEnabled({ HUMANFISH_ENABLED: 'TRUE' })).toBe(true);
+  });
+
+  it('returns 404 when disabled, before reaching the upstream server', async () => {
+    const prev = process.env.HUMANFISH_ENABLED;
+    delete process.env.HUMANFISH_ENABLED;
+    try {
+      const res = mockRes();
+      await handler({ method: 'POST', headers: {}, body: fenBody }, res);
+      expect(res.statusCode).toBe(404);
+    } finally {
+      if (prev !== undefined) process.env.HUMANFISH_ENABLED = prev;
+    }
+  });
+
+  it('requires a signed-in session when enabled', async () => {
+    const prev = { ...process.env };
+    process.env.HUMANFISH_ENABLED = 'true';
+    process.env.SESSION_SECRET = 'test-session-secret-123456';
+    try {
+      const res = mockRes();
+      await handler({ method: 'POST', headers: { host: 'tichess.vercel.app' }, body: fenBody }, res);
+      expect(res.statusCode).toBe(401);
+
+      const cross = mockRes();
+      await handler(
+        { method: 'POST', headers: { host: 'tichess.vercel.app', origin: 'https://evil.example' }, body: fenBody },
+        cross
+      );
+      expect(cross.statusCode).toBe(403);
+    } finally {
+      process.env = prev;
+    }
   });
 });

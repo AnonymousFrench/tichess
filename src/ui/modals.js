@@ -1,3 +1,5 @@
+import { HUMANFISH_ENABLED } from '../engines/humanfishFlag.js';
+
 const SHORTCUTS = [
   ['← / →', 'Previous / next move'],
   ['Home / End', 'First / last move'],
@@ -178,7 +180,7 @@ const MODALS_HTML = `
             </div>
           </div>
         </div>
-        <div class="pt-1 border-t border-borderSubtle/60 flex flex-col gap-1.5">
+        <div id="hfServerSettings" class="${HUMANFISH_ENABLED ? '' : 'hidden '}pt-1 border-t border-borderSubtle/60 flex flex-col gap-1.5">
           <div class="flex items-center justify-between gap-2">
             <label for="inputHfServerUrl" class="text-[10.5px] text-em font-semibold">HumanFish Server URL <span class="font-normal text-txtMuted">(optional override)</span></label>
             <span id="hfServerStatusBadge" class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-panel text-txtMuted">Built-in API</span>

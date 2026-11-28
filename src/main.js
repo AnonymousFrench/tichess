@@ -59,6 +59,7 @@ import {
   updateHumanfishServerBadge,
   setHumanfishSettingsHandler,
 } from './engines/humanfish.js';
+import { HUMANFISH_ENABLED } from './engines/humanfishFlag.js';
 import {
   triggerMaia2Analysis,
   stopMaia2,
@@ -413,7 +414,7 @@ function bindEvents() {
   // Board & Navigation
   document.getElementById('btnAddBoardTab').onclick = () => addBoardTab(`Analysis ${state.tabs.length + 1}`);
   document.getElementById('evalBarContainer').onclick = () => {
-    const sources = ['maia', 'sf', 'hf'];
+    const sources = HUMANFISH_ENABLED ? ['maia', 'sf', 'hf'] : ['maia', 'sf'];
     if (state.lc0.mode === 'ws') sources.push('lc0');
     const idx = sources.indexOf(state.evalBarSource);
     const next = sources[(idx + 1) % sources.length];
@@ -718,6 +719,7 @@ function bindEvents() {
   document.getElementById('btnEngineTabSf').onclick = () => setEngineTab('sf');
   document.getElementById('btnEngineTabMaia').onclick = () => setEngineTab('maia');
   document.getElementById('btnEngineTabHf').onclick = () => setEngineTab('hf');
+  if (!HUMANFISH_ENABLED) document.getElementById('btnEngineTabHf')?.classList.add('hidden');
   document.getElementById('sfMaiaSummaryChip').onclick = () => setEngineTab('maia');
   document.getElementById('sfHfSummaryChip').onclick = () => setEngineTab('hf');
   document.getElementById('btnMaiaArrows').onclick = toggleMaiaArrows;

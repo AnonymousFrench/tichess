@@ -4,7 +4,7 @@ import {
   sanitizeGameRecord,
   streamLichessSlice,
 } from '../api/_lib/insightsSync.js';
-import { isCronAuthorized } from '../api/insights/cron.js';
+import { isCronAuthorized, isCronSecretConfigured } from '../api/insights/cron.js';
 import { mergeAccountsWithServer } from '../src/insights/cloudInsights.js';
 
 describe('Server Insights sync helpers', () => {
@@ -126,18 +126,30 @@ describe('Server Insights sync helpers', () => {
     expect(resCapped.reachedEnd).toBe(false);
   });
 
-  it('enforces CRON_SECRET when configured and accepts x-vercel-cron only when unset', () => {
-    expect(
-      isCronAuthorized({ headers: { authorization: 'Bearer top-secret-123' } }, { CRON_SECRET: 'top-secret-123' })
-    ).toBe(true);
-    expect(
-      isCronAuthorized({ headers: { authorization: 'Bearer wrong' } }, { CRON_SECRET: 'top-secret-123' })
-    ).toBe(false);
-    expect(
-      isCronAuthorized({ headers: { 'x-vercel-cron': '1' } }, { CRON_SECRET: 'top-secret-123' })
-    ).toBe(false);
-    expect(isCronAuthorized({ headers: { 'x-vercel-cron': '1' } }, {})).toBe(true);
+  it('accepts only the CRON_SECRET bearer token', () => {
+    const env = { CRON_SECRET: 'top-secret-1234567890' };
+    expect(isCronAuthorized({ headers: { authorization: 'Bearer top-secret-1234567890' } }, env)).toBe(true);
+    expect(isCronAuthorized({ headers: { authorization: 'Bearer wrong' } }, env)).toBe(false);
+    expect(isCronAuthorized({ headers: { authorization: 'top-secret-1234567890' } }, env)).toBe(false);
+    expect(isCronAuthorized({ headers: {} }, env)).toBe(false);
+  });
+
+  it('never trusts the spoofable x-vercel-cron header', () => {
+    expect(isCronAuthorized({ headers: { 'x-vercel-cron': '1' } }, { CRON_SECRET: 'top-secret-1234567890' })).toBe(
+      false
+    );
+    expect(isCronAuthorized({ headers: { 'x-vercel-cron': '1' } }, {})).toBe(false);
+    expect(isCronAuthorized({ headers: { 'x-vercel-cron': 'true' } }, {})).toBe(false);
+  });
+
+  it('fails closed when CRON_SECRET is missing or too short', () => {
+    expect(isCronSecretConfigured({})).toBe(false);
+    expect(isCronSecretConfigured({ CRON_SECRET: '   ' })).toBe(false);
+    expect(isCronSecretConfigured({ CRON_SECRET: 'short' })).toBe(false);
+    expect(isCronSecretConfigured({ CRON_SECRET: 'top-secret-1234567890' })).toBe(true);
     expect(isCronAuthorized({ headers: {} }, {})).toBe(false);
+    expect(isCronAuthorized({ headers: { authorization: 'Bearer ' } }, { CRON_SECRET: '' })).toBe(false);
+    expect(isCronAuthorized({ headers: { authorization: 'Bearer short' } }, { CRON_SECRET: 'short' })).toBe(false);
   });
 
   it('merges server archive metadata with local IndexedDB accounts without dropping local-only sources', () => {
